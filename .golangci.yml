@@ -1,0 +1,103 @@
+# golangci-lint configuration for Correlator
+# Tailored for a high-performance correlation engine backend
+
+# See the dedicated "version" documentation section.
+version: "2"
+
+# Options for analysis running.
+run:
+  timeout: 5m
+  go: '1.23'
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+# Output configuration options.
+output:
+  formats:
+    text:
+      print-issued-lines: true
+      print-linter-name: true
+  sort-order:
+    - linter
+    - severity
+    - file
+
+# See the dedicated "linters" documentation section.
+linters:
+  # Enable specific linters
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gofmt
+    - goimports
+    - revive
+    - gocyclo
+    - gosec
+    - prealloc
+    - goconst
+    - misspell
+    - lll
+    - whitespace
+    - errorlint
+
+  # Disable specific linters
+  disable:
+    - deadcode
+    - structcheck
+    - varcheck
+    - scopelint
+    - golint
+    - interfacer
+    - maligned
+    - funlen
+    - gocognit
+    - godot
+    - wrapcheck
+
+  # All available settings of specific linters.
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    gocyclo:
+      min-complexity: 12
+
+    gosec:
+      severity: medium
+      confidence: medium
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: function-result-limit
+          arguments: [3]
+        - name: cyclomatic
+          arguments: [12]
+
+    lll:
+      line-length: 120
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+    misspell:
+      locale: US
+
+# See the dedicated "issues" documentation section.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
