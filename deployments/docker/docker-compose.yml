@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: correlator-postgres
+    environment:
+      # Database Configuration
+      POSTGRES_DB: correlator
+      POSTGRES_USER: correlator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      
+      # Memory Configuration - Optimized for correlation queries
+      POSTGRES_SHARED_BUFFERS: "256MB"           # 25% of available memory
+      POSTGRES_EFFECTIVE_CACHE_SIZE: "1GB"      # 75% of available memory  
+      POSTGRES_WORK_MEM: "16MB"                 # For correlation join operations
+      
+      # Query Optimization - Critical for correlation performance
+      POSTGRES_RANDOM_PAGE_COST: "1.1"          # SSD optimization
+      POSTGRES_EFFECTIVE_IO_CONCURRENCY: "200"  # SSD concurrency
+      
+      # Connection Management - Plugin integration
+      POSTGRES_MAX_CONNECTIONS: "100"           # Support multiple plugins
+      
+      # Write Performance - OpenLineage ingestion
+      POSTGRES_WAL_BUFFERS: "16MB"
+      POSTGRES_CHECKPOINT_COMPLETION_TARGET: "0.9"
+    
+    command: [
+      "postgres",
+      "-c", "shared_buffers=256MB",
+      "-c", "effective_cache_size=1GB", 
+      "-c", "work_mem=16MB",
+      "-c", "random_page_cost=1.1",
+      "-c", "effective_io_concurrency=200",
+      "-c", "max_connections=100",
+      "-c", "shared_preload_libraries=pg_stat_statements,pg_trgm",
+      "-c", "wal_buffers=16MB",
+      "-c", "checkpoint_completion_target=0.9",
+      "-c", "log_statement=all",
+      "-c", "log_min_duration_statement=1000"
+    ]
+    
+    ports:
+      - "5432:5432"
+    
+    volumes:
+      - correlator_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U correlator && psql -U correlator -d correlator -c 'SELECT 1;'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    
+    networks:
+      - correlator-network
+
+  # Correlation service placeholder for Phase 3+
+  correlator:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: correlator-service
+    environment:
+      - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
+      - MIGRATION_PATH=file://migrations
+      - LOG_LEVEL=debug
+    ports:
+      - "8080:8080"   # API
+      - "9090:9090"   # Metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - correlator-network
+    profiles:
+      - full  # Only start when explicitly requested
+
+volumes:
+  correlator_postgres_data:
+    driver: local
+
+networks:
+  correlator-network:
+    driver: bridge

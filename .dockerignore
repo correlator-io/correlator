@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+docs/
+
+# Development
+.env
+.env.local
+.vscode/
+.idea/
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.so
+*.dylib
+
+# Test files
+*_test.go
+test/
+coverage.out
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
