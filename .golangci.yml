@@ -7,9 +7,10 @@ version: "2"
 # Options for analysis running.
 run:
   timeout: 5m
-  go: '1.23'
+  go: '1.25.0'
   modules-download-mode: readonly
   allow-parallel-runners: true
+  tests: true
 
 # Output configuration options.
 output:
@@ -44,6 +45,8 @@ linters:
     - lll
     - whitespace
     - errorlint
+    - unconvert
+    - dupl
 
   # Disable specific linters
   disable:
@@ -57,7 +60,6 @@ linters:
     - funlen
     - gocognit
     - godot
-    - wrapcheck
 
   # All available settings of specific linters.
   settings:
@@ -97,7 +99,36 @@ linters:
     misspell:
       locale: US
 
+    dupl:
+      threshold: 100
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
 # See the dedicated "issues" documentation section.
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  
+  exclude-rules:
+    # Exclude some linters from running on tests
+    - path: _test\.go
+      linters:
+        - gosec
+        - dupl
+        - goconst
+        - gocyclo
+        
+    # Allow complex main functions for CLI tools
+    - path: cmd/
+      text: "cyclomatic complexity"
+      linters:
+        - gocyclo
+        
+    # Allow long lines in generated migration files
+    - path: migrations/
+      linters:
+        - lll
+        - goconst

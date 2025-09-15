@@ -56,6 +56,25 @@ services:
     networks:
       - correlator-network
 
+  # Database migrator service
+  migrator:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/migrator.dockerfile
+    container_name: correlator-migrator
+    environment:
+      - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
+      - MIGRATIONS_PATH=./migrations
+      - MIGRATION_TABLE=schema_migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - correlator-network
+    profiles:
+      - migration  # For migration operations
+      - full       # Include in full stack
+  
   # Correlation service placeholder for Phase 3+
   correlator:
     build:
@@ -72,6 +91,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     networks:
       - correlator-network
     profiles:

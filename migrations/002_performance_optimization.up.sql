@@ -311,9 +311,8 @@ SELECT
   
   -- Top affected systems (for alerting and routing)
   MODE() WITHIN GROUP (ORDER BY dataset_owner) as most_affected_owner,
-  ARRAY_AGG(DISTINCT dataset_name ORDER BY incident_time DESC) 
-    FILTER (WHERE incident_severity IN ('critical', 'high')) 
-    [1:10] as top_affected_datasets,
+  (ARRAY_AGG(DISTINCT dataset_name ORDER BY incident_time DESC) 
+    FILTER (WHERE incident_severity IN ('critical', 'high')))[1:10] as top_affected_datasets,
   
   -- Trend indicators  
   LAG(COUNT(*)) OVER (ORDER BY DATE_TRUNC('hour', incident_time)) as previous_hour_incidents,
