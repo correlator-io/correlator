@@ -1,37 +1,81 @@
-# golangci-lint configuration for Correlator
-# Optimized for CI environments with resource constraints
-
 run:
-  timeout: 3m
-  tests: true
+  timeout: 5m
+  issues-exit-code: 1
+  tests: false
   skip-dirs:
-    - vendor
-  skip-files:
-    - ".*\\.pb\\.go$"
+    - .github
+    - docs
+    - scripts
+    - deployments
+    - migrations
+  skip-dirs-use-default: true
 
-linters:
-  # Use only essential linters to reduce memory usage
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - typecheck
-    - unused
-    - gofmt
-
-  disable-all: true  # Disable all linters by default, only enable what we need
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
 
 linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: false  # Reduce checks to save resources
+  gocyclo:
+    min-complexity: 12
+  gofmt:
+    simplify: false
+  gosec:
+    includes:
+      - G401
+      - G306
+      - G101
+    excludes:
+      - G204
+    config:
+      G306: "0600"
+      G101:
+        pattern: "(?i)example"
+        ignore_entropy: false
+        entropy_threshold: "80.0"
+        per_char_threshold: "3.0"
+        truncate: "32"
+
+linters:
+  disable-all: true
+  enable:
+    #    - depguard
+    - dupl
+    - errcheck
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - gosec
+    - gosimple
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - staticcheck
+    - stylecheck
+    - unconvert
+    - unparam
+    - unused
+    - prealloc
+
+  fast: false
 
 issues:
-  max-issues-per-linter: 50  # Limit output to prevent excessive memory usage
-  max-same-issues: 3
-  
+  # Automatically fix found issues
+  fix: true
+  exclude-use-default: false
   exclude-rules:
-    - path: _test\.go
+    - path: main.go
       linters:
+        - gocyclo
+    - path: internal/generate/mocks.go
+      linters:
+        - unused
+    # This rule ignores missing error handling when closing http.Response.Body.
+    - linters:
         - errcheck
+      text: ".Body.Close` is not checked"
