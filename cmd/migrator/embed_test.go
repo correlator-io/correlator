@@ -952,7 +952,7 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping embedded migration test in short mode - Phase 4 feature")
 	}
-	
+
 	// This test should FAIL - current implementation uses os.DirFS which doesn't provide
 	// true embedding performance benefits
 

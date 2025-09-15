@@ -19,17 +19,17 @@ const (
 func main() {
 	// Phase 4+ implementation
 	// Currently a placeholder for CI/CD builds
-	
+
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Printf("%s v%s\n", name, version)
 		os.Exit(0)
 	}
-	
+
 	log.Printf("%s v%s starting...", name, version)
 	log.Println("Correlator service implementation will be available in Week 1 Phase 5+")
 	log.Println("Current Phase 3: Migration system implemented ✅")
 	log.Println("Next Phase 4: Embedded migrations and schema validation")
-	
+
 	// TODO: Implement correlation service in Phase 5
 	// - HTTP API endpoints for correlation queries
 	// - OpenLineage event processing
