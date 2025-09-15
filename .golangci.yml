@@ -1,103 +1,81 @@
-# golangci-lint configuration for Correlator
-# Tailored for a high-performance correlation engine backend
-
-# See the dedicated "version" documentation section.
-version: "2"
-
-# Options for analysis running.
 run:
   timeout: 5m
-  go: '1.23'
-  modules-download-mode: readonly
-  allow-parallel-runners: true
+  issues-exit-code: 1
+  tests: false
+  skip-dirs:
+    - .github
+    - docs
+    - scripts
+    - deployments
+    - migrations
+  skip-dirs-use-default: true
 
-# Output configuration options.
 output:
-  formats:
-    text:
-      print-issued-lines: true
-      print-linter-name: true
-  sort-order:
-    - linter
-    - severity
-    - file
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
 
-# See the dedicated "linters" documentation section.
+linters-settings:
+  gocyclo:
+    min-complexity: 12
+  gofmt:
+    simplify: false
+  gosec:
+    includes:
+      - G401
+      - G306
+      - G101
+    excludes:
+      - G204
+    config:
+      G306: "0600"
+      G101:
+        pattern: "(?i)example"
+        ignore_entropy: false
+        entropy_threshold: "80.0"
+        per_char_threshold: "3.0"
+        truncate: "32"
+
 linters:
-  # Enable specific linters
+  disable-all: true
   enable:
+    #    - depguard
+    - dupl
     - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - typecheck
-    - unused
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
     - gofmt
     - goimports
-    - revive
-    - gocyclo
     - gosec
-    - prealloc
-    - goconst
-    - misspell
+    - gosimple
+    - ineffassign
     - lll
-    - whitespace
-    - errorlint
+    - misspell
+    - nakedret
+    - staticcheck
+    - stylecheck
+    - unconvert
+    - unparam
+    - unused
+    - prealloc
 
-  # Disable specific linters
-  disable:
-    - deadcode
-    - structcheck
-    - varcheck
-    - scopelint
-    - golint
-    - interfacer
-    - maligned
-    - funlen
-    - gocognit
-    - godot
-    - wrapcheck
+  fast: false
 
-  # All available settings of specific linters.
-  settings:
-    errcheck:
-      check-type-assertions: true
-      check-blank: true
-
-    gocyclo:
-      min-complexity: 12
-
-    gosec:
-      severity: medium
-      confidence: medium
-
-    govet:
-      enable-all: true
-      disable:
-        - fieldalignment
-
-    revive:
-      rules:
-        - name: exported
-        - name: package-comments
-        - name: var-naming
-        - name: function-result-limit
-          arguments: [3]
-        - name: cyclomatic
-          arguments: [12]
-
-    lll:
-      line-length: 120
-
-    goconst:
-      min-len: 3
-      min-occurrences: 3
-
-    misspell:
-      locale: US
-
-# See the dedicated "issues" documentation section.
 issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  # Automatically fix found issues
+  fix: true
+  exclude-use-default: false
+  exclude-rules:
+    - path: main.go
+      linters:
+        - gocyclo
+    - path: internal/generate/mocks.go
+      linters:
+        - unused
+    # This rule ignores missing error handling when closing http.Response.Body.
+    - linters:
+        - errcheck
+      text: ".Body.Close` is not checked"
