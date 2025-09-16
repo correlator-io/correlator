@@ -29,7 +29,7 @@ func TestLoadConfig(t *testing.T) {
 				// Create migrations directory for default path
 				tempDir := t.TempDir()
 				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 					t.Fatalf("Failed to create test migrations directory: %v", err)
 				}
 				// Change to temp dir so relative path works
@@ -47,7 +47,10 @@ func TestLoadConfig(t *testing.T) {
 					t.Errorf("Expected default MIGRATION_TABLE, got %s", config.MigrationTable)
 				}
 				if !strings.HasSuffix(config.MigrationsPath, "migrations") {
-					t.Errorf("Expected migrations path to end with 'migrations', got %s", config.MigrationsPath)
+					t.Errorf(
+						"Expected migrations path to end with 'migrations', got %s",
+						config.MigrationsPath,
+					)
 				}
 			},
 		},
@@ -61,7 +64,7 @@ func TestLoadConfig(t *testing.T) {
 			setupFunc: func(t *testing.T) string {
 				tempDir := t.TempDir()
 				migrationsDir := filepath.Join(tempDir, "custom_migrations")
-				if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 					t.Fatalf("Failed to create test migrations directory: %v", err)
 				}
 				// Set the migrations path to our temp directory
@@ -98,7 +101,7 @@ func TestLoadConfig(t *testing.T) {
 			setupFunc: func(t *testing.T) string {
 				tempDir := t.TempDir()
 				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 					t.Fatalf("Failed to create test migrations directory: %v", err)
 				}
 				os.Setenv("MIGRATIONS_PATH", migrationsDir)
@@ -192,7 +195,7 @@ func TestConfigValidate(t *testing.T) {
 			setupFunc: func(t *testing.T) string {
 				tempDir := t.TempDir()
 				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 					t.Fatalf("Failed to create test migrations directory: %v", err)
 				}
 				return migrationsDir
@@ -248,7 +251,7 @@ func TestConfigValidate(t *testing.T) {
 			setupFunc: func(t *testing.T) string {
 				tempDir := t.TempDir()
 				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 					t.Fatalf("Failed to create test migrations directory: %v", err)
 				}
 				// Change to temp dir so relative path works
@@ -300,7 +303,10 @@ func TestConfigValidate(t *testing.T) {
 
 			// Verify absolute path conversion
 			if !filepath.IsAbs(tt.config.MigrationsPath) {
-				t.Errorf("Expected absolute path after validation, got: %s", tt.config.MigrationsPath)
+				t.Errorf(
+					"Expected absolute path after validation, got: %s",
+					tt.config.MigrationsPath,
+				)
 			}
 		})
 	}
@@ -514,7 +520,7 @@ func TestConfigIntegration(t *testing.T) {
 		// Create temporary directory structure
 		tempDir := t.TempDir()
 		migrationsDir := filepath.Join(tempDir, "migrations")
-		if err := os.MkdirAll(migrationsDir, 0755); err != nil {
+		if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 			t.Fatalf("Failed to create test migrations directory: %v", err)
 		}
 

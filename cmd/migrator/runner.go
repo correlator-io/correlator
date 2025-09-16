@@ -7,10 +7,12 @@ import (
 	"io"
 	"log"
 
-	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
+
 	_ "github.com/golang-migrate/migrate/v4/source/file" // File source driver
 	_ "github.com/lib/pq"                                // PostgreSQL driver
+
+	migrate "github.com/golang-migrate/migrate/v4"
 )
 
 type (

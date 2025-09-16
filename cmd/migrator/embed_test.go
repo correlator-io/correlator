@@ -70,7 +70,7 @@ func TestGetEmbeddedMigrations(t *testing.T) {
 
 	for _, file := range testFiles {
 		content := fmt.Sprintf("-- Test content for %s", file)
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file %s: %v", file, err)
 		}
 	}
@@ -154,7 +154,7 @@ func TestListEmbeddedMigrations(t *testing.T) {
 
 				for _, file := range files {
 					content := fmt.Sprintf("-- Migration: %s", file)
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
@@ -182,7 +182,7 @@ func TestListEmbeddedMigrations(t *testing.T) {
 				}
 
 				for file, content := range files {
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
@@ -211,19 +211,19 @@ func TestListEmbeddedMigrations(t *testing.T) {
 				sqlFiles := []string{"001_test.up.sql", "001_test.down.sql"}
 				for _, file := range sqlFiles {
 					content := fmt.Sprintf("-- Migration: %s", file)
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
 
 				// Create subdirectory (should be ignored)
 				subDir := filepath.Join(tempDir, "subdir")
-				if err := os.Mkdir(subDir, 0755); err != nil {
+				if err := os.Mkdir(subDir, 0o755); err != nil {
 					t.Fatalf("failed to create subdirectory: %v", err)
 				}
 
 				// Create file in subdirectory (should be ignored)
-				if err := os.WriteFile(filepath.Join(subDir, "ignored.sql"), []byte("-- ignored"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(subDir, "ignored.sql"), []byte("-- ignored"), 0o644); err != nil {
 					t.Fatalf("failed to create file in subdirectory: %v", err)
 				}
 
@@ -251,18 +251,18 @@ func TestListEmbeddedMigrations(t *testing.T) {
 
 				// Create a file first
 				testFile := filepath.Join(tempDir, "001_test.up.sql")
-				if err := os.WriteFile(testFile, []byte("-- test"), 0644); err != nil {
+				if err := os.WriteFile(testFile, []byte("-- test"), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 
 				// Change directory permissions to be unreadable
-				if err := os.Chmod(tempDir, 0000); err != nil {
+				if err := os.Chmod(tempDir, 0o000); err != nil {
 					t.Fatalf("failed to change directory permissions: %v", err)
 				}
 
 				// Cleanup function to restore permissions for cleanup
 				t.Cleanup(func() {
-					os.Chmod(tempDir, 0755)
+					os.Chmod(tempDir, 0o755)
 				})
 
 				return tempDir
@@ -332,7 +332,7 @@ func TestValidateEmbeddedMigrations(t *testing.T) {
 				}
 
 				for file, content := range files {
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
@@ -361,7 +361,7 @@ func TestValidateEmbeddedMigrations(t *testing.T) {
 				}
 
 				for file, content := range files {
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
@@ -377,24 +377,24 @@ func TestValidateEmbeddedMigrations(t *testing.T) {
 
 				// Create a readable SQL file first
 				readableFile := filepath.Join(tempDir, "001_readable.up.sql")
-				if err := os.WriteFile(readableFile, []byte("CREATE TABLE test (id INTEGER);"), 0644); err != nil {
+				if err := os.WriteFile(readableFile, []byte("CREATE TABLE test (id INTEGER);"), 0o644); err != nil {
 					t.Fatalf("failed to create readable file: %v", err)
 				}
 
 				// Create an unreadable SQL file
 				unreadableFile := filepath.Join(tempDir, "002_unreadable.up.sql")
-				if err := os.WriteFile(unreadableFile, []byte("CREATE TABLE test2 (id INTEGER);"), 0644); err != nil {
+				if err := os.WriteFile(unreadableFile, []byte("CREATE TABLE test2 (id INTEGER);"), 0o644); err != nil {
 					t.Fatalf("failed to create unreadable file: %v", err)
 				}
 
 				// Make the file unreadable
-				if err := os.Chmod(unreadableFile, 0000); err != nil {
+				if err := os.Chmod(unreadableFile, 0o000); err != nil {
 					t.Fatalf("failed to change file permissions: %v", err)
 				}
 
 				// Cleanup function to restore permissions
 				t.Cleanup(func() {
-					os.Chmod(unreadableFile, 0644)
+					os.Chmod(unreadableFile, 0o644)
 				})
 
 				return tempDir
@@ -415,7 +415,7 @@ func TestValidateEmbeddedMigrations(t *testing.T) {
 				}
 
 				for file, content := range files {
-					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+					if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 						t.Fatalf("failed to create test file: %v", err)
 					}
 				}
@@ -471,7 +471,7 @@ func TestGetEmbeddedMigrationContent(t *testing.T) {
 				filename := "001_initial.up.sql"
 				content := "CREATE TABLE users (\n    id SERIAL PRIMARY KEY,\n    name VARCHAR(255) NOT NULL\n);"
 
-				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 				return tempDir, filename
@@ -485,7 +485,7 @@ func TestGetEmbeddedMigrationContent(t *testing.T) {
 				tempDir := t.TempDir()
 				filename := "002_empty.up.sql"
 
-				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(""), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(""), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 				return tempDir, filename
@@ -511,7 +511,7 @@ CREATE INDEX idx_users_email ON users(email);
 -- Insert initial data
 INSERT INTO users (email) VALUES ('admin@example.com');`
 
-				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 				return tempDir, filename
@@ -558,18 +558,18 @@ INSERT INTO users (email) VALUES ('admin@example.com');`,
 				content := "CREATE TABLE test (id INTEGER);"
 
 				filepath := filepath.Join(tempDir, filename)
-				if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath, []byte(content), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 
 				// Make file unreadable
-				if err := os.Chmod(filepath, 0000); err != nil {
+				if err := os.Chmod(filepath, 0o000); err != nil {
 					t.Fatalf("failed to change file permissions: %v", err)
 				}
 
 				// Cleanup function to restore permissions
 				t.Cleanup(func() {
-					os.Chmod(filepath, 0644)
+					os.Chmod(filepath, 0o644)
 				})
 
 				return tempDir, filename
@@ -586,7 +586,7 @@ INSERT INTO users (email) VALUES ('admin@example.com');`,
 				// Create content with binary data (though this would be unusual for SQL)
 				content := "CREATE TABLE test;\x00\x01\x02\x03"
 
-				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 					t.Fatalf("failed to create test file: %v", err)
 				}
 				return tempDir, filename
@@ -647,7 +647,7 @@ func TestEmbeddedMigrationSupportIntegration(t *testing.T) {
 
 	// Create migration files
 	for filename, content := range migrations {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create migration file %s: %v", filename, err)
 		}
 	}
@@ -660,7 +660,7 @@ func TestEmbeddedMigrationSupportIntegration(t *testing.T) {
 	}
 
 	for filename, content := range nonSQLFiles {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create non-SQL file %s: %v", filename, err)
 		}
 	}
@@ -713,7 +713,12 @@ func TestEmbeddedMigrationSupportIntegration(t *testing.T) {
 		}
 
 		if string(content) != expectedContent {
-			t.Errorf("content mismatch for %s:\nexpected: %q\ngot: %q", filename, expectedContent, string(content))
+			t.Errorf(
+				"content mismatch for %s:\nexpected: %q\ngot: %q",
+				filename,
+				expectedContent,
+				string(content),
+			)
 		}
 	}
 }
@@ -727,7 +732,7 @@ func BenchmarkListEmbeddedMigrations(b *testing.B) {
 	for i := 1; i <= 100; i++ {
 		filename := fmt.Sprintf("%03d_migration_%d.up.sql", i, i)
 		content := fmt.Sprintf("CREATE TABLE table_%d (id INTEGER);", i)
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			b.Fatalf("failed to create migration file: %v", err)
 		}
 	}
@@ -751,11 +756,13 @@ func BenchmarkGetEmbeddedMigrationContent(b *testing.B) {
 	// Create a large SQL content (simulate complex migration)
 	var contentBuilder strings.Builder
 	for i := 0; i < 1000; i++ {
-		contentBuilder.WriteString(fmt.Sprintf("CREATE TABLE table_%d (id SERIAL PRIMARY KEY, name VARCHAR(255));\n", i))
+		contentBuilder.WriteString(
+			fmt.Sprintf("CREATE TABLE table_%d (id SERIAL PRIMARY KEY, name VARCHAR(255));\n", i),
+		)
 	}
 	content := contentBuilder.String()
 
-	if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 		b.Fatalf("failed to create large migration file: %v", err)
 	}
 
@@ -788,7 +795,7 @@ func TestEmbeddedMigrationsSortingBehavior(t *testing.T) {
 
 	for _, file := range files {
 		content := fmt.Sprintf("-- Migration: %s", file)
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -809,7 +816,11 @@ func TestEmbeddedMigrationsSortingBehavior(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(result, expected) {
-		t.Errorf("EXPECTED FAILURE: migrations not properly ordered. Expected %v, got %v", expected, result)
+		t.Errorf(
+			"EXPECTED FAILURE: migrations not properly ordered. Expected %v, got %v",
+			expected,
+			result,
+		)
 	}
 }
 
@@ -828,7 +839,7 @@ func TestEmbeddedMigrationsFilenameValidation(t *testing.T) {
 
 	for _, file := range invalidFiles {
 		content := fmt.Sprintf("-- Migration: %s", file)
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -844,7 +855,10 @@ func TestEmbeddedMigrationsFilenameValidation(t *testing.T) {
 	// With strict naming enforcement, invalid files are filtered out during listing
 	// So we should get "no migration files found" error instead of filename validation error
 	if err != nil && !strings.Contains(err.Error(), "no migration files found") {
-		t.Errorf("EXPECTED FAILURE: with strict naming, should get 'no migration files found', got: %v", err)
+		t.Errorf(
+			"EXPECTED FAILURE: with strict naming, should get 'no migration files found', got: %v",
+			err,
+		)
 	}
 }
 
@@ -865,7 +879,7 @@ func TestEmbeddedMigrationsSQLSyntaxValidation(t *testing.T) {
 	}
 
 	for file, content := range files {
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -876,7 +890,10 @@ func TestEmbeddedMigrationsSQLSyntaxValidation(t *testing.T) {
 	// This is left to the database engine during execution
 	err := support.ValidateEmbeddedMigrations()
 	if err != nil {
-		t.Errorf("validation should pass despite invalid SQL syntax (left to database engine), got: %v", err)
+		t.Errorf(
+			"validation should pass despite invalid SQL syntax (left to database engine), got: %v",
+			err,
+		)
 	}
 }
 
@@ -895,7 +912,7 @@ func TestEmbeddedMigrationsPairedValidation(t *testing.T) {
 	}
 
 	for file, content := range files {
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -908,7 +925,8 @@ func TestEmbeddedMigrationsPairedValidation(t *testing.T) {
 		t.Error("EXPECTED FAILURE: validation should fail for unpaired migrations")
 	}
 
-	if err != nil && !strings.Contains(err.Error(), "pair") && !strings.Contains(err.Error(), "orphan") {
+	if err != nil && !strings.Contains(err.Error(), "pair") &&
+		!strings.Contains(err.Error(), "orphan") {
 		t.Errorf("EXPECTED FAILURE: error should mention pairing validation, got: %v", err)
 	}
 }
@@ -929,7 +947,7 @@ func TestEmbeddedMigrationsSequenceValidation(t *testing.T) {
 	}
 
 	for file, content := range files {
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -942,7 +960,8 @@ func TestEmbeddedMigrationsSequenceValidation(t *testing.T) {
 		t.Error("EXPECTED FAILURE: validation should fail for gaps in migration sequence")
 	}
 
-	if err != nil && !strings.Contains(err.Error(), "sequence") && !strings.Contains(err.Error(), "gap") {
+	if err != nil && !strings.Contains(err.Error(), "sequence") &&
+		!strings.Contains(err.Error(), "gap") {
 		t.Errorf("EXPECTED FAILURE: error should mention sequence validation, got: %v", err)
 	}
 }
@@ -966,10 +985,10 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 		content := fmt.Sprintf("CREATE TABLE table_%d (id INTEGER);", i)
 		downContent := fmt.Sprintf("DROP TABLE table_%d;", i)
 
-		if err := os.WriteFile(filepath.Join(tempDir, upFile), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, upFile), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create migration file: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(tempDir, downFile), []byte(downContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, downFile), []byte(downContent), 0o644); err != nil {
 			t.Fatalf("failed to create migration file: %v", err)
 		}
 	}
@@ -995,7 +1014,10 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 
 	// SHOULD FAIL: True embedded system should be much faster than filesystem access
 	if elapsed > 1000000 { // 1ms - arbitrary threshold
-		t.Logf("EXPECTED FAILURE: embedded access should be faster than filesystem, took %v", elapsed)
+		t.Logf(
+			"EXPECTED FAILURE: embedded access should be faster than filesystem, took %v",
+			elapsed,
+		)
 		t.Logf("This limitation will be fixed in Phase 4 with true go:embed implementation")
 	}
 
@@ -1011,12 +1033,15 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 	// This should work with truly embedded files but will fail with os.DirFS
 	_, err := fsys.Open("001_migration_1.up.sql")
 	if err != nil {
-		t.Logf("EXPECTED FAILURE: truly embedded files should work without original directory, got error: %v", err)
+		t.Logf(
+			"EXPECTED FAILURE: truly embedded files should work without original directory, got error: %v",
+			err,
+		)
 		t.Logf("This limitation will be fixed in Phase 4 with true go:embed implementation")
 	}
 
 	// Restore directory for cleanup
-	if err := os.MkdirAll(originalPath, 0755); err != nil {
+	if err := os.MkdirAll(originalPath, 0o755); err != nil {
 		t.Logf("failed to restore directory for cleanup: %v", err)
 	}
 }
@@ -1031,7 +1056,7 @@ func TestEmbeddedMigrationsChecksumValidation(t *testing.T) {
 	}
 
 	for file, content := range files {
-		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, file), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
@@ -1046,7 +1071,7 @@ func TestEmbeddedMigrationsChecksumValidation(t *testing.T) {
 
 	// Modify a file after "embedding" (simulating file tampering)
 	modifiedContent := "CREATE TABLE users (id INTEGER, email VARCHAR(255));"
-	if err := os.WriteFile(filepath.Join(tempDir, "001_initial.up.sql"), []byte(modifiedContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tempDir, "001_initial.up.sql"), []byte(modifiedContent), 0o644); err != nil {
 		t.Fatalf("failed to modify file: %v", err)
 	}
 
@@ -1056,7 +1081,8 @@ func TestEmbeddedMigrationsChecksumValidation(t *testing.T) {
 		t.Error("EXPECTED FAILURE: validation should detect modified migration files")
 	}
 
-	if err != nil && !strings.Contains(err.Error(), "checksum") && !strings.Contains(err.Error(), "modified") {
+	if err != nil && !strings.Contains(err.Error(), "checksum") &&
+		!strings.Contains(err.Error(), "modified") {
 		t.Errorf("EXPECTED FAILURE: error should mention checksum validation, got: %v", err)
 	}
 }

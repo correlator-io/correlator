@@ -163,7 +163,10 @@ func (e *EmbeddedMigrationSupport) GetEmbeddedMigrationContent(filename string) 
 func (e *EmbeddedMigrationSupport) parseMigrationFilename(filename string) (*MigrationInfo, error) {
 	matches := migrationFilenameRegex.FindStringSubmatch(filename)
 	if len(matches) != 4 {
-		return nil, fmt.Errorf("invalid migration filename format: %s (expected: 001_name.up.sql or 001_name.down.sql)", filename)
+		return nil, fmt.Errorf(
+			"invalid migration filename format: %s (expected: 001_name.up.sql or 001_name.down.sql)",
+			filename,
+		)
 	}
 
 	sequence, err := strconv.Atoi(matches[1])
@@ -193,7 +196,9 @@ func (e *EmbeddedMigrationSupport) validateFilenames(files []string) error {
 // validatePairing ensures that every up migration has a corresponding down migration
 func (e *EmbeddedMigrationSupport) validatePairing(files []string) error {
 	// Parse all migration files
-	migrations := make(map[string]map[string]*MigrationInfo) // sequence_name -> direction -> migration
+	migrations := make(
+		map[string]map[string]*MigrationInfo,
+	) // sequence_name -> direction -> migration
 
 	for _, file := range files {
 		migration, err := e.parseMigrationFilename(file)
@@ -250,7 +255,10 @@ func (e *EmbeddedMigrationSupport) validateSequence(files []string) error {
 
 	// Should start with 1
 	if sequenceNumbers[0] != 1 {
-		return fmt.Errorf("migration sequence should start with 001, but found %03d", sequenceNumbers[0])
+		return fmt.Errorf(
+			"migration sequence should start with 001, but found %03d",
+			sequenceNumbers[0],
+		)
 	}
 
 	// Check for gaps
@@ -258,7 +266,11 @@ func (e *EmbeddedMigrationSupport) validateSequence(files []string) error {
 		expected := sequenceNumbers[i-1] + 1
 		actual := sequenceNumbers[i]
 		if actual != expected {
-			return fmt.Errorf("gap in migration sequence: expected %03d, found %03d", expected, actual)
+			return fmt.Errorf(
+				"gap in migration sequence: expected %03d, found %03d",
+				expected,
+				actual,
+			)
 		}
 	}
 
