@@ -60,11 +60,24 @@ run:
 output:
   # The formats used to render issues.
   formats:
-    # Prints issues in a JSON representation.
-    json:
+    text:
       # Output path can be either `stdout`, `stderr` or path to the file to write to.
       # Default: stdout
-      path: stdout
+      # path: ./path/to/output.txt
+      # Print linter name in the end of issue text.
+      # Default: true
+      print-linter-name: false
+      # Print lines of code with issue.
+      # Default: true
+      print-issued-lines: true
+      # Use colors.
+      # Default: true
+      colors: true
+    # Prints issues in a JSON representation.
+#    json:
+      # Output path can be either `stdout`, `stderr` or path to the file to write to.
+      # Default: stdout
+#      path: stdout
   # Add a prefix to the output file references.
   # This option is ignored when using `output.path-mode: abs` mode.
   # Default: ""
