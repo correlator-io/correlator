@@ -51,7 +51,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create migration runner: %v", err)
 	}
-	defer runner.Close()
+	defer func() {
+		_ = runner.Close()
+	}()
 
 	// Execute command
 	if err := executeCommand(command, runner); err != nil {
@@ -73,7 +75,7 @@ func executeCommand(command string, runner MigrationRunner) error {
 	case "drop":
 		fmt.Print("WARNING: This will drop all tables. Are you sure? (y/N): ")
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		if response == "y" || response == "Y" {
 			return runner.Drop()
 		}
