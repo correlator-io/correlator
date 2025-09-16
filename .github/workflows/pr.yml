@@ -87,4 +87,3 @@ jobs:
         env:
           CGO_ENABLED: 1
           DATABASE_URL: postgres://correlator_test:${{ secrets.POSTGRES_TEST_PASSWORD }}@localhost:5432/correlator_test?sslmode=disable
-

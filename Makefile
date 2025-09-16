@@ -40,7 +40,7 @@ fmt:
 vet:
 	go vet ./...
 
-# Dependencies  
+# Dependencies
 deps:
 	go mod download
 	go mod verify

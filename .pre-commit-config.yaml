@@ -1,0 +1,83 @@
+# Pre-commit configuration for Correlator
+# Ensures code quality and consistency before commits
+# See https://pre-commit.com for more information
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+        exclude: '\.md$'
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  # Go-specific hooks that integrate with our existing setup
+  - repo: local
+    hooks:
+      # Format code (uses our make fmt)
+      - id: go-fmt
+        name: go fmt
+        entry: make fmt
+        language: system
+        pass_filenames: false
+        types: [go]
+      # Ensure go.mod and go.sum are tidy
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: go mod tidy
+        language: system
+        pass_filenames: false
+        files: 'go\.(mod|sum)$'
+      # Run go vet (integrates with our make vet)
+      - id: go-vet
+        name: go vet
+        entry: make vet
+        language: system
+        pass_filenames: false
+        types: [go]
+      # Run unit tests before commit
+      - id: go-unit-tests
+        name: go unit tests
+        entry: make test-unit
+        language: system
+        pass_filenames: false
+        types: [go]
+
+  # golangci-lint integration (uses our local v2 installation)
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Security scanning
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: '\.lock$|go\.sum$'
+
+# Configuration
+default_stages: [pre-commit]
+fail_fast: false
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+    migrations/.*\.(up|down)\.sql$|
+    \.secrets\.baseline$|
+    notes/.*\.md$
+  )$

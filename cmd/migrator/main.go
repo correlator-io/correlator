@@ -106,10 +106,10 @@ OPTIONS:
 
 ENVIRONMENT VARIABLES:
     DATABASE_URL    PostgreSQL connection string (REQUIRED)
-    
-    MIGRATIONS_PATH Path to migration files directory  
+
+    MIGRATIONS_PATH Path to migration files directory
                    (default: ./migrations)
-    
+
     MIGRATION_TABLE Name of migration tracking table
                    (default: schema_migrations)
 

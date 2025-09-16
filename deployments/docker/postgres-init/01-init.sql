@@ -40,15 +40,15 @@ GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO correlator;
 -- Set up performance monitoring
 -- Create a view to monitor correlation query performance
 CREATE OR REPLACE VIEW correlation_query_stats AS
-SELECT 
+SELECT
     query,
     calls,
     total_time,
     mean_time,
     rows,
     100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
-FROM pg_stat_statements 
-WHERE query LIKE '%job_runs%' 
+FROM pg_stat_statements
+WHERE query LIKE '%job_runs%'
    OR query LIKE '%correlation_events%'
    OR query LIKE '%lineage_edges%'
 ORDER BY total_time DESC;
