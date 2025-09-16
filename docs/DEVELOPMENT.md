@@ -1,6 +1,7 @@
 # Development Guide
 
-Welcome to the Correlator development environment! This guide provides everything you need to start contributing to the project.
+Welcome to the Correlator development environment! This guide provides everything you need to start contributing to the
+project.
 
 ---
 
@@ -55,14 +56,16 @@ Steps to get a local development environment up and running:
    go mod download
    ```
 
-3. (Optional) Bring up supporting services (databases, caches, etc.)  
-   If you use Docker/TestContainers or docker-compose, you might run:
+3. Install [golangci](https://golangci-lint.run/docs/welcome/install/). Follow the steps that are relevant to your
+   operating system.
+
+4. Install [pre-commit](https://pre-commit.com/#installation)
    ```bash
-   make dev-services
+   pip install pre-commit
    ```
 
-4. Set up your environment variables  
-   Copy a sample env file, if it exists:
+5. Set up your environment variables  
+   Copy a sample env file from deployments/docker directory
    ```bash
    cp .env.example .env
    ```
@@ -91,10 +94,12 @@ A typical dev iteration looks like this:
   Use `make test-unit` to run all unit tests. Prefer table‑driven tests and keep tests fast.
 
 - **Integration Tests**  
-  These tests depend on external services (databases, message queues, etc.). We use TestContainers (or similar) for integration tests. Run:
+  These tests depend on external services (databases, message queues, etc.). We use TestContainers (or similar) for
+  integration tests. Run:
   ```bash
   make test-integration
   ```
+
 ---
 
 ## Linting & Formatting
@@ -136,93 +141,94 @@ Complete reference of all available make targets in the Correlator project:
 
 ### Build & Development
 
-| Target | Description |
-|--------|-------------|
-| `make build` | Build the correlator binary |
+| Target           | Description                                         |
+|------------------|-----------------------------------------------------|
+| `make build`     | Build the correlator binary                         |
 | `make build-all` | Build all binaries (correlator, ingester, migrator) |
-| `make dev` | Run correlator in development mode |
-| `make clean` | Clean build artifacts |
+| `make dev`       | Run correlator in development mode                  |
+| `make clean`     | Clean build artifacts                               |
 
 ### Testing
 
-| Target | Description |
-|--------|-------------|
-| `make test` | Run all tests (unit + integration) with coverage |
-| `make test-unit` | Run unit tests only (fast, -short flag) |
+| Target                  | Description                                           |
+|-------------------------|-------------------------------------------------------|
+| `make test`             | Run all tests (unit + integration) with coverage      |
+| `make test-unit`        | Run unit tests only (fast, -short flag)               |
 | `make test-integration` | Run integration tests (real databases, 10min timeout) |
-| `make test-race` | Run tests with race detection |
+| `make test-race`        | Run tests with race detection                         |
 
 ### Code Quality
 
-| Target | Description |
-|--------|-------------|
+| Target      | Description                                 |
+|-------------|---------------------------------------------|
 | `make lint` | Run golangci-lint v2 comprehensive analysis |
-| `make fmt` | Format code with golangci-lint fmt |
-| `make vet` | Run go vet static analysis |
+| `make fmt`  | Format code with golangci-lint fmt          |
+| `make vet`  | Run go vet static analysis                  |
 
 ### Dependencies
 
-| Target | Description |
-|--------|-------------|
-| `make deps` | Download and verify Go module dependencies |
+| Target      | Description                                  |
+|-------------|----------------------------------------------|
+| `make deps` | Download and verify Go module dependencies   |
 | `make tidy` | Tidy go modules (remove unused dependencies) |
 
 ### Database Migration (Local Development)
 
-| Target | Description |
-|--------|-------------|
-| `make migrate-up` | Apply all pending migrations (local) |
-| `make migrate-down` | Rollback the last migration (local) |
-| `make migrate-status` | Show current migration status (local) |
+| Target                 | Description                            |
+|------------------------|----------------------------------------|
+| `make migrate-up`      | Apply all pending migrations (local)   |
+| `make migrate-down`    | Rollback the last migration (local)    |
+| `make migrate-status`  | Show current migration status (local)  |
 | `make migrate-version` | Show current migration version (local) |
-| `make migrate-drop` | Drop all tables - destructive! (local) |
+| `make migrate-drop`    | Drop all tables - destructive! (local) |
 
 ### Build Migration Tool
 
-| Target | Description |
-|--------|-------------|
-| `make build-migrator` | Build migrator binary for development |
+| Target                     | Description                                     |
+|----------------------------|-------------------------------------------------|
+| `make build-migrator`      | Build migrator binary for development           |
 | `make build-migrator-prod` | Build optimized migrator for production (Linux) |
 
 ### Docker Development Environment
 
-| Target | Description |
-|--------|-------------|
-| `make docker-dev` | Start PostgreSQL for development (foreground) |
-| `make docker-dev-bg` | Start PostgreSQL in background |
-| `make docker-run` | Run full stack (correlator + postgres) |
-| `make docker-stop` | Stop all Docker services |
-| `make docker-logs` | View all service logs |
-| `make docker-logs-postgres` | View PostgreSQL logs only |
+| Target                      | Description                                   |
+|-----------------------------|-----------------------------------------------|
+| `make docker-dev`           | Start PostgreSQL for development (foreground) |
+| `make docker-dev-bg`        | Start PostgreSQL in background                |
+| `make docker-run`           | Run full stack (correlator + postgres)        |
+| `make docker-stop`          | Stop all Docker services                      |
+| `make docker-logs`          | View all service logs                         |
+| `make docker-logs-postgres` | View PostgreSQL logs only                     |
 
 ### Docker Migration Commands
 
-| Target | Description |
-|--------|-------------|
-| `make docker-build-migrator` | Build migrator Docker image |
-| `make docker-migrate-up` | Apply migrations using Docker |
-| `make docker-migrate-down` | Rollback migrations using Docker |
-| `make docker-migrate-status` | Show migration status using Docker |
+| Target                        | Description                         |
+|-------------------------------|-------------------------------------|
+| `make docker-build-migrator`  | Build migrator Docker image         |
+| `make docker-migrate-up`      | Apply migrations using Docker       |
+| `make docker-migrate-down`    | Rollback migrations using Docker    |
+| `make docker-migrate-status`  | Show migration status using Docker  |
 | `make docker-migrate-version` | Show migration version using Docker |
-| `make docker-migrate-drop` | Drop all tables using Docker |
+| `make docker-migrate-drop`    | Drop all tables using Docker        |
 
 ### Development Environment Setup
 
-| Target | Description |
-|--------|-------------|
-| `make setup` | Initial project setup (copy .env.example to .env) |
-| `make docker-dev-setup` | Setup development environment with Docker |
-| `make docker-health` | Run comprehensive health checks |
+| Target                  | Description                                       |
+|-------------------------|---------------------------------------------------|
+| `make setup`            | Initial project setup (copy .env.example to .env) |
+| `make docker-dev-setup` | Setup development environment with Docker         |
+| `make docker-health`    | Run comprehensive health checks                   |
 
 ### Help & Information
 
-| Target | Description |
-|--------|-------------|
+| Target      | Description                                   |
+|-------------|-----------------------------------------------|
 | `make help` | Show all available commands with descriptions |
 
 ### Common Development Workflows
 
 **Daily Development:**
+
 ```bash
 # Start development
 make docker-dev-bg && make docker-migrate-up
@@ -235,6 +241,7 @@ make test-integration
 ```
 
 **Database Development:**
+
 ```bash
 # Check migration status
 make docker-migrate-status
@@ -247,6 +254,7 @@ make docker-migrate-down
 ```
 
 **CI/CD Pipeline Simulation:**
+
 ```bash
 # Same commands as GitHub Actions
 make deps && make fmt && make vet && make lint && make test-unit && make test-integration
@@ -274,27 +282,34 @@ make deps && make fmt && make vet && make lint && make test-unit && make test-in
 ---
 
 ## Troubleshooting
+
 ### Common Issues
 
 #### golangci-lint Version Mismatch
+
 **Problem**: Configuration errors with golangci-lint
 **Solution**: Ensure you're using v2.4.0:
+
 ```bash
 golangci-lint version  # Should show v2.4.0
 brew install golangci-lint  # If using different version
 ```
 
 #### Go Version Mismatch
+
 **Problem**: CI failures with different Go version
 **Solution**: Ensure Go 1.25 everywhere:
+
 ```bash
 go version  # Should show go1.25
 # Update go.mod, .golangci.yml, and .github/workflows/pr.yml if needed
 ```
 
 #### Docker Database Issues
+
 **Problem**: Migration or connection failures
 **Solution**: Reset Docker environment:
+
 ```bash
 make docker-stop
 docker compose down -v  # Remove volumes
@@ -303,8 +318,10 @@ make docker-migrate-up
 ```
 
 #### Pre-commit Hook Failures
+
 **Problem**: Hooks failing or not running
 **Solution**: Reinstall hooks:
+
 ```bash
 pre-commit uninstall
 pre-commit install
@@ -312,8 +329,10 @@ pre-commit run --all-files
 ```
 
 #### Integration Test Timeouts
+
 **Problem**: testcontainers-go tests timing out
 **Solution**: Increase Docker resources or skip integration tests:
+
 ```bash
 make test-unit  # Skip integration tests for faster feedback
 # Or increase Docker Desktop memory allocation
@@ -323,5 +342,5 @@ make test-unit  # Skip integration tests for faster feedback
 
 ## References
 
-- [CONTRIBUTING](CONTRIBUTING.md)
+- see [CONTRIBUTING](CONTRIBUTING.md) for more guidelines.
 
