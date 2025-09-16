@@ -1,4 +1,4 @@
-name: PR
+name: Pull Request
 
 on:
   push:
@@ -11,7 +11,7 @@ env:
 
 jobs:
   lint:
-    name: Code quality checks
+    name: Code Quality Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -27,7 +27,8 @@ jobs:
         run: make deps
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
 
       - name: Check formatting
         run: |
