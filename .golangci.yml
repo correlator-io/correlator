@@ -86,6 +86,7 @@ output:
   # Either they are sorted alphabetically.
   #
   # Default: ["linter", "file"]
+  sort-results: true
   sort-order:
     - linter
     - severity
