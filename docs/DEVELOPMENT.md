@@ -257,17 +257,16 @@ make docker-migrate-down
 
 This directory contains CI/CD workflows for the Correlator project.
 
-### PR Workflow (`pr.yml`)
+### Pull Request Workflow (`pr.yml`)
 
-Runs on all pull requests and pushes to `main`/`master` branches.
+Runs on all pull requests and pushes to `main` branches.
 
 #### Jobs
 
-1. **Lint** - Code quality checks
-    - Go formatting verification (`gofmt`)
+1. **Lint** - Code Quality Checks
+    - Check formatting (`gofmt`)
     - Static analysis (`go vet`)
-    - Comprehensive linting (`golangci-lint-action@v8` with PR annotations)
-    - Dependency verification
+    - Comprehensive linting (`golangci-lint`)
 
 2. **Test** - Comprehensive testing
     - **Unit Tests**: Fast tests with mocked dependencies (`-short` flag)
@@ -278,20 +277,14 @@ Runs on all pull requests and pushes to `main`/`master` branches.
 #### Configuration
 
 - **Go Version**: 1.25.0 (set in `env.GO_VERSION`)
-- **golangci-lint Version**: v1.59.1 (via official GitHub Action v8.0.0)
+- **golangci-lint Version**: v2.4.0
 - **Test Timeout**: 10 minutes for integration tests
 - **Security**: PostgreSQL test password stored in GitHub Secrets (`POSTGRES_TEST_PASSWORD`) - no plaintext credentials in workflow files
-- **Cache**: Go modules, build cache, and golangci-lint cache for faster runs
 
 **Near-Perfect CI/Local Consistency**: The PR workflow uses the same `make` commands you run locally, ensuring identical behavior between development and CI environments.
 
-**Note on Linting**: CI uses the official `golangci-lint-action@v8` for better performance and PR annotations, while local development uses `make lint`. Both use the same `.golangci.yml` configuration for identical linting rules.
+**Note on Linting**: CI uses the official v2 of `golangci-lint`. This must be the same version as the local development environment. Both use `make lint` and the same `.golangci.yml` configuration for identical linting rules.
 
-#### Required GitHub Secrets
-
-The workflow requires the following secrets to be configured in the repository settings:
-
-- `POSTGRES_TEST_PASSWORD`: PostgreSQL password for integration tests (e.g., `correlator_test_password`)
 ---
 
 ## Code Style & Best Practices
