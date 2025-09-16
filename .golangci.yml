@@ -59,12 +59,12 @@ run:
 # Output configuration options.
 output:
   # The formats used to render issues.
-  formats:
-    # Prints issues in a JSON representation.
-    json:
-      # Output path can be either `stdout`, `stderr` or path to the file to write to.
-      # Default: stdout
-      path: stdout
+#  formats:
+#    # Prints issues in a JSON representation.
+#    json:
+#      # Output path can be either `stdout`, `stderr` or path to the file to write to.
+#      # Default: stdout
+#      path: stdout
   # Add a prefix to the output file references.
   # This option is ignored when using `output.path-mode: abs` mode.
   # Default: ""
@@ -86,10 +86,10 @@ output:
   # Either they are sorted alphabetically.
   #
   # Default: ["linter", "file"]
-  sort-order:
-    - linter
-    - severity
-    - file # filepath, line, and column.
+#  sort-order:
+#    - linter
+#    - severity
+#    - file # filepath, line, and column.
   # Show statistics per linter.
   # Default: true
   show-stats: false
