@@ -1,17 +1,17 @@
-name: PR
+name: Pull Request
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.25'
 
 jobs:
   lint:
-    name: Lint
+    name: Code Quality Checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,7 +26,11 @@ jobs:
       - name: Download dependencies
         run: make deps
 
-      - name: Check Go formatting
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
+
+      - name: Check formatting
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
             echo "The following files are not formatted:"
@@ -35,8 +39,11 @@ jobs:
             exit 1
           fi
 
-      - name: Run go vet
+      - name: Check vet
         run: make vet
+
+      - name: Check linting
+        run: make lint
 
   test:
     name: Test
@@ -80,4 +87,3 @@ jobs:
         env:
           CGO_ENABLED: 1
           DATABASE_URL: postgres://correlator_test:${{ secrets.POSTGRES_TEST_PASSWORD }}@localhost:5432/correlator_test?sslmode=disable
-

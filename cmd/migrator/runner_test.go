@@ -384,7 +384,9 @@ func TestMigrationRunnerClose(t *testing.T) {
 			name: "close with multiple errors",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					closeError: fmt.Errorf("close errors: [source close error: connection lost, database close error: timeout]"),
+					closeError: fmt.Errorf(
+						"close errors: [source close error: connection lost, database close error: timeout]",
+					),
 				}
 			},
 			expectError: true,

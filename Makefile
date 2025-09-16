@@ -25,7 +25,7 @@ test-unit:
 	go test -short -v -cover ./...
 
 test-integration:
-	go test -v -cover -timeout=10m ./cmd/migrator
+	go test -v -cover -timeout=10m ./...
 
 test-race:
 	go test -v -race -cover ./...
@@ -35,12 +35,12 @@ lint:
 	golangci-lint run
 
 fmt:
-	go fmt ./...
+	golangci-lint fmt
 
 vet:
 	go vet ./...
 
-# Dependencies  
+# Dependencies
 deps:
 	go mod download
 	go mod verify

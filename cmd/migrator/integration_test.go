@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
-	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	testcontainers "github.com/testcontainers/testcontainers-go"
 )
 
 // TestMigrationRunnerIntegration tests the complete migration runner workflow
@@ -72,7 +73,7 @@ func TestMigrationRunnerIntegration(t *testing.T) {
 	}
 
 	for filename, content := range migrations {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create migration file %s: %v", filename, err)
 		}
 	}
@@ -159,7 +160,7 @@ func TestMigrationRunnerErrorConditions(t *testing.T) {
 	}
 
 	for filename, content := range migrations {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create migration file %s: %v", filename, err)
 		}
 	}
@@ -325,7 +326,7 @@ func TestMigrationRunnerWithRealPostgreSQL(t *testing.T) {
 				tempDir := t.TempDir()
 				// Create minimal migration
 				content := "CREATE TABLE test (id INTEGER);"
-				if err := os.WriteFile(filepath.Join(tempDir, "001_test.up.sql"), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, "001_test.up.sql"), []byte(content), 0o644); err != nil {
 					t.Fatalf("failed to create migration file: %v", err)
 				}
 				return &Config{
@@ -411,7 +412,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 
 		// Create migration with invalid SQL
 		invalidSQL := "CREATE INVALID TABLE SYNTAX HERE;"
-		if err := os.WriteFile(filepath.Join(tempDir, "001_invalid.up.sql"), []byte(invalidSQL), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, "001_invalid.up.sql"), []byte(invalidSQL), 0o644); err != nil {
 			t.Fatalf("failed to create invalid migration file: %v", err)
 		}
 
@@ -463,7 +464,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`,
 		}
 
 		for filename, content := range migrations {
-			if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 				t.Fatalf("failed to create migration file %s: %v", filename, err)
 			}
 		}
@@ -538,7 +539,7 @@ func TestMigrationRunnerIntegrationConcurrency(t *testing.T) {
 	}
 
 	for filename, content := range migrations {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("failed to create migration file %s: %v", filename, err)
 		}
 	}
@@ -623,7 +624,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 	}
 
 	for filename, content := range migrations {
-		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, filename), []byte(content), 0o644); err != nil {
 			b.Fatalf("failed to create migration file %s: %v", filename, err)
 		}
 	}

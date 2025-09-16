@@ -29,6 +29,7 @@ Example: fix(ingestion): resolve OpenLineage event parsing error
 - [ ] I have reviewed my own code before requesting review
 - [ ] All tests pass locally (`make test`)
 - [ ] Code passes go vet checks (`make vet`)
+- [ ] Code passes go lint checks (`make fmt`)
 - [ ] Code passes go lint checks (`make lint`)
 - [ ] I have added/updated tests for the changes
 - [ ] Database migrations include proper rollback (if applicable)

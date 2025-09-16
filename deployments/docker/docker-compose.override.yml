@@ -5,12 +5,12 @@ services:
     environment:
       # Development-specific overrides
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev123}  # Default to dev123 if not set
-    
+
     # Enable verbose logging for development
     command: [
       "postgres",
       "-c", "shared_buffers=256MB",
-      "-c", "effective_cache_size=1GB", 
+      "-c", "effective_cache_size=1GB",
       "-c", "work_mem=16MB",
       "-c", "random_page_cost=1.1",
       "-c", "effective_io_concurrency=200",
@@ -23,7 +23,7 @@ services:
       "-c", "log_destination=stderr",
       "-c", "logging_collector=off"
     ]
-    
+
     volumes:
       # Mount migrations directory for easy development
       - ../../migrations:/migrations:ro
@@ -33,7 +33,7 @@ services:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD:-dev123}@postgres:5432/correlator?sslmode=disable
       - LOG_LEVEL=debug
       - DEVELOPMENT=true
-    
+
     # Mount source code for development (when using air for hot reload)
     volumes:
       - ../..:/app:ro
