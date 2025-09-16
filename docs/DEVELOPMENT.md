@@ -13,9 +13,9 @@ project.
 - [Testing](#testing)
 - [Linting & Formatting](#linting--formatting)
 - [Integration / Integration Tests](#integration--integration-tests)
-- [Hot Reload / Development Server](#hot-reload--development-server)
 - [Environment Variables & Configuration](#environment-variables--configuration)
 - [Makefile / Common Commands](#makefile--common-commands)
+- [GitHub Workflows](#github-workflows)
 - [Code Style & Best Practices](#code-style--best-practices)
 - [Versioning & Releases](#versioning--releases)
 - [Troubleshooting](#troubleshooting)
@@ -252,14 +252,46 @@ make docker-migrate-up
 # Rollback if needed
 make docker-migrate-down
 ```
+---
+## GitHub Workflows
 
-**CI/CD Pipeline Simulation:**
+This directory contains CI/CD workflows for the Correlator project.
 
-```bash
-# Same commands as GitHub Actions
-make deps && make fmt && make vet && make lint && make test-unit && make test-integration
-```
+### PR Workflow (`pr.yml`)
 
+Runs on all pull requests and pushes to `main`/`master` branches.
+
+#### Jobs
+
+1. **Lint** - Code quality checks
+    - Go formatting verification (`gofmt`)
+    - Static analysis (`go vet`)
+    - Comprehensive linting (`golangci-lint-action@v8` with PR annotations)
+    - Dependency verification
+
+2. **Test** - Comprehensive testing
+    - **Unit Tests**: Fast tests with mocked dependencies (`-short` flag)
+    - **Integration Tests**: Real PostgreSQL database tests using testcontainers
+    - **Database**: PostgreSQL 15-alpine service container
+    - **Coverage**: Test coverage reporting
+
+#### Configuration
+
+- **Go Version**: 1.25.0 (set in `env.GO_VERSION`)
+- **golangci-lint Version**: v1.59.1 (via official GitHub Action v8.0.0)
+- **Test Timeout**: 10 minutes for integration tests
+- **Security**: PostgreSQL test password stored in GitHub Secrets (`POSTGRES_TEST_PASSWORD`) - no plaintext credentials in workflow files
+- **Cache**: Go modules, build cache, and golangci-lint cache for faster runs
+
+**Near-Perfect CI/Local Consistency**: The PR workflow uses the same `make` commands you run locally, ensuring identical behavior between development and CI environments.
+
+**Note on Linting**: CI uses the official `golangci-lint-action@v8` for better performance and PR annotations, while local development uses `make lint`. Both use the same `.golangci.yml` configuration for identical linting rules.
+
+#### Required GitHub Secrets
+
+The workflow requires the following secrets to be configured in the repository settings:
+
+- `POSTGRES_TEST_PASSWORD`: PostgreSQL password for integration tests (e.g., `correlator_test_password`)
 ---
 
 ## Code Style & Best Practices
@@ -292,7 +324,7 @@ make deps && make fmt && make vet && make lint && make test-unit && make test-in
 
 ```bash
 golangci-lint version  # Should show v2.4.0
-brew install golangci-lint  # If using different version
+brew install golangci-lint  # If using different version on mac (see instruction for other OS)
 ```
 
 #### Go Version Mismatch
