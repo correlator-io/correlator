@@ -1,0 +1,31 @@
+{
+  "name": "Correlator Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "runArgs": [
+    "--privileged",
+    "-v", "/var/run/docker.sock:/var/run/docker.sock:rw"
+  ],
+
+  "containerEnv": {
+    "GO_VERSION": "1.25.0",
+    "CGO_ENABLED": "1",
+    "DOCKER_HOST": "unix:///var/run/docker.sock",
+    "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
+    "TESTCONTAINERS_RYUK_DISABLED": "true",
+    "TESTCONTAINERS_HOST_OVERRIDE": "host.docker.internal"
+  },
+
+  "remoteUser": "correlator",
+  "updateRemoteUserUID": false,
+
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+  "postCreateCommand": "make deps && pre-commit install",
+
+  "shutdownAction": "stopContainer"
+}

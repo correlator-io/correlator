@@ -14,6 +14,45 @@ import (
 	testcontainers "github.com/testcontainers/testcontainers-go"
 )
 
+// setupPostgresContainer creates and starts a PostgreSQL container for testing
+// Returns the container and connection string
+func setupPostgresContainer(
+	ctx context.Context,
+	t *testing.T,
+) (*postgres.PostgresContainer, string) {
+	t.Helper()
+
+	// Create PostgreSQL container with optimized settings for dev containers
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15-alpine",
+		postgres.WithDatabase("testdb"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(120*time.Second)), // Extended timeout for dev containers
+	)
+	if err != nil {
+		t.Fatalf("failed to start postgres container: %v", err)
+	}
+
+	// Set up cleanup
+	t.Cleanup(func() {
+		if err := pgContainer.Terminate(ctx); err != nil {
+			t.Logf("failed to terminate postgres container: %v", err)
+		}
+	})
+
+	// Get connection string
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to get connection string: %v", err)
+	}
+
+	return pgContainer, connStr
+}
+
 // TestMigrationRunnerIntegration tests the complete migration runner workflow
 // with a real PostgreSQL database using testcontainers
 func TestMigrationRunnerIntegration(t *testing.T) {
@@ -23,33 +62,8 @@ func TestMigrationRunnerIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:15-alpine"),
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		t.Fatalf("failed to start postgres container: %v", err)
-	}
-
-	// Clean up container when test completes
-	defer func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Logf("failed to terminate postgres container: %v", err)
-		}
-	}()
-
-	// Get connection string
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	// Set up PostgreSQL container
+	_, connStr := setupPostgresContainer(ctx, t)
 
 	// Create temporary migrations directory
 	tempDir := t.TempDir()
@@ -262,31 +276,8 @@ func TestMigrationRunnerWithRealPostgreSQL(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:15-alpine"),
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		t.Fatalf("failed to start postgres container: %v", err)
-	}
-
-	defer func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Logf("failed to terminate postgres container: %v", err)
-		}
-	}()
-
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	// Set up PostgreSQL container
+	_, connStr := setupPostgresContainer(ctx, t)
 
 	tests := []struct {
 		name          string
@@ -381,31 +372,8 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:15-alpine"),
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		t.Fatalf("failed to start postgres container: %v", err)
-	}
-
-	defer func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Logf("failed to terminate postgres container: %v", err)
-		}
-	}()
-
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	// Set up PostgreSQL container
+	_, connStr := setupPostgresContainer(ctx, t)
 
 	t.Run("invalid_sql_syntax", func(t *testing.T) {
 		tempDir := t.TempDir()
@@ -504,31 +472,8 @@ func TestMigrationRunnerIntegrationConcurrency(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:15-alpine"),
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		t.Fatalf("failed to start postgres container: %v", err)
-	}
-
-	defer func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Logf("failed to terminate postgres container: %v", err)
-		}
-	}()
-
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
+	// Set up PostgreSQL container
+	_, connStr := setupPostgresContainer(ctx, t)
 
 	tempDir := t.TempDir()
 
@@ -589,16 +534,16 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:15-alpine"),
+	// Set up PostgreSQL container (adapted for benchmark)
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15-alpine",
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
+				WithStartupTimeout(120*time.Second)), // Extended timeout for dev containers
 	)
 	if err != nil {
 		b.Fatalf("failed to start postgres container: %v", err)

@@ -33,3 +33,5 @@ coverage.out
 *.log
 .DS_Store
 Thumbs.db
+
+notes/

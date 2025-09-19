@@ -9,6 +9,10 @@ import (
 
 // TestLoadConfig tests the LoadConfig function with various scenarios
 func TestLoadConfig(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name        string
 		envVars     map[string]string
@@ -183,6 +187,10 @@ func TestLoadConfig(t *testing.T) {
 
 // TestConfigValidate tests the Validate method with various configurations
 func TestConfigValidate(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name        string
 		config      *Config
@@ -314,6 +322,10 @@ func TestConfigValidate(t *testing.T) {
 
 // TestConfigString tests the String method
 func TestConfigString(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name        string
 		config      *Config
@@ -385,6 +397,10 @@ func TestConfigString(t *testing.T) {
 
 // TestGetEnvOrDefault tests the getEnvOrDefault function
 func TestGetEnvOrDefault(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name         string
 		key          string
@@ -457,6 +473,10 @@ func TestGetEnvOrDefault(t *testing.T) {
 
 // TestMaskDatabaseURL tests the maskDatabaseURL function
 func TestMaskDatabaseURL(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name     string
 		input    string
@@ -516,6 +536,10 @@ func TestMaskDatabaseURL(t *testing.T) {
 
 // TestConfigIntegration tests the full integration flow
 func TestConfigIntegration(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	t.Run("full workflow with temporary directory", func(t *testing.T) {
 		// Create temporary directory structure
 		tempDir := t.TempDir()
