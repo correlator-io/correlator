@@ -9,7 +9,7 @@ project.
 
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
-- [Development Workflow](#development-workflow)
+- [Dev Container Setup (Recommended)](#dev-container-setup-recommended)
 - [Testing](#testing)
 - [Linting & Formatting](#linting--formatting)
 - [Integration / Integration Tests](#integration--integration-tests)
@@ -24,7 +24,9 @@ project.
 
 ## Prerequisites
 
-Before contributing, ensure you have the following installed and configured:
+You can skip installing the prerequisite tools by using our [development container](https://containers.dev/). This is the recommended [setup](#dev-container-setup-recommended).
+
+If you prefer to set up your own local development environment, ensure you have the following installed and configured:
 
 ### Required Software
 
@@ -51,54 +53,138 @@ Steps to get a local development environment up and running:
    cd correlator
    ```
 
-2. Ensure Go modules are enabled and download dependencies
-   ```bash
-   go mod download
-   ```
-
-3. Install [golangci](https://golangci-lint.run/docs/welcome/install/). Follow the steps that are relevant to your
-   operating system.
-
-4. Install [pre-commit](https://pre-commit.com/#installation)
-   ```bash
-   pip install pre-commit
-   ```
-
-5. Set up your environment variables  
-   Copy a sample env file from deployments/docker directory
-   ```bash
-   cp .env.example .env
-   ```
-   Populate required vars.
-
+2. Connect to the project [dev container](#dev-container-setup-recommended)
 ---
 
-## Development Workflow
+## Dev Container Setup (Recommended)
 
-A typical dev iteration looks like this:
+**🚀 Quick Start**: Use our pre-configured development container for instant setup with exact CI environment match.
 
-- Pull latest changes from `main` / default branch
-- Create a feature / bugfix branch (`git checkout -b feat/xyz`)
-- Write or update code
-- Run tests (unit + integration) locally
-- Run lint & formatting checks
-- Commit & push
-- Open PR / Merge Request
-- Ensure CI passes before merging
+### Why Use Dev Containers?
 
+- **Identical Environment**: Same Go 1.25.0 + golangci-lint v2.4.0 as CI
+- **Zero Config**: All tools pre-installed and configured
+- **testcontainers Ready**: Docker socket access for integration tests
+- **Cross-Platform**: Works on macOS, Linux, Windows
+- **No "Works on My Machine"**: Consistent across all contributors
+
+### Prerequisites
+
+- **Docker Desktop** MUST be running on your machine
+- **IntelliJ IDEA** with dev container support, **VS Code**, or any dev container compatible IDE
+
+### Setup Steps
+
+1. **Open in Dev Container**
+   - **IntelliJ**: Use "Remote Development" → "Dev Containers" → "Open in Container"
+   - **VS Code**: Command Palette → "Dev Containers: Reopen in Container"
+
+2. **First Build** (~3-5 minutes)
+   - Container downloads Go 1.25.0, installs golangci-lint v2.4.0, PostgreSQL client
+   - Runs `make deps` automatically
+
+3. **Verify Setup**
+   ```bash
+   go version                 # Should show: go version go1.25.0
+   golangci-lint version     # Should show: v2.4.0
+   docker ps                 # Should work (testcontainers access)
+   make test-integration     # Should spawn PostgreSQL containers
+   ```
+
+### Dev Container Features
+
+**Environment Match**:
+- ✅ Go 1.25.0 (MUST match CI)
+- ✅ golangci-lint v2.4.0 (MUST match CI)
+- ✅ PostgreSQL client for debugging
+- ✅ All Makefile commands work identically
+
+**testcontainers Integration**:
+- ✅ Docker socket mounted with proper permissions
+- ✅ Integration tests spawn real PostgreSQL containers
+- ✅ Same behavior as local development
+
+### Development Workflow in Container
+The dev container has all the required tools for development such as git and pre-commit. You must use it as your development.
+
+```bash
+# All standard commands work
+make build-all           # Build all binaries
+make test-unit           # Fast unit tests
+make test-integration    # Integration tests with testcontainers
+make lint                # golangci-lint v2.4.0
+make fmt                 # Format code
+
+# Database development
+make docker-dev-bg       # Start PostgreSQL in background
+make docker-migrate-up   # Apply migrations
+```
+
+Please make sure to read [CONTRIBUTING](CONTRIBUTING.md#contributing-guidelines-for-correlator) for more guidelines.
+ 
 ---
 
 ## Testing
 
-- **Unit Tests**  
-  Use `make test-unit` to run all unit tests. Prefer table‑driven tests and keep tests fast.
+### Test Categories
 
-- **Integration Tests**  
-  These tests depend on external services (databases, message queues, etc.). We use TestContainers (or similar) for
-  integration tests. Run:
+We maintain strict separation between unit and integration tests using Go's `testing.Short()` flag:
+
+- **Unit Tests**: Fast, isolated, no external dependencies
+- **Integration Tests**: Use real external services (databases, containers, etc.)
+
+### Test Conventions
+
+**Unit Tests**:
+- Add this condition at the start of every unit test function:
+  ```go
+  if !testing.Short() {
+      t.Skip("skipping unit test in non-short mode")
+  }
+  ```
+- Keep tests fast (< 100ms each)
+- Use mocks/stubs for external dependencies
+- Test individual functions/methods in isolation
+
+**Integration Tests**:
+- Add this condition at the start of every integration test function:
+  ```go
+  if testing.Short() {
+      t.Skip("skipping integration test in short mode")
+  }
+  ```
+- Use real external services (databases, testcontainers, etc.)
+- Test end-to-end workflows
+- Allow longer timeouts (up to 10 minutes)
+
+### Running Tests
+
+- **Unit Tests Only**:
+  ```bash
+  make test-unit
+  # Runs with -short flag, only executes unit tests
+  ```
+
+- **Integration Tests Only**:
   ```bash
   make test-integration
+  # Runs without -short flag, only executes integration tests
   ```
+
+- **All Tests**:
+  ```bash
+  make test
+  # Runs both unit and integration tests with coverage
+  ```
+
+### Adding New Tests
+
+When creating new test functions:
+
+1. **For unit tests**: Test individual functions, use mocks, keep fast
+2. **For integration tests**: Test full workflows, use real services, allow time
+3. **Always add the appropriate skip condition** based on test type
+4. **Use descriptive test names** that clearly indicate the test scope
 
 ---
 

@@ -3,7 +3,7 @@
 # Variables
 BINARY_NAME=correlator
 DOCKER_TAG=correlator:latest
-GO_VERSION=1.23
+GO_VERSION=1.25
 
 # Build commands
 build:
@@ -19,7 +19,7 @@ dev:
 	go run ./cmd/correlator
 
 test:
-	go test -v -cover ./...
+	go test -short -v -cover ./... && go test -v -cover ./...
 
 test-unit:
 	go test -short -v -cover ./...
