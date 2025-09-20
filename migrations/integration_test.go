@@ -56,6 +56,76 @@ func setupPostgresContainer(
 	return pgContainer, connStr
 }
 
+func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
+	// Phase 4 - true embedded migrations now implemented!
+	if testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// This test validates that our true embedded migration system provides the expected benefits
+	eMigration := NewEmbeddedMigration(nil)
+	fsys := eMigration.GetEmbeddedMigrations()
+
+	// Test 1: Embedded files should work without any directory dependencies
+	// This should always work with true embedded migrations - no external file system needed
+	files, err := eMigration.ListEmbeddedMigrations()
+	if err != nil {
+		t.Fatalf("failed to list embedded migrations: %v", err)
+	}
+
+	if len(files) == 0 {
+		t.Fatal("embedded migrations should be available without external files")
+	}
+
+	// Test 2: Performance characteristics - embedded access should be consistent and fast
+	// Measure time for repeated access - embedded should be consistent
+	start := time.Now()
+	for i := 0; i < 100; i++ {
+		files, err := eMigration.ListEmbeddedMigrations()
+		if err != nil {
+			t.Fatalf("failed to list migrations: %v", err)
+		}
+		if len(files) == 0 {
+			t.Error("embedded migrations should always be available")
+		}
+	}
+	elapsed := time.Since(start)
+
+	// True embedded system should be fast and consistent
+	if elapsed > 100*time.Millisecond { // 100ms for 100 operations = 1ms per operation
+		t.Errorf("embedded access took too long: %v (should be <100ms for 100 operations)", elapsed)
+	}
+
+	// Test 3: Embedded files should be readable regardless of working directory
+	for _, filename := range files {
+		file, err := fsys.Open(filename)
+		if err != nil {
+			t.Errorf("failed to open embedded file %s: %v", filename, err)
+			continue
+		}
+		_ = file.Close()
+
+		// Also test content reading
+		content, err := eMigration.GetEmbeddedMigrationContent(filename)
+		if err != nil {
+			t.Errorf("failed to read content of embedded file %s: %v", filename, err)
+			continue
+		}
+		if len(content) == 0 {
+			t.Errorf("embedded file %s should not be empty", filename)
+		}
+	}
+
+	// Test 4: Validation should work with embedded migrations
+	if err := eMigration.ValidateEmbeddedMigrations(); err != nil {
+		t.Errorf("embedded migration validation failed: %v", err)
+	}
+
+	t.Logf("SUCCESS: True embedded migration system working correctly!")
+	t.Logf("Processed %d embedded migrations in %v (avg: %v per operation)",
+		len(files), elapsed, elapsed/100)
+}
+
 // TestMigrationRunnerIntegration tests the complete migration runner workflow
 // with actual embedded migrations and a real PostgreSQL database using testcontainers
 func TestMigrationRunnerWorkFlow(t *testing.T) {
