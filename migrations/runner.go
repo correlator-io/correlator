@@ -9,9 +9,9 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 
-	_ "github.com/golang-migrate/migrate/v4/source/file" // File source driver
-	_ "github.com/lib/pq"                                // PostgreSQL driver
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 type (
@@ -38,9 +38,10 @@ type (
 
 	// migrationRunner implements MigrationRunner using golang-migrate
 	migrationRunner struct {
-		config  *Config
-		migrate *migrate.Migrate
-		db      *sql.DB
+		config            *Config
+		migrate           *migrate.Migrate
+		db                *sql.DB
+		embeddedMigration *EmbeddedMigration // For embedded migration validation and access
 	}
 
 	// migrateLogger implements the migrate.Logger interface
@@ -56,6 +57,16 @@ var _ io.Writer = (*migrateLogger)(nil)
 // NewMigrationRunner creates a new migration runner with the given configuration
 func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 	log.Printf("Initializing migration runner with config: %s", config.String())
+
+	// Initialize embedded migration
+	embeddedMigration := NewEmbeddedMigration(nil)
+
+	// Perform startup validation of embedded migrations
+	log.Println("Validating embedded migrations at startup...")
+	if err := embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+		return nil, fmt.Errorf("embedded migration validation failed: %w", err)
+	}
+	log.Println("Embedded migration validation passed")
 
 	// Open database connection
 	db, err := sql.Open("postgres", config.DatabaseURL)
@@ -80,16 +91,23 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 		return nil, fmt.Errorf("failed to create postgres driver: %w", err)
 	}
 
-	// Create source URL for file-based migrations
-	// TODO: Add embedded migration support in Phase 4
-	log.Printf("Using file system migrations from: %s", config.MigrationsPath)
-	sourceURL := fmt.Sprintf("file://%s", config.MigrationsPath)
+	log.Println("Using embedded migrations")
 
-	// Create migrate instance with file-based migrations
-	m, err := migrate.NewWithDatabaseInstance(sourceURL, "postgres", driver)
+	// Create iofs source driver from embedded file system
+	sourceDriver, err := iofs.New(embeddedMigration.GetEmbeddedMigrations(), ".")
 	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("failed to create migrate instance: %w", err)
+		return nil, fmt.Errorf("failed to create embedded migration source: %w", err)
+	}
+
+	// Create migrate instance with embedded migrations
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf(
+			"failed to create migrate instance with embedded migrations: %w",
+			err,
+		)
 	}
 
 	// Set up logging for migrate
@@ -98,14 +116,21 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 	log.Println("Migration runner initialized successfully")
 
 	return &migrationRunner{
-		config:  config,
-		migrate: m,
-		db:      db,
+		config:            config,
+		migrate:           m,
+		db:                db,
+		embeddedMigration: embeddedMigration,
 	}, nil
 }
 
 // Up applies all pending migrations
 func (r *migrationRunner) Up() error {
+	// Validate embedded migrations before state-changing operations
+	log.Println("Pre-operation validation: checking embedded migrations...")
+	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+		return fmt.Errorf("pre-operation validation failed: %w", err)
+	}
+
 	log.Println("Starting migration up...")
 
 	err := r.migrate.Up()
@@ -124,6 +149,12 @@ func (r *migrationRunner) Up() error {
 
 // Down rollbacks the last migration
 func (r *migrationRunner) Down() error {
+	// Validate embedded migrations before state-changing operations
+	log.Println("Pre-operation validation: checking embedded migrations...")
+	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+		return fmt.Errorf("pre-operation validation failed: %w", err)
+	}
+
 	log.Println("Starting migration down...")
 
 	err := r.migrate.Steps(-1)
@@ -188,6 +219,12 @@ func (r *migrationRunner) Version() error {
 
 // Drop drops all tables (destructive operation)
 func (r *migrationRunner) Drop() error {
+	// Validate embedded migrations before state-changing operations
+	log.Println("Pre-operation validation: checking embedded migrations...")
+	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+		return fmt.Errorf("pre-operation validation failed: %w", err)
+	}
+
 	log.Println("WARNING: Dropping all tables...")
 
 	err := r.migrate.Drop()

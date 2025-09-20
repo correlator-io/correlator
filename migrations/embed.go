@@ -2,24 +2,22 @@ package main
 
 import (
 	"crypto/sha256"
+	"embed"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 )
 
-// EmbeddedMigrationSupport provides an advanced embedded migration system with comprehensive validation.
-// This implementation includes filename validation, SQL syntax checking, pairing validation,
-// sequence validation, and checksum integrity checking for production-ready migration management.
-//
-// For Phase 3 MVP, we focus on file-based migrations with comprehensive validation.
-// Phase 4 will add true embedded migrations for containerized deployments.
-type EmbeddedMigrationSupport struct {
-	migrationsPath string
-	checksums      map[string]string // filename -> checksum for integrity checking
+// EmbeddedMigration provides a true embedded migration system with comprehensive validation.
+// This implementation uses go:embed for zero-config deployment and includes filename validation,
+// pairing validation, sequence validation, and checksum integrity checking for production-ready
+// migration management in containerized environments.
+type EmbeddedMigration struct {
+	fs        fs.FS
+	checksums map[string]string // filename -> checksum for integrity checking
 }
 
 // MigrationInfo contains parsed information about a migration file
@@ -31,45 +29,39 @@ type MigrationInfo struct {
 	Checksum  string
 }
 
+//go:embed *.sql
+var embeddedMigrations embed.FS
+
 // Migration filename regex: 001_migration_name.up.sql or 001_migration_name.down.sql
 var migrationFilenameRegex = regexp.MustCompile(`^(\d{3})_([a-zA-Z0-9_]+)\.(up|down)\.sql$`)
 
-// NewEmbeddedMigrationSupport creates a new embedded migration support instance
-func NewEmbeddedMigrationSupport(migrationsPath string) *EmbeddedMigrationSupport {
-	return &EmbeddedMigrationSupport{
-		migrationsPath: migrationsPath,
-		checksums:      make(map[string]string),
+// NewEmbeddedMigration creates a new EmbeddedMigration instance with injectable filesystem dependency.
+// Pass nil to use the default embedded migrations.
+func NewEmbeddedMigration(filesystem fs.FS) *EmbeddedMigration {
+	if filesystem == nil {
+		filesystem = embeddedMigrations
+	}
+
+	return &EmbeddedMigration{
+		fs:        filesystem,
+		checksums: make(map[string]string),
 	}
 }
 
-// GetEmbeddedMigrations returns a file system interface for migrations.
-// For now, this returns the OS file system pointing to the migrations directory.
-//
-// FUTURE ENHANCEMENT: This method is designed to be compatible with Go 1.16+ embed.FS.
-// In Phase 4, this can be enhanced to return truly embedded files using //go:embed directive:
-//
-//	//go:embed migrations/*.sql
-//	var embeddedMigrations embed.FS
-//
-//	func (e *EmbeddedMigrationSupport) GetEmbeddedMigrations() fs.FS {
-//	    if e.useEmbedded {
-//	        return embeddedMigrations
-//	    }
-//	    return os.DirFS(e.migrationsPath)
-//	}
-//
-// This interface abstraction allows seamless migration from file-based to truly embedded migrations.
-func (e *EmbeddedMigrationSupport) GetEmbeddedMigrations() fs.FS {
-	return os.DirFS(e.migrationsPath)
+// GetEmbeddedMigrations returns the embedded file system containing all migration files.
+// All migrations are embedded at build time using go:embed directive, enabling zero-config
+// deployment without external file dependencies.
+func (e *EmbeddedMigration) GetEmbeddedMigrations() fs.FS {
+	return e.fs
 }
 
-// ListEmbeddedMigrations returns a list of all migration files that conform to the strict naming standard.
+// ListEmbeddedMigrations returns a list of all embedded migration files that conform to the strict naming standard.
 // Only files matching the format 001_name.(up|down).sql are included.
 // Invalid filenames are rejected to enforce consistency and prevent operational mistakes.
-func (e *EmbeddedMigrationSupport) ListEmbeddedMigrations() ([]string, error) {
-	entries, err := os.ReadDir(e.migrationsPath)
+func (e *EmbeddedMigration) ListEmbeddedMigrations() ([]string, error) {
+	entries, err := fs.ReadDir(e.fs, ".")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read migrations directory: %w", err)
+		return nil, fmt.Errorf("failed to read embedded migrations directory: %w", err)
 	}
 
 	var files []string
@@ -94,22 +86,17 @@ func (e *EmbeddedMigrationSupport) ListEmbeddedMigrations() ([]string, error) {
 	return files, nil
 }
 
-// ValidateEmbeddedMigrations performs comprehensive validation of migration files.
+// ValidateEmbeddedMigrations performs comprehensive validation of embedded migration files.
 // This includes filename format, up/down pairing, sequence validation, and checksum integrity.
-func (e *EmbeddedMigrationSupport) ValidateEmbeddedMigrations() error {
-	// Check if migrations directory exists
-	if _, err := os.Stat(e.migrationsPath); os.IsNotExist(err) {
-		return fmt.Errorf("migrations directory does not exist: %s", e.migrationsPath)
-	}
-
-	// List files to ensure we have some migrations
+func (e *EmbeddedMigration) ValidateEmbeddedMigrations() error {
+	// List embedded files to ensure we have some migrations
 	files, err := e.ListEmbeddedMigrations()
 	if err != nil {
 		return err
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no migration files found in directory: %s", e.migrationsPath)
+		return fmt.Errorf("no embedded migration files found")
 	}
 
 	// First, validate that we can read each file (for backward compatibility)
@@ -153,14 +140,13 @@ func (e *EmbeddedMigrationSupport) ValidateEmbeddedMigrations() error {
 	return nil
 }
 
-// GetEmbeddedMigrationContent returns the content of a specific migration file.
-func (e *EmbeddedMigrationSupport) GetEmbeddedMigrationContent(filename string) ([]byte, error) {
-	fullPath := filepath.Join(e.migrationsPath, filename)
-	return os.ReadFile(fullPath)
+// GetEmbeddedMigrationContent returns the content of a specific embedded migration file.
+func (e *EmbeddedMigration) GetEmbeddedMigrationContent(filename string) ([]byte, error) {
+	return fs.ReadFile(e.fs, filename)
 }
 
 // parseMigrationFilename parses a migration filename and extracts its components
-func (e *EmbeddedMigrationSupport) parseMigrationFilename(filename string) (*MigrationInfo, error) {
+func (e *EmbeddedMigration) parseMigrationFilename(filename string) (*MigrationInfo, error) {
 	matches := migrationFilenameRegex.FindStringSubmatch(filename)
 	if len(matches) != 4 {
 		return nil, fmt.Errorf(
@@ -183,7 +169,7 @@ func (e *EmbeddedMigrationSupport) parseMigrationFilename(filename string) (*Mig
 }
 
 // validateFilenames validates that all migration files follow the correct naming convention
-func (e *EmbeddedMigrationSupport) validateFilenames(files []string) error {
+func (e *EmbeddedMigration) validateFilenames(files []string) error {
 	for _, file := range files {
 		_, err := e.parseMigrationFilename(file)
 		if err != nil {
@@ -194,7 +180,7 @@ func (e *EmbeddedMigrationSupport) validateFilenames(files []string) error {
 }
 
 // validatePairing ensures that every up migration has a corresponding down migration
-func (e *EmbeddedMigrationSupport) validatePairing(files []string) error {
+func (e *EmbeddedMigration) validatePairing(files []string) error {
 	// Parse all migration files
 	migrations := make(
 		map[string]map[string]*MigrationInfo,
@@ -229,7 +215,7 @@ func (e *EmbeddedMigrationSupport) validatePairing(files []string) error {
 }
 
 // validateSequence ensures there are no gaps in the migration sequence
-func (e *EmbeddedMigrationSupport) validateSequence(files []string) error {
+func (e *EmbeddedMigration) validateSequence(files []string) error {
 	sequences := make(map[int]bool)
 
 	// Collect all sequence numbers
@@ -278,13 +264,13 @@ func (e *EmbeddedMigrationSupport) validateSequence(files []string) error {
 }
 
 // calculateChecksum calculates SHA256 checksum of content
-func (e *EmbeddedMigrationSupport) calculateChecksum(content []byte) string {
+func (e *EmbeddedMigration) calculateChecksum(content []byte) string {
 	hash := sha256.Sum256(content)
 	return fmt.Sprintf("%x", hash)
 }
 
 // validateChecksums verifies that migration files haven't been modified
-func (e *EmbeddedMigrationSupport) validateChecksums(files []string) error {
+func (e *EmbeddedMigration) validateChecksums(files []string) error {
 	for _, file := range files {
 		content, err := e.GetEmbeddedMigrationContent(file)
 		if err != nil {

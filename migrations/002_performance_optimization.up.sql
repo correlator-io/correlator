@@ -17,43 +17,43 @@
 -- 1. PRIMARY CORRELATION LOOKUP: test_results → job_runs
 -- This is the most critical index for core correlation functionality
 -- Optimizes: SELECT * FROM test_results tr JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_results_correlation_lookup 
+CREATE INDEX IF NOT EXISTS idx_test_results_correlation_lookup 
 ON test_results (job_run_id, status, executed_at DESC)
 WHERE status IN ('failed', 'error');
 -- Rationale: Partial index on failures only, includes executed_at for temporal sorting
 -- Expected usage: 80% of all correlation queries
 
 -- 2. CANONICAL ID MAPPING: Fast job_run_id lookups across all tables
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_job_runs_canonical_id 
+CREATE INDEX IF NOT EXISTS idx_job_runs_canonical_id 
 ON job_runs (job_run_id, started_at DESC);
 -- Rationale: Primary correlation key with temporal ordering for recent-first results
 
--- 3. TEMPORAL CORRELATION: Recent incidents (last 24h optimization)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_results_recent_failures 
-ON test_results (executed_at DESC, status, dataset_urn) 
-WHERE executed_at > (NOW() - INTERVAL '7 days') AND status IN ('failed', 'error');
+-- 3. TEMPORAL CORRELATION: Recent incidents (optimized with status filter)
+CREATE INDEX IF NOT EXISTS idx_test_results_recent_failures
+ON test_results (executed_at DESC, status, dataset_urn)
+WHERE status IN ('failed', 'error');
 -- Rationale: Time-partitioned index for recent incident dashboard queries
 -- 7-day window covers 95% of incident response queries
 
 -- 4. DOWNSTREAM IMPACT: Lineage traversal from failed datasets
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lineage_edges_downstream_traversal 
+CREATE INDEX IF NOT EXISTS idx_lineage_edges_downstream_traversal 
 ON lineage_edges (input_dataset_urn, output_dataset_urn, job_run_id);
 -- Rationale: Optimizes recursive lineage queries for impact analysis
 -- Covers: WITH RECURSIVE downstream AS (...) pattern
 
 -- 5. UPSTREAM IMPACT: Reverse lineage traversal 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lineage_edges_upstream_traversal 
+CREATE INDEX IF NOT EXISTS idx_lineage_edges_upstream_traversal 
 ON lineage_edges (output_dataset_urn, input_dataset_urn, job_run_id);
 -- Rationale: Enables fast "what feeds this dataset" queries for root cause analysis
 
 -- 6. DATASET CORRELATION: Fast dataset-to-incident lookups
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_results_dataset_failures 
+CREATE INDEX IF NOT EXISTS idx_test_results_dataset_failures 
 ON test_results (dataset_urn, status, executed_at DESC) 
 WHERE status IN ('failed', 'error');
 -- Rationale: Dataset-first incident lookup pattern, temporal ordering
 
 -- 7. JOB STATUS CORRELATION: Failed job run identification
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_job_runs_status_temporal 
+CREATE INDEX IF NOT EXISTS idx_job_runs_status_temporal 
 ON job_runs (status, started_at DESC, completed_at) 
 WHERE status IN ('failed', 'error', 'running');
 -- Rationale: Job-level incident correlation, includes running jobs for real-time updates
@@ -63,14 +63,13 @@ WHERE status IN ('failed', 'error', 'running');
 -- Placeholder for accuracy monitoring index when correlation_events table exists
 
 -- 9. COMPOSITE CORRELATION: Multi-dimensional incident queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_test_results_composite_correlation 
+CREATE INDEX IF NOT EXISTS idx_test_results_composite_correlation 
 ON test_results (job_run_id, dataset_urn, status, executed_at DESC);
 -- Rationale: Supports complex filtering in incident dashboard (job + dataset + status)
 
 -- 10. LINEAGE TEMPORAL: Recent lineage events for correlation accuracy
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lineage_edges_recent_temporal 
-ON lineage_edges (created_at DESC, job_run_id) 
-WHERE created_at > (NOW() - INTERVAL '30 days');
+CREATE INDEX IF NOT EXISTS idx_lineage_edges_recent_temporal
+ON lineage_edges (created_at DESC, job_run_id);
 -- Rationale: Recent lineage events for correlation validation and accuracy measurement
 
 -- =====================================================
@@ -211,7 +210,7 @@ WITH RECURSIVE downstream_impact AS (
     le.job_run_id,
     jr.job_name,
     1 as impact_depth,
-    ARRAY[le.output_dataset_urn] as impact_path
+    ARRAY[le.output_dataset_urn]::VARCHAR(500)[] as impact_path
   FROM lineage_edges le
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
   WHERE le.created_at > (NOW() - INTERVAL '7 days')
@@ -225,7 +224,7 @@ WITH RECURSIVE downstream_impact AS (
     le.job_run_id,
     jr.job_name,
     di.impact_depth + 1,
-    di.impact_path || le.output_dataset_urn
+    (di.impact_path || le.output_dataset_urn)::VARCHAR(500)[]
   FROM downstream_impact di
     JOIN lineage_edges le ON di.impacted_dataset = le.input_dataset_urn
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
@@ -255,7 +254,7 @@ impact_summary AS (
     END as impact_category,
     
     -- Downstream dataset list (limited for performance)
-    ARRAY_AGG(DISTINCT impacted_dataset ORDER BY impact_depth, impacted_dataset) 
+    ARRAY_AGG(DISTINCT impacted_dataset)
       FILTER (WHERE impact_depth <= 3) as downstream_datasets_sample
       
   FROM downstream_impact di
@@ -311,7 +310,7 @@ SELECT
   
   -- Top affected systems (for alerting and routing)
   MODE() WITHIN GROUP (ORDER BY dataset_owner) as most_affected_owner,
-  (ARRAY_AGG(DISTINCT dataset_name ORDER BY incident_time DESC) 
+  (ARRAY_AGG(DISTINCT dataset_name)
     FILTER (WHERE incident_severity IN ('critical', 'high')))[1:10] as top_affected_datasets,
   
   -- Trend indicators  
@@ -346,16 +345,16 @@ BEGIN
   -- Refresh in dependency order (most critical first)
   
   -- 1. Core incident correlation (highest priority - real-time dashboards)
-  REFRESH MATERIALIZED VIEW CONCURRENTLY incident_correlation_view;
+  REFRESH MATERIALIZED VIEW incident_correlation_view;
   
   -- 2. Recent incidents summary (dashboard landing page)
-  REFRESH MATERIALIZED VIEW CONCURRENTLY recent_incidents_summary;
+  REFRESH MATERIALIZED VIEW recent_incidents_summary;
   
   -- 3. Correlation accuracy metrics (monitoring and alerting)
-  REFRESH MATERIALIZED VIEW CONCURRENTLY correlation_accuracy_metrics;
+  REFRESH MATERIALIZED VIEW correlation_accuracy_metrics;
   
   -- 4. Lineage impact analysis (lower priority - analytical queries)
-  REFRESH MATERIALIZED VIEW CONCURRENTLY lineage_impact_analysis;
+  REFRESH MATERIALIZED VIEW lineage_impact_analysis;
   
   -- Log refresh completion
   INSERT INTO system_logs (log_level, message, created_at) 
@@ -438,21 +437,21 @@ ORDER BY time_bucket DESC;
 -- =====================================================
 
 -- Monitor index usage and performance
-CREATE VIEW IF NOT EXISTS index_performance_monitor AS
-SELECT 
+CREATE OR REPLACE VIEW index_performance_monitor AS
+SELECT
   schemaname,
-  tablename,
-  indexname,
-  idx_tup_read as total_reads,
-  idx_tup_fetch as total_fetches,
-  ROUND((idx_tup_fetch::DECIMAL / NULLIF(idx_tup_read, 0)) * 100, 2) as fetch_efficiency_percent
-FROM pg_stat_user_indexes 
+  relname as tablename,
+  indexrelname as indexname,
+  idx_scan as total_scans,
+  idx_tup_read as total_tuples_read,
+  ROUND((idx_tup_read::DECIMAL / NULLIF(idx_scan, 0)), 2) as avg_tuples_per_scan
+FROM pg_stat_user_indexes
 WHERE schemaname = 'public'
-AND indexname LIKE 'idx_%correlation%'
+AND indexrelname LIKE 'idx_%correlation%'
 ORDER BY idx_tup_read DESC;
 
 -- Monitor materialized view sizes and refresh performance
-CREATE VIEW IF NOT EXISTS materialized_view_stats AS
+CREATE OR REPLACE VIEW materialized_view_stats AS
 SELECT 
   schemaname,
   matviewname,
@@ -470,7 +469,7 @@ ORDER BY pg_total_relation_size(schemaname||'.'||matviewname) DESC;
 
 -- Query to validate >90% correlation accuracy requirement
 -- Usage: Monitor in production to ensure SLA compliance
-CREATE VIEW IF NOT EXISTS correlation_sla_monitor AS
+CREATE OR REPLACE VIEW correlation_sla_monitor AS
 SELECT 
   'Last 24h' as time_window,
   AVG(correlation_accuracy_percent) as avg_accuracy,
@@ -483,9 +482,9 @@ SELECT
 FROM correlation_accuracy_metrics 
 WHERE time_bucket > (NOW() - INTERVAL '24 hours');
 
--- Query to validate <5 minute correlation latency requirement  
+-- Query to validate <5 minute correlation latency requirement
 -- Usage: Real-time latency monitoring for performance SLA
-CREATE VIEW IF NOT EXISTS correlation_latency_monitor AS
+CREATE OR REPLACE VIEW correlation_latency_monitor AS
 SELECT 
   'Last 1h' as time_window,
   AVG(correlation_lag_seconds) as avg_latency_seconds,
