@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-race clean run dev docker-build docker-run setup migrate lint fmt vet build-all deps tidy migrate-up migrate-down migrate-status migrate-version migrate-drop build-migrator build-migrator-prod docker-build-migrator docker-migrate-up docker-migrate-down docker-migrate-status docker-migrate-version docker-migrate-drop docker-stop docker-logs help
+.PHONY: build test test-unit test-integration test-race clean run dev docker-build docker-run setup migrate lint fmt vet build-all build-correlator build-ingester build-migrator build-migrator-prod deps tidy migrate-up migrate-down migrate-status migrate-version migrate-drop docker-build-migrator docker-migrate-up docker-migrate-down docker-migrate-status docker-migrate-version docker-migrate-drop docker-stop docker-logs help
 
 # Variables
 BINARY_NAME=correlator
@@ -9,10 +9,21 @@ GO_VERSION=1.25
 build:
 	go build -o bin/$(BINARY_NAME) ./cmd/correlator
 
-build-all:
+build-all: build-correlator build-ingester build-migrator
+
+# Build individual components with enhanced versioning
+build-correlator:
 	go build -o bin/correlator ./cmd/correlator
+
+build-ingester:
 	go build -o bin/ingester ./cmd/ingester
-	go build -o bin/migrator ./cmd/migrator
+
+build-migrator:
+	@echo "Building migrator with enhanced versioning..."
+	$(eval VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "1.0.0-dev"))
+	$(eval COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"))
+	$(eval BUILD_TIME := $(shell date -u '+%Y-%m-%d %H:%M:%S UTC'))
+	go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
 
 # Development commands
 dev:
@@ -48,29 +59,29 @@ deps:
 tidy:
 	go mod tidy
 
-# Database Migration Commands
+# Database Migration Commands (using embedded migrator)
 migrate-up:
-	go run ./cmd/migrator up
+	go run ./migrations up
 
 migrate-down:
-	go run ./cmd/migrator down
+	go run ./migrations down
 
 migrate-status:
-	go run ./cmd/migrator status
+	go run ./migrations status
 
 migrate-version:
-	go run ./cmd/migrator version
+	go run ./migrations version
 
 migrate-drop:
-	go run ./cmd/migrator drop
+	go run ./migrations drop
 
-# Build migrator binary
-build-migrator:
-	go build -o bin/migrator ./cmd/migrator
-
-# Build migrator for production (optimized)
+# Build migrator for production (optimized with enhanced versioning)
 build-migrator-prod:
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o build/migrator ./cmd/migrator
+	@echo "Building production migrator with enhanced versioning..."
+	$(eval VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "1.0.0-dev"))
+	$(eval COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown"))
+	$(eval BUILD_TIME := $(shell date -u '+%Y-%m-%d %H:%M:%S UTC'))
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o build/migrator ./migrations
 
 # Docker commands
 docker-build:

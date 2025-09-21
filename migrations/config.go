@@ -3,16 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // Config holds all configuration for the migration tool
 type Config struct {
 	// DatabaseURL is the PostgreSQL connection string
 	DatabaseURL string
-
-	// MigrationsPath is the path to migration files
-	MigrationsPath string
 
 	// MigrationTable is the name of the table to track migrations
 	MigrationTable string
@@ -22,7 +18,6 @@ type Config struct {
 func LoadConfig() (*Config, error) {
 	config := &Config{
 		DatabaseURL:    getEnvOrDefault("DATABASE_URL", ""),
-		MigrationsPath: getEnvOrDefault("MIGRATIONS_PATH", "./migrations"),
 		MigrationTable: getEnvOrDefault("MIGRATION_TABLE", "schema_migrations"),
 	}
 
@@ -43,21 +38,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("MIGRATION_TABLE cannot be empty")
 	}
 
-	if c.MigrationsPath == "" {
-		return fmt.Errorf("MIGRATIONS_PATH cannot be empty")
-	}
-
-	absPath, err := filepath.Abs(c.MigrationsPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve migrations path: %w", err)
-	}
-	c.MigrationsPath = absPath
-
-	// Check if directory exists
-	if _, err := os.Stat(c.MigrationsPath); os.IsNotExist(err) {
-		return fmt.Errorf("migrations directory does not exist: %s", c.MigrationsPath)
-	}
-
 	return nil
 }
 
@@ -65,8 +45,8 @@ func (c *Config) Validate() error {
 func (c *Config) String() string {
 	maskedURL := maskDatabaseURL(c.DatabaseURL)
 
-	return fmt.Sprintf("Config{DatabaseURL: %s, MigrationsPath: %s, MigrationTable: %s}",
-		maskedURL, c.MigrationsPath, c.MigrationTable)
+	return fmt.Sprintf("Config{DatabaseURL: %s, MigrationTable: %s}",
+		maskedURL, c.MigrationTable)
 }
 
 // getEnvOrDefault returns the environment variable value or a default if not set
@@ -131,7 +111,7 @@ func maskDatabaseURL(url string) string {
 	}
 
 	// Calculate password length
-	passwordLen := atPos - (colonPos + 1)
+	passwordLen := atPos - (colonPos + 1) // pragma: allowlist secret`
 
 	// If password is empty, don't mask anything
 	if passwordLen == 0 {

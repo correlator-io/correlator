@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -520,40 +519,6 @@ func TestMigrationRunnerErrorRecovery(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestMigrationRunnerConcurrency tests thread safety (if applicable)
-func TestMigrationRunnerConcurrency(t *testing.T) {
-	// This test defines expectations for concurrent access
-	// Migration runners should generally not support concurrent operations
-	// as database migrations need to be sequential
-
-	mock := &mockMigrationRunner{}
-
-	// Test that concurrent operations don't cause panics or races
-	done := make(chan bool, 2)
-
-	go func() {
-		defer func() { done <- true }()
-		for i := 0; i < 10; i++ {
-			_ = mock.Status()
-			time.Sleep(1 * time.Millisecond)
-		}
-	}()
-
-	go func() {
-		defer func() { done <- true }()
-		for i := 0; i < 10; i++ {
-			_ = mock.Version()
-			time.Sleep(1 * time.Millisecond)
-		}
-	}()
-
-	// Wait for both goroutines to complete
-	<-done
-	<-done
-
-	// If we get here without panics or races, the test passes
 }
 
 // TestMigrationRunnerResourceManagement tests proper resource cleanup

@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,68 +15,35 @@ func TestLoadConfig(t *testing.T) {
 	tests := []struct {
 		name        string
 		envVars     map[string]string
-		setupFunc   func(t *testing.T) string // returns temp dir path if needed
-		cleanupFunc func(string)              // cleanup temp dir
 		wantErr     bool
 		errContains string
 		validate    func(t *testing.T, config *Config)
 	}{
 		{
-			name: "default values when no env vars set but DATABASE_URL provided",
+			name: "default values when DATABASE_URL provided",
 			envVars: map[string]string{
-				"DATABASE_URL":    "postgres://user:pass@localhost:5432/testdb",
-				"MIGRATIONS_PATH": "",
+				"DATABASE_URL":    "postgres://user:pass@localhost:5432/testdb", // pragma: allowlist secret`
 				"MIGRATION_TABLE": "",
-			},
-			setupFunc: func(t *testing.T) string {
-				// Create migrations directory for default path
-				tempDir := t.TempDir()
-				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-					t.Fatalf("Failed to create test migrations directory: %v", err)
-				}
-				// Change to temp dir so relative path works
-				originalDir, _ := os.Getwd()
-				os.Chdir(tempDir)
-				t.Cleanup(func() { os.Chdir(originalDir) })
-				return tempDir
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
-				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" {
+				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected DATABASE_URL from env var, got %s", config.DatabaseURL)
 				}
 				if config.MigrationTable != "schema_migrations" {
 					t.Errorf("Expected default MIGRATION_TABLE, got %s", config.MigrationTable)
 				}
-				if !strings.HasSuffix(config.MigrationsPath, "migrations") {
-					t.Errorf(
-						"Expected migrations path to end with 'migrations', got %s",
-						config.MigrationsPath,
-					)
-				}
 			},
 		},
 		{
-			name: "custom env vars with valid migrations directory",
+			name: "custom migration table",
 			envVars: map[string]string{
-				"DATABASE_URL":    "postgres://user:pass@localhost:5432/testdb",
-				"MIGRATIONS_PATH": "",
+				"DATABASE_URL":    "postgres://user:pass@localhost:5432/testdb", // pragma: allowlist secret`
 				"MIGRATION_TABLE": "custom_migrations",
-			},
-			setupFunc: func(t *testing.T) string {
-				tempDir := t.TempDir()
-				migrationsDir := filepath.Join(tempDir, "custom_migrations")
-				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-					t.Fatalf("Failed to create test migrations directory: %v", err)
-				}
-				// Set the migrations path to our temp directory
-				os.Setenv("MIGRATIONS_PATH", migrationsDir)
-				return tempDir
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
-				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" {
+				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 				}
 				if config.MigrationTable != "custom_migrations" {
@@ -86,31 +52,10 @@ func TestLoadConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "validation fails with non-existent migrations directory",
-			envVars: map[string]string{
-				"DATABASE_URL":    "postgres://user:pass@localhost:5432/testdb",
-				"MIGRATIONS_PATH": "/non/existent/path",
-				"MIGRATION_TABLE": "migrations",
-			},
-			wantErr:     true,
-			errContains: "migrations directory does not exist",
-		},
-		{
 			name: "validation fails with empty DATABASE_URL",
 			envVars: map[string]string{
 				"DATABASE_URL":    "",
-				"MIGRATIONS_PATH": "",
 				"MIGRATION_TABLE": "migrations",
-			},
-			setupFunc: func(t *testing.T) string {
-				tempDir := t.TempDir()
-				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-					t.Fatalf("Failed to create test migrations directory: %v", err)
-				}
-				os.Setenv("MIGRATIONS_PATH", migrationsDir)
-				os.Setenv("DATABASE_URL", "") // explicitly set empty
-				return tempDir
 			},
 			wantErr:     true,
 			errContains: "DATABASE_URL cannot be empty",
@@ -130,12 +75,6 @@ func TestLoadConfig(t *testing.T) {
 				}
 			}
 
-			// Setup test directory if needed
-			var tempDir string
-			if tt.setupFunc != nil {
-				tempDir = tt.setupFunc(t)
-			}
-
 			// Cleanup function
 			defer func() {
 				// Restore original environment
@@ -145,9 +84,6 @@ func TestLoadConfig(t *testing.T) {
 					} else {
 						os.Setenv(key, originalValue)
 					}
-				}
-				if tt.cleanupFunc != nil && tempDir != "" {
-					tt.cleanupFunc(tempDir)
 				}
 			}()
 
@@ -194,22 +130,13 @@ func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *Config
-		setupFunc   func(t *testing.T) string // returns temp dir path if needed
 		wantErr     bool
 		errContains string
 	}{
 		{
 			name: "valid configuration",
-			setupFunc: func(t *testing.T) string {
-				tempDir := t.TempDir()
-				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-					t.Fatalf("Failed to create test migrations directory: %v", err)
-				}
-				return migrationsDir
-			},
 			config: &Config{
-				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb",
+				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb", // pragma: allowlist secret`
 				MigrationTable: "migrations",
 			},
 			wantErr: false,
@@ -218,7 +145,6 @@ func TestConfigValidate(t *testing.T) {
 			name: "empty DATABASE_URL",
 			config: &Config{
 				DatabaseURL:    "",
-				MigrationsPath: "/tmp",
 				MigrationTable: "migrations",
 			},
 			wantErr:     true,
@@ -227,67 +153,16 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "empty MIGRATION_TABLE",
 			config: &Config{
-				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb",
-				MigrationsPath: "/tmp",
+				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb", // pragma: allowlist secret`
 				MigrationTable: "",
 			},
 			wantErr:     true,
 			errContains: "MIGRATION_TABLE cannot be empty",
 		},
-		{
-			name: "empty MIGRATIONS_PATH",
-			config: &Config{
-				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb",
-				MigrationsPath: "",
-				MigrationTable: "migrations",
-			},
-			wantErr:     true,
-			errContains: "MIGRATIONS_PATH cannot be empty",
-		},
-		{
-			name: "non-existent migrations directory",
-			config: &Config{
-				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb",
-				MigrationsPath: "/absolutely/non/existent/path",
-				MigrationTable: "migrations",
-			},
-			wantErr:     true,
-			errContains: "migrations directory does not exist",
-		},
-		{
-			name: "relative path gets converted to absolute",
-			setupFunc: func(t *testing.T) string {
-				tempDir := t.TempDir()
-				migrationsDir := filepath.Join(tempDir, "migrations")
-				if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-					t.Fatalf("Failed to create test migrations directory: %v", err)
-				}
-				// Change to temp dir so relative path works
-				originalDir, _ := os.Getwd()
-				os.Chdir(tempDir)
-				t.Cleanup(func() { os.Chdir(originalDir) })
-				return migrationsDir
-			},
-			config: &Config{
-				DatabaseURL:    "postgres://user:pass@localhost:5432/testdb",
-				MigrationsPath: "./migrations",
-				MigrationTable: "migrations",
-			},
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test directory if needed
-			var expectedPath string
-			if tt.setupFunc != nil {
-				expectedPath = tt.setupFunc(t)
-				if tt.config != nil && expectedPath != "" {
-					tt.config.MigrationsPath = expectedPath
-				}
-			}
-
 			// Test validation
 			err := tt.config.Validate()
 
@@ -308,14 +183,6 @@ func TestConfigValidate(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-
-			// Verify absolute path conversion
-			if !filepath.IsAbs(tt.config.MigrationsPath) {
-				t.Errorf(
-					"Expected absolute path after validation, got: %s",
-					tt.config.MigrationsPath,
-				)
-			}
 		})
 	}
 }
@@ -335,14 +202,12 @@ func TestConfigString(t *testing.T) {
 		{
 			name: "normal configuration",
 			config: &Config{
-				DatabaseURL:    "postgres://user:password@localhost:5432/testdb",
-				MigrationsPath: "/path/to/migrations",
+				DatabaseURL:    "postgres://user:password@localhost:5432/testdb", // pragma: allowlist secret`
 				MigrationTable: "migrations",
 			},
 			contains: []string{
 				"Config{",
 				"DatabaseURL:",
-				"MigrationsPath: /path/to/migrations",
 				"MigrationTable: migrations",
 			},
 			notContains: []string{
@@ -353,13 +218,11 @@ func TestConfigString(t *testing.T) {
 			name: "empty database URL",
 			config: &Config{
 				DatabaseURL:    "",
-				MigrationsPath: "/path/to/migrations",
 				MigrationTable: "migrations",
 			},
 			contains: []string{
 				"Config{",
 				"DatabaseURL:",
-				"MigrationsPath: /path/to/migrations",
 				"MigrationTable: migrations",
 			},
 		},
@@ -367,7 +230,6 @@ func TestConfigString(t *testing.T) {
 			name: "database URL without password",
 			config: &Config{
 				DatabaseURL:    "postgres://user@localhost:5432/testdb",
-				MigrationsPath: "/path/to/migrations",
 				MigrationTable: "migrations",
 			},
 			contains: []string{
@@ -484,7 +346,7 @@ func TestMaskDatabaseURL(t *testing.T) {
 	}{
 		{
 			name:     "postgres URL with password",
-			input:    "postgres://user:password@localhost:5432/dbname",
+			input:    "postgres://user:password@localhost:5432/dbname", // pragma: allowlist secret`
 			expected: "postgres://user:***@localhost:5432/dbname",
 		},
 		{
@@ -534,27 +396,21 @@ func TestMaskDatabaseURL(t *testing.T) {
 	}
 }
 
-// TestConfigIntegration tests the full integration flow
+// TestConfigIntegration tests the full integration flow for embedded mode
 func TestConfigIntegration(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	t.Run("full workflow with temporary directory", func(t *testing.T) {
-		// Create temporary directory structure
-		tempDir := t.TempDir()
-		migrationsDir := filepath.Join(tempDir, "migrations")
-		if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-			t.Fatalf("Failed to create test migrations directory: %v", err)
-		}
-
-		// Set environment variables
+	t.Run("embedded configuration workflow", func(t *testing.T) {
+		// Set environment variables for embedded mode
 		originalDB := os.Getenv("DATABASE_URL")
-		originalPath := os.Getenv("MIGRATIONS_PATH")
 		originalTable := os.Getenv("MIGRATION_TABLE")
 
-		os.Setenv("DATABASE_URL", "postgres://testuser:testpass@localhost:5432/testdb")
-		os.Setenv("MIGRATIONS_PATH", migrationsDir)
+		os.Setenv(
+			"DATABASE_URL",
+			"postgres://testuser:testpass@localhost:5432/testdb", // pragma: allowlist secret`
+		) // pragma: allowlist secret`
 		os.Setenv("MIGRATION_TABLE", "test_migrations")
 
 		defer func() {
@@ -563,11 +419,6 @@ func TestConfigIntegration(t *testing.T) {
 				os.Unsetenv("DATABASE_URL")
 			} else {
 				os.Setenv("DATABASE_URL", originalDB)
-			}
-			if originalPath == "" {
-				os.Unsetenv("MIGRATIONS_PATH")
-			} else {
-				os.Setenv("MIGRATIONS_PATH", originalPath)
 			}
 			if originalTable == "" {
 				os.Unsetenv("MIGRATION_TABLE")
@@ -583,14 +434,11 @@ func TestConfigIntegration(t *testing.T) {
 		}
 
 		// Validate configuration content
-		if config.DatabaseURL != "postgres://testuser:testpass@localhost:5432/testdb" {
+		if config.DatabaseURL != "postgres://testuser:testpass@localhost:5432/testdb" { // pragma: allowlist secret`
 			t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 		}
 		if config.MigrationTable != "test_migrations" {
 			t.Errorf("Expected custom MIGRATION_TABLE, got %s", config.MigrationTable)
-		}
-		if config.MigrationsPath != migrationsDir {
-			t.Errorf("Expected migrations path %s, got %s", migrationsDir, config.MigrationsPath)
 		}
 
 		// Test string representation

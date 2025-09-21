@@ -11,10 +11,13 @@ import (
 	"os"
 )
 
-// Version information
-const (
-	version = "1.0.0-dev"
-	name    = "migrator"
+// Build-time version information
+// These variables are set at build time using -ldflags
+var (
+	Version   = "1.0.0-dev" // Version of the migrator
+	GitCommit = "unknown"   // Git commit hash
+	BuildTime = "unknown"   // Build timestamp
+	name      = "migrator"  // Application name
 )
 
 func main() {
@@ -27,7 +30,7 @@ func main() {
 
 	// Handle version flag
 	if *showVersion {
-		fmt.Printf("%s v%s\n", name, version)
+		printVersionInfo()
 		os.Exit(0)
 	}
 
@@ -86,6 +89,14 @@ func executeCommand(command string, runner MigrationRunner) error {
 	}
 }
 
+// printVersionInfo displays comprehensive version information
+func printVersionInfo() {
+	fmt.Printf("%s v%s\n", name, Version)
+	fmt.Printf("Git Commit: %s\n", GitCommit)
+	fmt.Printf("Build Time: %s\n", BuildTime)
+	fmt.Printf("Database Migration Tool for Correlator\n")
+}
+
 // printUsage displays usage information
 func printUsage() {
 	fmt.Printf(`%s v%s - Database Migration Tool for Correlator
@@ -107,9 +118,6 @@ OPTIONS:
 ENVIRONMENT VARIABLES:
     DATABASE_URL    PostgreSQL connection string (REQUIRED)
 
-    MIGRATIONS_PATH Path to migration files directory
-                   (default: ./migrations)
-
     MIGRATION_TABLE Name of migration tracking table
                    (default: schema_migrations)
 
@@ -120,5 +128,5 @@ EXAMPLES:
     %s --version           # Show version information
 
 For zero-config deployment, run without environment variables to use defaults.
-`, name, version, name, name, name, name, name)
+`, name, Version, name, name, name, name, name)
 }
