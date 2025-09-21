@@ -17,8 +17,16 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the migrator binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o migrator ./cmd/migrator
+# Build the migrator binary with embedded migrations and version information
+# The go:embed directive will include SQL files at compile time
+ARG VERSION=1.0.0-dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -a -installsuffix cgo \
+    -ldflags "-X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -o migrator ./migrations
 
 # Runtime stage
 FROM alpine:3.19
@@ -33,11 +41,8 @@ RUN addgroup -g 1001 -S correlator && \
 # Set working directory
 WORKDIR /app
 
-# Copy the migrator binary from builder stage
+# Copy the migrator binary from builder stage (includes embedded migrations)
 COPY --from=builder /app/migrator .
-
-# Copy migrations directory
-COPY --from=builder /app/migrations ./migrations
 
 # Change ownership to non-root user
 RUN chown -R correlator:correlator /app
@@ -47,7 +52,6 @@ USER correlator
 
 # Set default environment variables
 ENV DATABASE_URL=""
-ENV MIGRATIONS_PATH="./migrations"
 ENV MIGRATION_TABLE="schema_migrations"
 
 # Health check

@@ -64,7 +64,6 @@ services:
     container_name: correlator-migrator
     environment:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
-      - MIGRATIONS_PATH=./migrations
       - MIGRATION_TABLE=schema_migrations
     depends_on:
       postgres:
