@@ -480,6 +480,49 @@ git commit -s                         # Opens nano for detailed message
 git config --global --list | grep -E "(user|core.editor)"
 ```
 
+#### **Authentication Setup**
+
+**Problem**: Asked for username/password repeatedly when pushing from dev container.
+
+**🚀 Quick Fix (Credential Cache)**:
+```bash
+# Cache credentials for 1 hour (3600 seconds)
+git config --global credential.helper 'cache --timeout=3600'
+
+# Or cache for 8 hours (full workday)
+git config --global credential.helper 'cache --timeout=28800'
+
+# First push will ask for credentials, then cached for the timeout period
+git push origin main
+```
+
+**🔐 Best Practice (SSH Keys)**:
+```bash
+# 1. Generate SSH key inside dev container (if you don't have one)
+ssh-keygen -t ed25519 -C "your.email@example.com"
+
+# 2. Display public key to copy to GitHub/GitLab
+cat ~/.ssh/id_ed25519.pub
+
+# 3. Add to your Git provider (GitHub: Settings → SSH and GPG keys)
+
+# 4. Test SSH connection
+ssh -T git@github.com
+
+# 5. Update remote URL to use SSH (if currently using HTTPS)
+git remote set-url origin git@github.com:username/repository.git
+```
+
+**💡 Personal Access Token (Alternative)**:
+```bash
+# If you prefer HTTPS, use Personal Access Token instead of password
+# GitHub: Settings → Developer settings → Personal access tokens
+# Use token as password when prompted
+
+# Cache the token
+git config --global credential.helper 'cache --timeout=86400'  # 24 hours
+```
+
 #### **Troubleshooting**
 
 **Problem**: `git commit -s` fails with "Please tell me who you are"
@@ -487,6 +530,9 @@ git config --global --list | grep -E "(user|core.editor)"
 
 **Problem**: `git commit -s` opens wrong editor or fails  
 **Solution**: Set preferred editor: `git config --global core.editor nano`
+
+**Problem**: SSH key not working after container restart
+**Solution**: SSH keys persist in dev container. If issues persist, regenerate key or check SSH agent
 
 ---
 
