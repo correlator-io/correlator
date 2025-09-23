@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     python3 \
     python3-pip \
+    vim \
+    nano \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pre-commit and common dependencies (override PEP 668 for container environment)
@@ -49,6 +51,9 @@ ENV GO111MODULE=on \
     CGO_ENABLED=1 \
     GOPROXY=https://proxy.golang.org,direct \
     GOSUMDB=sum.golang.org
+
+# Configure Git with a default editor for the container
+RUN git config --system core.editor nano
 
 # Ensure Go tools are in PATH for correlator user
 ENV PATH="${PATH}:/home/correlator/go/bin"
