@@ -522,18 +522,6 @@ git remote set-url origin git@github.com:username/repository.git
 # Cache the token
 git config --global credential.helper 'cache --timeout=86400'  # 24 hours
 ```
-
-#### **Troubleshooting**
-
-**Problem**: `git commit -s` fails with "Please tell me who you are"
-**Solution**: Configure user name and email (see First-Time Setup above)
-
-**Problem**: `git commit -s` opens wrong editor or fails  
-**Solution**: Set preferred editor: `git config --global core.editor nano`
-
-**Problem**: SSH key not working after container restart
-**Solution**: SSH keys persist in dev container. If issues persist, regenerate key or check SSH agent
-
 ---
 
 *Happy coding! 🚀*
