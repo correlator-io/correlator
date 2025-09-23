@@ -1,11 +1,23 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
 
-// Config holds all configuration for the migration tool
+// Constants for URL parsing.
+const (
+	authorityStartOffset = 2 // Offset after "//" to get to the authority section
+)
+
+// Static errors for validation.
+var (
+	ErrDatabaseURLEmpty    = errors.New("DATABASE_URL cannot be empty")
+	ErrMigrationTableEmpty = errors.New("MIGRATION_TABLE cannot be empty")
+)
+
+// Config holds all configuration for the migration tool.
 type Config struct {
 	// DatabaseURL is the PostgreSQL connection string
 	DatabaseURL string
@@ -14,34 +26,35 @@ type Config struct {
 	MigrationTable string
 }
 
-// LoadConfig loads configuration from environment variables with sensible defaults
+// LoadConfig loads configuration from environment variables with sensible defaults.
 func LoadConfig() (*Config, error) {
 	config := &Config{
 		DatabaseURL:    getEnvOrDefault("DATABASE_URL", ""),
 		MigrationTable: getEnvOrDefault("MIGRATION_TABLE", "schema_migrations"),
 	}
 
-	if err := config.Validate(); err != nil {
+	err := config.Validate()
+	if err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
 	return config, nil
 }
 
-// Validate checks that the configuration is valid
+// Validate checks that the configuration is valid.
 func (c *Config) Validate() error {
 	if c.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL cannot be empty")
+		return ErrDatabaseURLEmpty
 	}
 
 	if c.MigrationTable == "" {
-		return fmt.Errorf("MIGRATION_TABLE cannot be empty")
+		return ErrMigrationTableEmpty
 	}
 
 	return nil
 }
 
-// String returns a string representation of the configuration (safe for logging)
+// String returns a string representation of the configuration (safe for logging).
 func (c *Config) String() string {
 	maskedURL := maskDatabaseURL(c.DatabaseURL)
 
@@ -49,7 +62,7 @@ func (c *Config) String() string {
 		maskedURL, c.MigrationTable)
 }
 
-// getEnvOrDefault returns the environment variable value or a default if not set
+// getEnvOrDefault returns the environment variable value or a default if not set.
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -57,28 +70,48 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// maskDatabaseURL masks sensitive information in database URLs for logging
+// maskDatabaseURL masks sensitive information in database URLs for logging.
 func maskDatabaseURL(url string) string {
 	if url == "" {
 		return ""
 	}
 
-	// Find the "//" that indicates the start of the authority section
-	authStart := -1
-	for i := 0; i < len(url)-1; i++ {
-		if url[i] == '/' && url[i+1] == '/' {
-			authStart = i + 2
-			break
-		}
-	}
-
-	// If no "//" found, return original URL (no authority section)
+	authStart := findAuthorityStart(url)
 	if authStart == -1 {
 		return url
 	}
 
-	// Find the "@" symbol which separates user info from host
-	// We need to find the LAST "@" in the authority section in case the password contains "@"
+	atPos := findLastAtSymbol(url, authStart)
+	if atPos == -1 {
+		return url
+	}
+
+	colonPos := findColonInUserInfo(url, authStart, atPos)
+	if colonPos == -1 {
+		return url
+	}
+
+	passwordLen := atPos - (colonPos + 1) // pragma: allowlist secret
+	if passwordLen == 0 {
+		return url
+	}
+
+	// Replace password with asterisks
+	return url[:colonPos+1] + "***" + url[atPos:]
+}
+
+// findAuthorityStart finds the "//" that indicates the start of the authority section.
+func findAuthorityStart(url string) int {
+	for i := range len(url) - 1 {
+		if url[i] == '/' && url[i+1] == '/' {
+			return i + authorityStartOffset
+		}
+	}
+	return -1
+}
+
+// findLastAtSymbol finds the last "@" symbol in the authority section.
+func findLastAtSymbol(url string, authStart int) int {
 	atPos := -1
 	for i := authStart; i < len(url); i++ {
 		if url[i] == '@' {
@@ -90,34 +123,15 @@ func maskDatabaseURL(url string) string {
 			break
 		}
 	}
+	return atPos
+}
 
-	// If no "@" found, there's no user info to mask
-	if atPos == -1 {
-		return url
-	}
-
-	// Find the ":" in the user info section (between authStart and atPos)
-	colonPos := -1
+// findColonInUserInfo finds the ":" in the user info section.
+func findColonInUserInfo(url string, authStart, atPos int) int {
 	for i := authStart; i < atPos; i++ {
 		if url[i] == ':' {
-			colonPos = i
-			break
+			return i
 		}
 	}
-
-	// If no ":" found in user info, there's no password to mask
-	if colonPos == -1 {
-		return url
-	}
-
-	// Calculate password length
-	passwordLen := atPos - (colonPos + 1) // pragma: allowlist secret`
-
-	// If password is empty, don't mask anything
-	if passwordLen == 0 {
-		return url
-	}
-
-	// Replace password with asterisks
-	return url[:colonPos+1] + "***" + url[atPos:]
+	return -1
 }

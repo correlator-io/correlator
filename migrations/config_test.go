@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -27,6 +26,7 @@ func TestLoadConfig(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
+				t.Helper()
 				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected DATABASE_URL from env var, got %s", config.DatabaseURL)
 				}
@@ -43,6 +43,7 @@ func TestLoadConfig(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
+				t.Helper()
 				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 				}
@@ -64,28 +65,14 @@ func TestLoadConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup environment variables
-			originalEnv := make(map[string]string)
+			// Setup environment variables using t.Setenv for automatic cleanup
 			for key, value := range tt.envVars {
-				originalEnv[key] = os.Getenv(key)
 				if value == "" {
-					os.Unsetenv(key)
+					t.Setenv(key, "")
 				} else {
-					os.Setenv(key, value)
+					t.Setenv(key, value)
 				}
 			}
-
-			// Cleanup function
-			defer func() {
-				// Restore original environment
-				for key, originalValue := range originalEnv {
-					if originalValue == "" {
-						os.Unsetenv(key)
-					} else {
-						os.Setenv(key, originalValue)
-					}
-				}
-			}()
 
 			// Test LoadConfig
 			config, err := LoadConfig()
@@ -306,21 +293,11 @@ func TestGetEnvOrDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Store original value
-			originalValue := os.Getenv(tt.key)
-			defer func() {
-				if originalValue == "" {
-					os.Unsetenv(tt.key)
-				} else {
-					os.Setenv(tt.key, originalValue)
-				}
-			}()
-
-			// Set up environment
+			// Set up environment using t.Setenv for automatic cleanup
 			if tt.setEnv {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 			} else {
-				os.Unsetenv(tt.key)
+				t.Setenv(tt.key, "")
 			}
 
 			// Test function
@@ -403,29 +380,12 @@ func TestConfigIntegration(t *testing.T) {
 	}
 
 	t.Run("embedded configuration workflow", func(t *testing.T) {
-		// Set environment variables for embedded mode
-		originalDB := os.Getenv("DATABASE_URL")
-		originalTable := os.Getenv("MIGRATION_TABLE")
-
-		os.Setenv(
+		// Set environment variables for embedded mode using t.Setenv for automatic cleanup
+		t.Setenv(
 			"DATABASE_URL",
 			"postgres://testuser:testpass@localhost:5432/testdb", // pragma: allowlist secret`
-		) // pragma: allowlist secret`
-		os.Setenv("MIGRATION_TABLE", "test_migrations")
-
-		defer func() {
-			// Restore environment
-			if originalDB == "" {
-				os.Unsetenv("DATABASE_URL")
-			} else {
-				os.Setenv("DATABASE_URL", originalDB)
-			}
-			if originalTable == "" {
-				os.Unsetenv("MIGRATION_TABLE")
-			} else {
-				os.Setenv("MIGRATION_TABLE", originalTable)
-			}
-		}()
+		)
+		t.Setenv("MIGRATION_TABLE", "test_migrations")
 
 		// Load configuration
 		config, err := LoadConfig()
