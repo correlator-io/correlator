@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
+
+// ErrCloseErrors is custom error
+var ErrCloseErrors = errors.New("close errors")
 
 type (
 	// MigrationRunner defines the interface for running database migrations
@@ -55,7 +59,7 @@ var _ migrate.Logger = (*migrateLogger)(nil)
 var _ io.Writer = (*migrateLogger)(nil)
 
 // NewMigrationRunner creates a new migration runner with the given configuration
-func NewMigrationRunner(config *Config) (MigrationRunner, error) {
+func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	log.Printf("Initializing migration runner with config: %s", config.String())
 
 	// Initialize embedded migration
@@ -63,9 +67,12 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 
 	// Perform startup validation of embedded migrations
 	log.Println("Validating embedded migrations at startup...")
-	if err := embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+
+	err := embeddedMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		return nil, fmt.Errorf("embedded migration validation failed: %w", err)
 	}
+
 	log.Println("Embedded migration validation passed")
 
 	// Open database connection
@@ -75,7 +82,8 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 	}
 
 	// Test database connection
-	if err := db.Ping(); err != nil {
+	err = db.PingContext(context.Background())
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
@@ -88,6 +96,7 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 	})
 	if err != nil {
 		_ = db.Close()
+
 		return nil, fmt.Errorf("failed to create postgres driver: %w", err)
 	}
 
@@ -127,13 +136,15 @@ func NewMigrationRunner(config *Config) (MigrationRunner, error) {
 func (r *migrationRunner) Up() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
-	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+
+	err := r.embeddedMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		return fmt.Errorf("pre-operation validation failed: %w", err)
 	}
 
 	log.Println("Starting migration up...")
 
-	err := r.migrate.Up()
+	err = r.migrate.Up()
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migration up failed: %w", err)
 	}
@@ -151,13 +162,15 @@ func (r *migrationRunner) Up() error {
 func (r *migrationRunner) Down() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
-	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+
+	err := r.embeddedMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		return fmt.Errorf("pre-operation validation failed: %w", err)
 	}
 
 	log.Println("Starting migration down...")
 
-	err := r.migrate.Steps(-1)
+	err = r.migrate.Steps(-1)
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migration down failed: %w", err)
 	}
@@ -176,7 +189,7 @@ func (r *migrationRunner) Status() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
-			fmt.Println("Migration Status: No migrations applied yet")
+			log.Println("Migration Status: No migrations applied yet")
 			return nil
 		}
 		return fmt.Errorf("failed to get migration version: %w", err)
@@ -187,10 +200,11 @@ func (r *migrationRunner) Status() error {
 		status = "dirty (needs manual intervention)"
 	}
 
-	fmt.Printf("Migration Status: Version %d (%s)\n", ver, status)
+	log.Printf("Migration Status: Version %d (%s)\n", ver, status)
 
 	// Additional information about pending migrations
-	if err := r.showPendingMigrations(); err != nil {
+	err = r.showPendingMigrations()
+	if err != nil {
 		log.Printf("Warning: Could not determine pending migrations: %v", err)
 	}
 
@@ -202,7 +216,7 @@ func (r *migrationRunner) Version() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
-			fmt.Println("Current Version: No migrations applied")
+			log.Println("Current Version: No migrations applied")
 			return nil
 		}
 		return fmt.Errorf("failed to get migration version: %w", err)
@@ -213,7 +227,7 @@ func (r *migrationRunner) Version() error {
 		dirtyNote = " (dirty)"
 	}
 
-	fmt.Printf("Current Version: %d%s\n", ver, dirtyNote)
+	log.Printf("Current Version: %d%s\n", ver, dirtyNote)
 	return nil
 }
 
@@ -221,13 +235,15 @@ func (r *migrationRunner) Version() error {
 func (r *migrationRunner) Drop() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
-	if err := r.embeddedMigration.ValidateEmbeddedMigrations(); err != nil {
+
+	err := r.embeddedMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		return fmt.Errorf("pre-operation validation failed: %w", err)
 	}
 
 	log.Println("WARNING: Dropping all tables...")
 
-	err := r.migrate.Drop()
+	err = r.migrate.Drop()
 	if err != nil {
 		return fmt.Errorf("drop operation failed: %w", err)
 	}
@@ -241,24 +257,25 @@ func (r *migrationRunner) Close() error {
 	var errs []error
 
 	if r.migrate != nil {
-		if sourceErr, dbErr := r.migrate.Close(); sourceErr != nil || dbErr != nil {
-			if sourceErr != nil {
-				errs = append(errs, fmt.Errorf("source close error: %w", sourceErr))
-			}
-			if dbErr != nil {
-				errs = append(errs, fmt.Errorf("database close error: %w", dbErr))
-			}
+		sourceErr, dbErr := r.migrate.Close()
+		if sourceErr != nil {
+			errs = append(errs, fmt.Errorf("source close error: %w", sourceErr))
+		}
+
+		if dbErr != nil {
+			errs = append(errs, fmt.Errorf("database close error: %w", dbErr))
 		}
 	}
 
 	if r.db != nil {
-		if err := r.db.Close(); err != nil {
+		err := r.db.Close()
+		if err != nil {
 			errs = append(errs, fmt.Errorf("database connection close error: %w", err))
 		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("close errors: %v", errs)
+		return fmt.Errorf("%w: %v", ErrCloseErrors, errs)
 	}
 
 	return nil
@@ -272,7 +289,7 @@ func (r *migrationRunner) showPendingMigrations() error {
 	// and comparing with the current version
 
 	// For now, we'll just indicate that this feature could be enhanced
-	fmt.Println("Note: Use 'up' command to apply any pending migrations")
+	log.Println("Note: Use 'up' command to apply any pending migrations")
 	return nil
 }
 
@@ -284,7 +301,7 @@ func (l *migrateLogger) Verbose() bool {
 	return true
 }
 
-func (l *migrateLogger) Write(p []byte) (n int, err error) {
+func (l *migrateLogger) Write(p []byte) (int, error) {
 	log.Printf("[MIGRATE] %s", string(p))
 	return len(p), nil
 }

@@ -1,24 +1,38 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
+// Static errors for testing
+var (
+	ErrSyntaxError              = errors.New("syntax error in migration")
+	ErrConnectionLost           = errors.New("connection lost")
+	ErrCannotRollback           = errors.New("cannot rollback applied migration")
+	ErrDatabaseDirty            = errors.New("database is in dirty state")
+	ErrDatabaseConnectionFailed = errors.New("database connection failed")
+	ErrCannotDropTables         = errors.New("cannot drop tables")
+	ErrPermissionDenied         = errors.New("permission denied")
+	ErrConnectionCloseError     = errors.New("connection close error")
+	ErrMigrationFailed          = errors.New("migration failed")
+	ErrRollbackFailed           = errors.New("rollback failed")
+	ErrMultipleCloseErrors      = errors.New(
+		"close errors: [source close error: connection lost, database close error: timeout]",
+	)
+)
+
 // mockMigrationRunner implements MigrationRunner for testing
 type mockMigrationRunner struct {
-	upError        error
-	downError      error
-	statusError    error
-	versionError   error
-	dropError      error
-	closeError     error
-	currentVersion uint
-	isDirty        bool
-	shouldCallNext bool // controls whether methods should be called
+	upError      error
+	downError    error
+	statusError  error
+	versionError error
+	dropError    error
+	closeError   error
 }
 
 func (m *mockMigrationRunner) Up() error      { return m.upError }
@@ -27,6 +41,38 @@ func (m *mockMigrationRunner) Status() error  { return m.statusError }
 func (m *mockMigrationRunner) Version() error { return m.versionError }
 func (m *mockMigrationRunner) Drop() error    { return m.dropError }
 func (m *mockMigrationRunner) Close() error   { return m.closeError }
+
+// Helper function to reduce test code duplication
+type testCase struct {
+	name        string
+	setupMock   func() *mockMigrationRunner
+	expectError bool
+	errorText   string
+}
+
+// runTestCases is a helper function to execute test cases and reduce duplication
+func runTestCases(t *testing.T, tests []testCase, operation func(MigrationRunner) error) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := tt.setupMock()
+
+			err := operation(runner)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
+					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
 
 // NOTE: NewMigrationRunner testing requires a real database connection and proper
 // migration files setup. Since all test cases in unit tests would fail with
@@ -38,12 +84,7 @@ func (m *mockMigrationRunner) Close() error   { return m.closeError }
 // - Database connectivity and migration file validation scenarios
 
 func TestMigrationRunnerUp(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "successful migration up",
 			setupMock: func() *mockMigrationRunner {
@@ -66,7 +107,7 @@ func TestMigrationRunnerUp(t *testing.T) {
 			name: "migration failure",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					upError: fmt.Errorf("syntax error in migration"),
+					upError: ErrSyntaxError,
 				}
 			},
 			expectError: true,
@@ -76,7 +117,7 @@ func TestMigrationRunnerUp(t *testing.T) {
 			name: "database connection lost during migration",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					upError: fmt.Errorf("connection lost"),
+					upError: ErrConnectionLost,
 				}
 			},
 			expectError: true,
@@ -84,35 +125,11 @@ func TestMigrationRunnerUp(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Up()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Up() })
 }
 
 func TestMigrationRunnerDown(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "successful migration down",
 			setupMock: func() *mockMigrationRunner {
@@ -135,7 +152,7 @@ func TestMigrationRunnerDown(t *testing.T) {
 			name: "rollback failure",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					downError: fmt.Errorf("cannot rollback applied migration"),
+					downError: ErrCannotRollback,
 				}
 			},
 			expectError: true,
@@ -145,7 +162,7 @@ func TestMigrationRunnerDown(t *testing.T) {
 			name: "database in dirty state",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					downError: fmt.Errorf("database is in dirty state"),
+					downError: ErrDatabaseDirty,
 				}
 			},
 			expectError: true,
@@ -153,35 +170,11 @@ func TestMigrationRunnerDown(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Down()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Down() })
 }
 
 func TestMigrationRunnerStatus(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "get status successfully",
 			setupMock: func() *mockMigrationRunner {
@@ -195,7 +188,7 @@ func TestMigrationRunnerStatus(t *testing.T) {
 			name: "database connection error",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					statusError: fmt.Errorf("database connection failed"),
+					statusError: ErrDatabaseConnectionFailed,
 				}
 			},
 			expectError: true,
@@ -212,35 +205,11 @@ func TestMigrationRunnerStatus(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Status()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Status() })
 }
 
 func TestMigrationRunnerVersion(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "get version successfully",
 			setupMock: func() *mockMigrationRunner {
@@ -254,7 +223,7 @@ func TestMigrationRunnerVersion(t *testing.T) {
 			name: "database connection error",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					versionError: fmt.Errorf("database connection failed"),
+					versionError: ErrDatabaseConnectionFailed,
 				}
 			},
 			expectError: true,
@@ -271,35 +240,11 @@ func TestMigrationRunnerVersion(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Version()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Version() })
 }
 
 func TestMigrationRunnerDrop(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "successful drop",
 			setupMock: func() *mockMigrationRunner {
@@ -313,7 +258,7 @@ func TestMigrationRunnerDrop(t *testing.T) {
 			name: "drop failure",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					dropError: fmt.Errorf("cannot drop tables"),
+					dropError: ErrCannotDropTables,
 				}
 			},
 			expectError: true,
@@ -323,7 +268,7 @@ func TestMigrationRunnerDrop(t *testing.T) {
 			name: "permission denied",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					dropError: fmt.Errorf("permission denied"),
+					dropError: ErrPermissionDenied,
 				}
 			},
 			expectError: true,
@@ -331,35 +276,11 @@ func TestMigrationRunnerDrop(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Drop()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Drop() })
 }
 
 func TestMigrationRunnerClose(t *testing.T) {
-	tests := []struct {
-		name        string
-		setupMock   func() *mockMigrationRunner
-		expectError bool
-		errorText   string
-	}{
+	tests := []testCase{
 		{
 			name: "successful close",
 			setupMock: func() *mockMigrationRunner {
@@ -373,7 +294,7 @@ func TestMigrationRunnerClose(t *testing.T) {
 			name: "close with connection error",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					closeError: fmt.Errorf("connection close error"),
+					closeError: ErrConnectionCloseError,
 				}
 			},
 			expectError: true,
@@ -383,9 +304,7 @@ func TestMigrationRunnerClose(t *testing.T) {
 			name: "close with multiple errors",
 			setupMock: func() *mockMigrationRunner {
 				return &mockMigrationRunner{
-					closeError: fmt.Errorf(
-						"close errors: [source close error: connection lost, database close error: timeout]",
-					),
+					closeError: ErrMultipleCloseErrors,
 				}
 			},
 			expectError: true,
@@ -393,30 +312,11 @@ func TestMigrationRunnerClose(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := tt.setupMock()
-
-			err := runner.Close()
-
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
-					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
+	runTestCases(t, tests, func(r MigrationRunner) error { return r.Close() })
 }
 
 // TestMigrationRunnerInterface ensures our interface compliance
-func TestMigrationRunnerInterface(t *testing.T) {
+func TestMigrationRunnerInterface(_ *testing.T) {
 	// This is a compile-time test to ensure interface compliance
 	var _ MigrationRunner = (*mockMigrationRunner)(nil)
 
@@ -496,8 +396,8 @@ func TestMigrationRunnerErrorRecovery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a mock that will error on specific operations
 			mock := &mockMigrationRunner{
-				upError:   fmt.Errorf("migration failed"),
-				downError: fmt.Errorf("rollback failed"),
+				upError:   ErrMigrationFailed,
+				downError: ErrRollbackFailed,
 				// Other operations succeed
 				statusError:  nil,
 				versionError: nil,
