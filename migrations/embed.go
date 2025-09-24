@@ -1,14 +1,37 @@
+// Package main provides embedded migration functionality with comprehensive validation.
+// This implementation includes filename validation, pairing validation, sequence validation,
+// and checksum integrity checking for production-ready migration management.
 package main
 
 import (
 	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
+)
+
+// Constants for validation.
+const (
+	expectedRegexMatches   = 4 // Expected number of regex matches for filename parsing
+	expectedDirectionCount = 2 // Expected number of directions (up/down) per migration
+	migrationSequenceStart = 1 // Migration sequences should start with 001
+)
+
+// Static errors for validation.
+var (
+	ErrNoEmbeddedMigrations  = errors.New("no embedded migration files found")
+	ErrInvalidFilenameFormat = errors.New("invalid migration filename format")
+	ErrOrphanedDownMigration = errors.New("orphaned down migration: missing up migration")
+	ErrOrphanedUpMigration   = errors.New("orphaned up migration: missing down migration")
+	ErrInvalidSequenceStart  = errors.New("migration sequence should start with 001")
+	ErrGapInSequence         = errors.New("gap in migration sequence")
+	ErrChecksumMismatch      = errors.New("checksum mismatch: file has been modified")
 )
 
 // EmbeddedMigration provides a true embedded migration system with comprehensive validation.
@@ -20,7 +43,7 @@ type EmbeddedMigration struct {
 	checksums map[string]string // filename -> checksum for integrity checking
 }
 
-// MigrationInfo contains parsed information about a migration file
+// MigrationInfo contains parsed information about a migration file.
 type MigrationInfo struct {
 	Sequence  int
 	Name      string
@@ -32,7 +55,7 @@ type MigrationInfo struct {
 //go:embed *.sql
 var embeddedMigrations embed.FS
 
-// Migration filename regex: 001_migration_name.up.sql or 001_migration_name.down.sql
+// Migration filename regex: 001_migration_name.up.sql or 001_migration_name.down.sql.
 var migrationFilenameRegex = regexp.MustCompile(`^(\d{3})_([a-zA-Z0-9_]+)\.(up|down)\.sql$`)
 
 // NewEmbeddedMigration creates a new EmbeddedMigration instance with injectable filesystem dependency.
@@ -65,6 +88,7 @@ func (e *EmbeddedMigration) ListEmbeddedMigrations() ([]string, error) {
 	}
 
 	var files []string
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -96,34 +120,39 @@ func (e *EmbeddedMigration) ValidateEmbeddedMigrations() error {
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no embedded migration files found")
+		return ErrNoEmbeddedMigrations
 	}
 
 	// First, validate that we can read each file (for backward compatibility)
 	for _, file := range files {
-		if _, err := e.GetEmbeddedMigrationContent(file); err != nil {
+		_, err := e.GetEmbeddedMigrationContent(file)
+		if err != nil {
 			return fmt.Errorf("failed to read migration file %s: %w", file, err)
 		}
 	}
 
 	// Perform filename validation
-	if err := e.validateFilenames(files); err != nil {
+	err = e.validateFilenames(files)
+	if err != nil {
 		return err
 	}
 
 	// Perform up/down pairing validation
-	if err := e.validatePairing(files); err != nil {
+	err = e.validatePairing(files)
+	if err != nil {
 		return err
 	}
 
 	// Perform sequence validation
-	if err := e.validateSequence(files); err != nil {
+	err = e.validateSequence(files)
+	if err != nil {
 		return err
 	}
 
 	// Perform checksum validation if checksums are available
 	if len(e.checksums) > 0 {
-		if err := e.validateChecksums(files); err != nil {
+		err = e.validateChecksums(files)
+		if err != nil {
 			return err
 		}
 	}
@@ -134,6 +163,7 @@ func (e *EmbeddedMigration) ValidateEmbeddedMigrations() error {
 		if err != nil {
 			return fmt.Errorf("failed to read migration file %s: %w", file, err)
 		}
+
 		e.checksums[file] = e.calculateChecksum(content)
 	}
 
@@ -145,12 +175,13 @@ func (e *EmbeddedMigration) GetEmbeddedMigrationContent(filename string) ([]byte
 	return fs.ReadFile(e.fs, filename)
 }
 
-// parseMigrationFilename parses a migration filename and extracts its components
+// parseMigrationFilename parses a migration filename and extracts its components.
 func (e *EmbeddedMigration) parseMigrationFilename(filename string) (*MigrationInfo, error) {
 	matches := migrationFilenameRegex.FindStringSubmatch(filename)
-	if len(matches) != 4 {
+	if len(matches) != expectedRegexMatches {
 		return nil, fmt.Errorf(
-			"invalid migration filename format: %s (expected: 001_name.up.sql or 001_name.down.sql)",
+			"%w: %s (expected: 001_name.up.sql or 001_name.down.sql)",
+			ErrInvalidFilenameFormat,
 			filename,
 		)
 	}
@@ -168,7 +199,7 @@ func (e *EmbeddedMigration) parseMigrationFilename(filename string) (*MigrationI
 	}, nil
 }
 
-// validateFilenames validates that all migration files follow the correct naming convention
+// validateFilenames validates that all migration files follow the correct naming convention.
 func (e *EmbeddedMigration) validateFilenames(files []string) error {
 	for _, file := range files {
 		_, err := e.parseMigrationFilename(file)
@@ -176,10 +207,11 @@ func (e *EmbeddedMigration) validateFilenames(files []string) error {
 			return fmt.Errorf("filename validation failed for %s: %w", file, err)
 		}
 	}
+
 	return nil
 }
 
-// validatePairing ensures that every up migration has a corresponding down migration
+// validatePairing ensures that every up migration has a corresponding down migration.
 func (e *EmbeddedMigration) validatePairing(files []string) error {
 	// Parse all migration files
 	migrations := make(
@@ -196,17 +228,19 @@ func (e *EmbeddedMigration) validatePairing(files []string) error {
 		if migrations[key] == nil {
 			migrations[key] = make(map[string]*MigrationInfo)
 		}
+
 		migrations[key][migration.Direction] = migration
 	}
 
 	// Check for unpaired migrations
 	for key, directions := range migrations {
-		if len(directions) != 2 {
+		if len(directions) != expectedDirectionCount {
 			if _, hasUp := directions["up"]; !hasUp {
-				return fmt.Errorf("orphaned down migration: missing up migration for %s", key)
+				return fmt.Errorf("%w for %s", ErrOrphanedDownMigration, key)
 			}
+
 			if _, hasDown := directions["down"]; !hasDown {
-				return fmt.Errorf("orphaned up migration: missing down migration for %s", key)
+				return fmt.Errorf("%w for %s", ErrOrphanedUpMigration, key)
 			}
 		}
 	}
@@ -214,7 +248,7 @@ func (e *EmbeddedMigration) validatePairing(files []string) error {
 	return nil
 }
 
-// validateSequence ensures there are no gaps in the migration sequence
+// validateSequence ensures there are no gaps in the migration sequence.
 func (e *EmbeddedMigration) validateSequence(files []string) error {
 	sequences := make(map[int]bool)
 
@@ -224,14 +258,16 @@ func (e *EmbeddedMigration) validateSequence(files []string) error {
 		if err != nil {
 			return err // This should have been caught in filename validation
 		}
+
 		sequences[migration.Sequence] = true
 	}
 
 	// Convert to sorted slice
-	var sequenceNumbers []int
+	sequenceNumbers := make([]int, 0, len(sequences))
 	for seq := range sequences {
 		sequenceNumbers = append(sequenceNumbers, seq)
 	}
+
 	sort.Ints(sequenceNumbers)
 
 	// Check for gaps
@@ -240,36 +276,31 @@ func (e *EmbeddedMigration) validateSequence(files []string) error {
 	}
 
 	// Should start with 1
-	if sequenceNumbers[0] != 1 {
-		return fmt.Errorf(
-			"migration sequence should start with 001, but found %03d",
-			sequenceNumbers[0],
-		)
+	if sequenceNumbers[0] != migrationSequenceStart {
+		return fmt.Errorf("%w, but found %03d", ErrInvalidSequenceStart, sequenceNumbers[0])
 	}
 
 	// Check for gaps
 	for i := 1; i < len(sequenceNumbers); i++ {
 		expected := sequenceNumbers[i-1] + 1
+
 		actual := sequenceNumbers[i]
 		if actual != expected {
-			return fmt.Errorf(
-				"gap in migration sequence: expected %03d, found %03d",
-				expected,
-				actual,
-			)
+			return fmt.Errorf("%w: expected %03d, found %03d", ErrGapInSequence, expected, actual)
 		}
 	}
 
 	return nil
 }
 
-// calculateChecksum calculates SHA256 checksum of content
+// calculateChecksum calculates SHA256 checksum of content.
 func (e *EmbeddedMigration) calculateChecksum(content []byte) string {
 	hash := sha256.Sum256(content)
-	return fmt.Sprintf("%x", hash)
+
+	return hex.EncodeToString(hash[:])
 }
 
-// validateChecksums verifies that migration files haven't been modified
+// validateChecksums verifies that migration files haven't been modified.
 func (e *EmbeddedMigration) validateChecksums(files []string) error {
 	for _, file := range files {
 		content, err := e.GetEmbeddedMigrationContent(file)
@@ -280,9 +311,10 @@ func (e *EmbeddedMigration) validateChecksums(files []string) error {
 		currentChecksum := e.calculateChecksum(content)
 		if storedChecksum, exists := e.checksums[file]; exists {
 			if currentChecksum != storedChecksum {
-				return fmt.Errorf("checksum mismatch for %s: file has been modified", file)
+				return fmt.Errorf("%w for %s", ErrChecksumMismatch, file)
 			}
 		}
 	}
+
 	return nil
 }
