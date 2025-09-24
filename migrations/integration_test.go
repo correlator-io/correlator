@@ -18,11 +18,11 @@ import (
 )
 
 // setupPostgresContainer creates and starts a PostgreSQL container for testing
-// Returns the container and connection string
+// Returns the connection string
 func setupPostgresContainer(
 	ctx context.Context,
 	t *testing.T,
-) (*postgrescontainer.PostgresContainer, string) {
+) string {
 	t.Helper()
 
 	// Create PostgreSQL container with optimized settings for dev containers
@@ -42,7 +42,8 @@ func setupPostgresContainer(
 
 	// Set up cleanup
 	t.Cleanup(func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
+		err := pgContainer.Terminate(ctx)
+		if err != nil {
 			t.Logf("failed to terminate postgres container: %v", err)
 		}
 	})
@@ -53,7 +54,7 @@ func setupPostgresContainer(
 		t.Fatalf("failed to get connection string: %v", err)
 	}
 
-	return pgContainer, connStr
+	return connStr
 }
 
 func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
@@ -80,7 +81,8 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 	// Test 2: Performance characteristics - embedded access should be consistent and fast
 	// Measure time for repeated access - embedded should be consistent
 	start := time.Now()
-	for i := 0; i < 100; i++ {
+
+	for range 100 {
 		files, err := eMigration.ListEmbeddedMigrations()
 		if err != nil {
 			t.Fatalf("failed to list migrations: %v", err)
@@ -89,6 +91,7 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 			t.Error("embedded migrations should always be available")
 		}
 	}
+
 	elapsed := time.Since(start)
 
 	// True embedded system should be fast and consistent
@@ -101,14 +104,17 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 		file, err := fsys.Open(filename)
 		if err != nil {
 			t.Errorf("failed to open embedded file %s: %v", filename, err)
+
 			continue
 		}
+
 		_ = file.Close()
 
 		// Also test content reading
 		content, err := eMigration.GetEmbeddedMigrationContent(filename)
 		if err != nil {
 			t.Errorf("failed to read content of embedded file %s: %v", filename, err)
+
 			continue
 		}
 		if len(content) == 0 {
@@ -117,7 +123,8 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 	}
 
 	// Test 4: Validation should work with embedded migrations
-	if err := eMigration.ValidateEmbeddedMigrations(); err != nil {
+	err = eMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		t.Errorf("embedded migration validation failed: %v", err)
 	}
 
@@ -136,7 +143,7 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up PostgreSQL container
-	_, connStr := setupPostgresContainer(ctx, t)
+	connStr := setupPostgresContainer(ctx, t)
 
 	// Create configuration using actual embedded migrations
 	config := &Config{
@@ -155,7 +162,8 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 		}
 
 		// Clean up
-		if err := runner.Close(); err != nil {
+		err = runner.Close()
+		if err != nil {
 			t.Logf("cleanup error: %v", err)
 		}
 	})
@@ -166,49 +174,59 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create runner: %v", err)
 		}
+
 		defer func() {
-			if err := runner.Close(); err != nil {
+			err := runner.Close()
+			if err != nil {
 				t.Logf("cleanup error: %v", err)
 			}
 		}()
 
 		// Initial status - should show no migrations applied
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("initial status failed: %v", err)
 		}
 
 		// Apply all embedded migrations (001_initial_schema.up.sql + 002_performance_optimization.up.sql)
-		if err := runner.Up(); err != nil {
+		err = runner.Up()
+		if err != nil {
 			t.Errorf("migration up failed: %v", err)
 		}
 
 		// Check status after applying all migrations
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("post-migration status failed: %v", err)
 		}
 
 		// Check current version
-		if err := runner.Version(); err != nil {
+		err = runner.Version()
+		if err != nil {
 			t.Errorf("version check failed: %v", err)
 		}
 
 		// Rollback one migration (002_performance_optimization.down.sql)
-		if err := runner.Down(); err != nil {
+		err = runner.Down()
+		if err != nil {
 			t.Errorf("migration down failed: %v", err)
 		}
 
 		// Check status after rollback
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("post-rollback status failed: %v", err)
 		}
 
 		// Apply migrations again to test full cycle
-		if err := runner.Up(); err != nil {
+		err = runner.Up()
+		if err != nil {
 			t.Errorf("re-applying migration up failed: %v", err)
 		}
 
 		// Final status check
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("final status failed: %v", err)
 		}
 	})
@@ -259,17 +277,7 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner, err := NewMigrationRunner(tt.config)
 
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Errorf("expected error containing %q, got %q", tt.errorContains, err.Error())
-				}
-				if runner != nil {
-					t.Error("expected nil runner when error occurs")
-				}
-			} else {
+			if !tt.expectError {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
@@ -278,9 +286,22 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 				}
 
 				// Clean up
-				if err := runner.Close(); err != nil {
+				err = runner.Close()
+				if err != nil {
 					t.Logf("cleanup error: %v", err)
 				}
+				return
+			}
+
+			// Handle expected error case
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+				t.Errorf("expected error containing %q, got %q", tt.errorContains, err.Error())
+			}
+			if runner != nil {
+				t.Error("expected nil runner when error occurs")
 			}
 		})
 	}
@@ -295,7 +316,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up PostgreSQL container
-	_, connStr := setupPostgresContainer(ctx, t)
+	connStr := setupPostgresContainer(ctx, t)
 
 	t.Run("invalid_sql_syntax", func(t *testing.T) {
 		// Create test filesystem with invalid SQL
@@ -322,10 +343,12 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
-		if err := db.Ping(); err != nil {
+		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to ping database: %v", err)
 		}
+
 		runner.db = db
 
 		// Create database driver
@@ -334,6 +357,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		})
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create postgres driver: %v", err)
 		}
 
@@ -341,6 +365,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		sourceDriver, err := iofs.New(invalidSQLFS, ".")
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create test migration source: %v", err)
 		}
 
@@ -348,8 +373,10 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create migrate instance: %v", err)
 		}
+
 		runner.migrate = m
 
 		defer func() {
@@ -403,10 +430,12 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
-		if err := db.Ping(); err != nil {
+		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to ping database: %v", err)
 		}
+
 		runner.db = db
 
 		// Create database driver
@@ -415,6 +444,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		})
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create postgres driver: %v", err)
 		}
 
@@ -422,6 +452,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		sourceDriver, err := iofs.New(constraintViolationFS, ".")
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create test migration source: %v", err)
 		}
 
@@ -429,8 +460,10 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create migrate instance: %v", err)
 		}
+
 		runner.migrate = m
 
 		defer func() {
@@ -494,6 +527,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create runner: %v", err)
 	}
+
 	defer func() {
 		if err := runner.Close(); err != nil {
 			b.Logf("cleanup error: %v", err)
@@ -509,7 +543,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark status operations
 	b.Run("Status", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if err := runner.Status(); err != nil {
 				b.Fatalf("status check failed: %v", err)
 			}
@@ -518,7 +552,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark version operations
 	b.Run("Version", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if err := runner.Version(); err != nil {
 				b.Fatalf("version check failed: %v", err)
 			}
@@ -527,7 +561,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark migration operations (rollback and reapply)
 	b.Run("MigrationOperations", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			// Rollback last migration
 			if err := runner.Down(); err != nil {
 				b.Fatalf("migration down failed: %v", err)
