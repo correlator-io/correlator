@@ -5,12 +5,11 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 )
 
-// Version information
+// Version information.
 const (
 	version = "1.0.0-dev"
 	name    = "correlator"
@@ -19,9 +18,8 @@ const (
 func main() {
 	// Phase 4+ implementation
 	// Currently a placeholder for CI/CD builds
-
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Printf("%s v%s\n", name, version)
+		log.Printf("%s v%s\n", name, version)
 		os.Exit(0)
 	}
 
