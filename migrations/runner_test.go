@@ -8,7 +8,7 @@ import (
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
-// Static errors for testing
+// Static errors for testing.
 var (
 	ErrSyntaxError              = errors.New("syntax error in migration")
 	ErrConnectionLost           = errors.New("connection lost")
@@ -20,12 +20,13 @@ var (
 	ErrConnectionCloseError     = errors.New("connection close error")
 	ErrMigrationFailed          = errors.New("migration failed")
 	ErrRollbackFailed           = errors.New("rollback failed")
+	ErrDropFailed               = errors.New("drop failed")
 	ErrMultipleCloseErrors      = errors.New(
 		"close errors: [source close error: connection lost, database close error: timeout]",
 	)
 )
 
-// mockMigrationRunner implements MigrationRunner for testing
+// mockMigrationRunner implements MigrationRunner for testing.
 type mockMigrationRunner struct {
 	upError      error
 	downError    error
@@ -42,7 +43,7 @@ func (m *mockMigrationRunner) Version() error { return m.versionError }
 func (m *mockMigrationRunner) Drop() error    { return m.dropError }
 func (m *mockMigrationRunner) Close() error   { return m.closeError }
 
-// Helper function to reduce test code duplication
+// Helper function to reduce test code duplication.
 type testCase struct {
 	name        string
 	setupMock   func() *mockMigrationRunner
@@ -50,7 +51,7 @@ type testCase struct {
 	errorText   string
 }
 
-// runTestCases is a helper function to execute test cases and reduce duplication
+// runTestCases is a helper function to execute test cases and reduce duplication.
 func runTestCases(t *testing.T, tests []testCase, operation func(MigrationRunner) error) {
 	t.Helper()
 
@@ -316,7 +317,7 @@ func TestMigrationRunnerClose(t *testing.T) {
 	runTestCases(t, tests, func(r MigrationRunner) error { return r.Close() })
 }
 
-// TestMigrationRunnerInterface ensures our interface compliance
+// TestMigrationRunnerInterface ensures our interface compliance.
 func TestMigrationRunnerInterface(_ *testing.T) {
 	// This is a compile-time test to ensure interface compliance
 	var _ MigrationRunner = (*mockMigrationRunner)(nil)
@@ -325,7 +326,7 @@ func TestMigrationRunnerInterface(_ *testing.T) {
 	var _ MigrationRunner = (*migrationRunner)(nil) // This should compile when implemented
 }
 
-// TestMigrationRunnerLifecycle tests the complete lifecycle of a migration runner
+// TestMigrationRunnerLifecycle tests the complete lifecycle of a migration runner.
 func TestMigrationRunnerLifecycle(t *testing.T) {
 	// This test defines the expected workflow for migration operations
 	mock := &mockMigrationRunner{
@@ -357,7 +358,7 @@ func TestMigrationRunnerLifecycle(t *testing.T) {
 	}
 }
 
-// TestMigrationRunnerErrorRecovery tests error handling and recovery scenarios
+// TestMigrationRunnerErrorRecovery tests error handling and recovery scenarios.
 func TestMigrationRunnerErrorRecovery(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -421,7 +422,7 @@ func TestMigrationRunnerErrorRecovery(t *testing.T) {
 	}
 }
 
-// TestMigrationRunnerResourceManagement tests proper resource cleanup
+// TestMigrationRunnerResourceManagement tests proper resource cleanup.
 func TestMigrationRunnerResourceManagement(t *testing.T) {
 	mock := &mockMigrationRunner{}
 
@@ -440,7 +441,7 @@ func TestMigrationRunnerResourceManagement(t *testing.T) {
 	_ = mock.Version()
 }
 
-// BenchmarkMigrationRunnerOperations benchmarks basic operations
+// BenchmarkMigrationRunnerOperations benchmarks basic operations.
 func BenchmarkMigrationRunnerOperations(b *testing.B) {
 	mock := &mockMigrationRunner{}
 
@@ -461,4 +462,116 @@ func BenchmarkMigrationRunnerOperations(b *testing.B) {
 			_ = mock.Up()
 		}
 	})
+}
+
+// TestExecuteCommand tests the CLI command execution logic, particularly the --force flag behavior.
+func TestExecuteCommand(t *testing.T) {
+	tests := []struct {
+		name          string
+		command       string
+		force         bool
+		setupMock     func() *mockMigrationRunner
+		wantError     bool
+		errorContains string
+	}{
+		{
+			name:    "up command works",
+			command: "up",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors
+			},
+			wantError: false,
+		},
+		{
+			name:    "down command works",
+			command: "down",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors
+			},
+			wantError: false,
+		},
+		{
+			name:    "status command works",
+			command: "status",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors
+			},
+			wantError: false,
+		},
+		{
+			name:    "version command works",
+			command: "version",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors
+			},
+			wantError: false,
+		},
+		{
+			name:    "drop command without force fails with safety error",
+			command: "drop",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors - should not be called
+			},
+			wantError:     true,
+			errorContains: "drop command requires --force flag for safety",
+		},
+		{
+			name:    "drop command with force succeeds",
+			command: "drop",
+			force:   true,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors
+			},
+			wantError: false,
+		},
+		{
+			name:    "drop command with force handles runner errors",
+			command: "drop",
+			force:   true,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{dropError: ErrDropFailed}
+			},
+			wantError:     true,
+			errorContains: "drop failed",
+		},
+		{
+			name:    "unknown command fails",
+			command: "invalid",
+			force:   false,
+			setupMock: func() *mockMigrationRunner {
+				return &mockMigrationRunner{} // no errors - should not be called
+			},
+			wantError:     true,
+			errorContains: "unknown command",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := tt.setupMock()
+
+			err := executeCommand(tt.command, mock, tt.force)
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+
+					return
+				}
+
+				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("Expected error to contain %q, got %q", tt.errorContains, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+
+				return
+			}
+		})
+	}
 }

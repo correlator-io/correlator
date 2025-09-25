@@ -169,7 +169,7 @@ endef
 build-migrator-local:
 	@echo "🔨 Building local migrator binary..."
 	$(call get-version-info)
-	go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
+	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
 	@echo "✅ Local migrator binary ready"
 
 #===============================================================================
@@ -281,7 +281,7 @@ run:
 		echo "  make run migrate down       # Rollback migrations"; \
 		echo "  make run migrate status     # Check migration status"; \
 		echo "  make run migrate version    # Show migration version"; \
-		echo "  make run migrate drop       # Drop all tables"; \
+		echo "  make run migrate drop       # Drop all tables (destructive, uses --force)"; \
 		exit 1; \
 	fi
 
@@ -324,7 +324,7 @@ run-migrate-version:
 
 run-migrate-drop:
 	@echo "⚠️ Dropping all database tables..."
-	@$(MAKE) run-migrator ACTION=drop
+	@$(MAKE) run-migrator ACTION="drop --force"
 
 # Internal helper for environment-aware migrations
 run-migrator:
@@ -366,6 +366,13 @@ migrate-local:
 
 # Containerized migration execution (from host)
 migrate-containerized:
+	@echo "🔄 Ensuring migrator container has latest version..."
+	$(call get-version-info)
+	@cd deployments/docker && \
+		VERSION="$(VERSION)" \
+		GIT_COMMIT="$(COMMIT)" \
+		BUILD_TIME="$(BUILD_TIME)" \
+		docker compose build migrator
 	@if cd deployments/docker && docker compose --profile migration run --rm migrator ./migrator $(ACTION); then \
 		echo "✅ Migration $(ACTION) completed via container"; \
 	else \
@@ -485,38 +492,43 @@ build-prod:
 	@echo "🔨 Building production binaries with enhanced versioning..."
 	$(call get-version-info)
 	@echo "📦 Building correlator..."
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o build/correlator ./cmd/correlator
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/correlator ./cmd/correlator
 	@echo "📦 Building ingester..."
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o build/ingester ./cmd/ingester
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/ingester ./cmd/ingester
 	@echo "📦 Building migrator..."
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o build/migrator ./migrations
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/migrator ./migrations
 	@echo "✅ Production builds complete!"
 
 build-all:
 	@echo "🔨 Building all components..."
 	$(call get-version-info)
 	@echo "📦 Building correlator..."
-	go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o bin/correlator ./cmd/correlator
+	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/correlator ./cmd/correlator
 	@echo "📦 Building ingester..."
-	go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o bin/ingester ./cmd/ingester
+	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/ingester ./cmd/ingester
 	@echo "📦 Building migrator..."
-	go build -ldflags "-X main.Version=$(VERSION) -X main.GitCommit=$(COMMIT) -X 'main.BuildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
+	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
 	@echo "✅ All builds complete!"
 
 # Prepare for production (builds + images + migrations)
 deploy: ensure-not-in-dev-container
 	@echo "🚀 Preparing deployment package..."
 	$(MAKE) check
-	@echo "🔨 Building production artifacts..."
-	$(MAKE) build-prod
-	@echo "🐳 Building Docker images..."
-	docker build -t $(DOCKER_TAG) .
-	cd deployments/docker && docker compose build migrator
-	@echo "🔄 Preparing migration artifacts..."
+	@echo "🔄 Getting version information..."
 	$(call get-version-info)
 	@echo "Version: $(VERSION)"
 	@echo "Commit: $(COMMIT)"
 	@echo "Build Time: $(BUILD_TIME)"
+	@echo "🔨 Building production artifacts..."
+	$(MAKE) build-prod
+	@echo "🐳 Building Docker images with version injection..."
+	docker build -t $(DOCKER_TAG) .
+	cd deployments/docker && \
+		VERSION="$(VERSION)" \
+		GIT_COMMIT="$(COMMIT)" \
+		BUILD_TIME="$(BUILD_TIME)" \
+		docker compose build migrator
+	@echo "🔄 Verifying migration artifacts..."
 	@echo "✅ Deployment package ready!"
 	@echo ""
 	@echo "Deployment artifacts:"

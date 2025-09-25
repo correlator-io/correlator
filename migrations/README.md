@@ -86,7 +86,48 @@ migrations/
 - **`down`**: Rollback the last migration
 - **`status`**: Show current migration status
 - **`version`**: Show current migration version
-- **`drop`**: Drop all tables (destructive, use with caution)
+- **`drop --force`**: Drop all tables (**DESTRUCTIVE** - requires `--force` flag for safety)
+
+### Command Line Flags
+
+- **`--help`**: Show help information and usage examples
+- **`--version`**: Show migrator version information
+- **`--force`**: Force dangerous operations without confirmation (**required for `drop` command**)
+
+### CLI Usage Examples
+
+```bash
+# Show help and available commands
+./migrator --help
+
+# Show version information
+./migrator --version
+
+# Apply all pending migrations
+./migrator up
+
+# Show current migration status
+./migrator status
+
+# Show current migration version
+./migrator version
+
+# Rollback the last migration
+./migrator down
+
+# Drop all tables (DESTRUCTIVE - use with extreme caution)
+./migrator drop --force
+```
+
+**⚠️ SAFETY WARNING**: The `drop` command **destroys all data** and cannot be undone. It requires the `--force` flag as a safety mechanism:
+
+```bash
+# ❌ This will fail with safety error
+./migrator drop
+
+# ✅ This will actually drop all tables
+./migrator drop --force
+```
 
 ## Testing Architecture
 
@@ -96,8 +137,12 @@ migrations/
 
 1. **Unit Tests**: Configuration, embedded migration validation, utility functions
 2. **Integration Tests**: Full migration workflow with real PostgreSQL using testcontainers
-3. **SQL Error Tests**: Migration error handling using embedded test filesystems
-4. **Benchmark Tests**: Performance testing of migration operations
+   - **Drop Command Integration**: Comprehensive testing of `--force` flag safety mechanism
+   - **Database Lifecycle**: Complete drop → recovery workflow validation
+   - **Error Scenarios**: Connection failures, database unavailability
+3. **CLI Tests**: Command execution, flag parsing, error handling
+4. **SQL Error Tests**: Migration error handling using embedded test filesystems
+5. **Benchmark Tests**: Performance testing of migration operations
 
 ### Running Tests in Dev Container
 
@@ -112,6 +157,8 @@ go test ./migrations -v -timeout=5m
 go test ./migrations -run "TestMigrationRunnerWorkFlow" -v
 go test ./migrations -run "TestMigrationRunnerSQLErrors" -v
 go test ./migrations -run "TestMigrationRunnerBadConfiguration" -v
+go test ./migrations -run "TestDropCommandIntegration" -v
+go test ./migrations -run "TestExecuteCommand" -v
 
 # Benchmarks
 go test ./migrations -bench="Benchmark" -benchmem -v
@@ -149,14 +196,47 @@ services:
       DATABASE_URL: postgres://correlator:${DB_PASSWORD}@postgres:5432/correlator?sslmode=disable
     depends_on:
       - postgres
+
+  # For database reset (DESTRUCTIVE - use in development only)
+  migrator-drop:
+    build: .
+    command: ./migrator drop --force
+    environment:
+      DATABASE_URL: postgres://correlator:${DB_PASSWORD}@postgres:5432/correlator?sslmode=disable
+    depends_on:
+      - postgres
+    profiles: [reset]  # Only run when explicitly requested
+```
+
+**Docker Usage Examples:**
+```bash
+# Apply migrations
+docker-compose up migrator
+
+# Drop all tables (DESTRUCTIVE - development only)
+docker-compose --profile reset up migrator-drop
 ```
 
 ### Migration Safety
 
+The migrator implements multiple layers of safety mechanisms:
+
+#### **Operational Safety**
 - **Pre-operation validation**: Every command validates embedded migrations first
 - **Transaction safety**: DDL operations use appropriate transaction boundaries
 - **Error recovery**: Clear error messages with guidance for resolution
 - **Rollback support**: Every `up` migration has a corresponding `down` migration
+
+#### **Command Safety**
+- **`--force` Flag Requirement**: Destructive operations require explicit `--force` flag
+  - **`drop` command**: Cannot be executed without `--force` flag
+  - **Safety Error**: `drop command requires --force flag for safety (this will destroy all data)`
+  - **Non-interactive**: Works in Docker containers and CI pipelines (no interactive prompts)
+
+#### **Error Handling**
+- **Modern Error Handling**: Uses Go 1.20+ `errors.Join()` for cleaner multi-error reporting
+- **Comprehensive Logging**: Detailed operation logging with `[MIGRATE]` prefixes
+- **Connection Management**: Proper database connection lifecycle with cleanup
 
 ## Development Workflow
 

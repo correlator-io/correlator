@@ -3,12 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
-)
-
-// Constants for URL parsing.
-const (
-	authorityStartOffset = 2 // Offset after "//" to get to the authority section
+	"strings"
 )
 
 // Static errors for validation.
@@ -72,71 +69,34 @@ func getEnvOrDefault(key, defaultValue string) string {
 }
 
 // maskDatabaseURL masks sensitive information in database URLs for logging.
-func maskDatabaseURL(url string) string {
-	if url == "" {
+func maskDatabaseURL(urlStr string) string {
+	if urlStr == "" {
 		return ""
 	}
 
-	authStart := findAuthorityStart(url)
-	if authStart == -1 {
-		return url
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		// If parsing fails, return the original URL as-is
+		// This maintains backwards compatibility with malformed URLs
+		return urlStr
 	}
 
-	atPos := findLastAtSymbol(url, authStart)
-	if atPos == -1 {
-		return url
+	if u.User == nil {
+		return urlStr
 	}
 
-	colonPos := findColonInUserInfo(url, authStart, atPos)
-	if colonPos == -1 {
-		return url
-	}
+	// Check if there's a password to mask
+	if password, hasPassword := u.User.Password(); hasPassword {
+		if password != "" {
+			// Create new user info with masked password
+			u.User = url.UserPassword(u.User.Username(), "***")
+			// Convert back to string and manually fix the URL encoding issue
+			// net/url encodes *** as %2A%2A%2A, but we want literal ***
+			result := u.String()
 
-	passwordLen := atPos - (colonPos + 1) // pragma: allowlist secret
-	if passwordLen == 0 {
-		return url
-	}
-
-	// Replace password with asterisks
-	return url[:colonPos+1] + "***" + url[atPos:]
-}
-
-// findAuthorityStart finds the "//" that indicates the start of the authority section.
-func findAuthorityStart(url string) int {
-	for i := range len(url) - 1 {
-		if url[i] == '/' && url[i+1] == '/' {
-			return i + authorityStartOffset
+			return strings.Replace(result, "%2A%2A%2A", "***", 1)
 		}
 	}
 
-	return -1
-}
-
-// findLastAtSymbol finds the last "@" symbol in the authority section.
-func findLastAtSymbol(url string, authStart int) int {
-	atPos := -1
-
-	for i := authStart; i < len(url); i++ {
-		if url[i] == '@' {
-			atPos = i
-			// Don't break - keep looking for the last "@"
-		}
-		// Stop at path, query, or fragment
-		if url[i] == '/' || url[i] == '?' || url[i] == '#' {
-			break
-		}
-	}
-
-	return atPos
-}
-
-// findColonInUserInfo finds the ":" in the user info section.
-func findColonInUserInfo(url string, authStart, atPos int) int {
-	for i := authStart; i < atPos; i++ {
-		if url[i] == ':' {
-			return i
-		}
-	}
-
-	return -1
+	return urlStr
 }

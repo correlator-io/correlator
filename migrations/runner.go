@@ -15,11 +15,8 @@ import (
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
-// ErrCloseErrors is custom error
-var ErrCloseErrors = errors.New("close errors")
-
 type (
-	// MigrationRunner defines the interface for running database migrations
+	// MigrationRunner defines the interface for running database migrations.
 	MigrationRunner interface {
 		// Up applies all pending migrations
 		Up() error
@@ -40,7 +37,7 @@ type (
 		Close() error
 	}
 
-	// migrationRunner implements MigrationRunner using golang-migrate
+	// migrationRunner implements MigrationRunner using golang-migrate.
 	migrationRunner struct {
 		config            *Config
 		migrate           *migrate.Migrate
@@ -48,17 +45,17 @@ type (
 		embeddedMigration *EmbeddedMigration // For embedded migration validation and access
 	}
 
-	// migrateLogger implements the migrate.Logger interface
+	// migrateLogger implements the migrate.Logger interface.
 	migrateLogger struct{}
 )
 
-// Ensure we implement the interface at compile time
+// Ensure we implement the interface at compile time.
 var _ migrate.Logger = (*migrateLogger)(nil)
 
-// Add io.Writer interface compliance for broader compatibility
+// Add io.Writer interface compliance for broader compatibility.
 var _ io.Writer = (*migrateLogger)(nil)
 
-// NewMigrationRunner creates a new migration runner with the given configuration
+// NewMigrationRunner creates a new migration runner with the given configuration.
 func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	log.Printf("Initializing migration runner with config: %s", config.String())
 
@@ -135,7 +132,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	}, nil
 }
 
-// Up applies all pending migrations
+// Up applies all pending migrations.
 func (r *migrationRunner) Up() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
@@ -161,7 +158,7 @@ func (r *migrationRunner) Up() error {
 	return nil
 }
 
-// Down rollbacks the last migration
+// Down rollbacks the last migration.
 func (r *migrationRunner) Down() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
@@ -187,12 +184,13 @@ func (r *migrationRunner) Down() error {
 	return nil
 }
 
-// Status shows the current migration status
+// Status shows the current migration status with schema compatibility information.
 func (r *migrationRunner) Status() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
 			log.Println("Migration Status: No migrations applied yet")
+			r.showSchemaCompatibility(0)
 
 			return nil
 		}
@@ -207,6 +205,9 @@ func (r *migrationRunner) Status() error {
 
 	log.Printf("Migration Status: Version %d (%s)\n", ver, status)
 
+	// Show schema compatibility information
+	r.showSchemaCompatibility(int(ver)) // #nosec G115 - version numbers are safe to convert
+
 	// Additional information about pending migrations
 	err = r.showPendingMigrations()
 	if err != nil {
@@ -216,12 +217,13 @@ func (r *migrationRunner) Status() error {
 	return nil
 }
 
-// Version shows the current migration version
+// Version shows the current migration version with schema compatibility.
 func (r *migrationRunner) Version() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
 			log.Println("Current Version: No migrations applied")
+			r.showSchemaCompatibility(0)
 
 			return nil
 		}
@@ -236,10 +238,13 @@ func (r *migrationRunner) Version() error {
 
 	log.Printf("Current Version: %d%s\n", ver, dirtyNote)
 
+	// Show schema compatibility information
+	r.showSchemaCompatibility(int(ver)) // #nosec G115 - version numbers are safe to convert
+
 	return nil
 }
 
-// Drop drops all tables (destructive operation)
+// Drop drops all tables (destructive operation).
 func (r *migrationRunner) Drop() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
@@ -261,7 +266,7 @@ func (r *migrationRunner) Drop() error {
 	return nil
 }
 
-// Close closes database connections
+// Close closes database connections.
 func (r *migrationRunner) Close() error {
 	var errs []error
 
@@ -283,14 +288,10 @@ func (r *migrationRunner) Close() error {
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("%w: %v", ErrCloseErrors, errs)
-	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
-// showPendingMigrations attempts to show information about pending migrations
+// showPendingMigrations attempts to show information about pending migrations.
 func (r *migrationRunner) showPendingMigrations() error {
 	// This is a best-effort attempt to show pending migrations
 	// The golang-migrate library doesn't provide a direct way to list pending migrations
@@ -301,6 +302,51 @@ func (r *migrationRunner) showPendingMigrations() error {
 	log.Println("Note: Use 'up' command to apply any pending migrations")
 
 	return nil
+}
+
+// showSchemaCompatibility displays schema version compatibility information
+// between the migrator tool capabilities and current database state.
+func (r *migrationRunner) showSchemaCompatibility(currentVersion int) {
+	maxSchemaVersion := r.getMaxEmbeddedSchemaVersion()
+
+	log.Printf("Schema Compatibility:")
+	log.Printf("  Database Schema: v0.0.%d", currentVersion)
+	log.Printf("  Migrator Supports: v0.0.%d", maxSchemaVersion)
+
+	switch {
+	case currentVersion == maxSchemaVersion:
+		log.Printf("  Status: ✅ Up to date")
+	case currentVersion < maxSchemaVersion:
+		pending := maxSchemaVersion - currentVersion
+		log.Printf("  Status: ⬆️  %d migration(s) available", pending)
+	default:
+		log.Printf("  Status: ⚠️  Database schema newer than migrator supports")
+		log.Printf(
+			"  Warning: Please update migrator tool to handle schema v0.0.%d",
+			currentVersion,
+		)
+	}
+}
+
+// getMaxEmbeddedSchemaVersion returns the highest migration sequence number
+// from embedded migration files in this migrator binary.
+func (r *migrationRunner) getMaxEmbeddedSchemaVersion() int {
+	files, err := r.embeddedMigration.ListEmbeddedMigrations()
+	if err != nil {
+		return 0 // If we can't read migrations, assume no schema support
+	}
+
+	maxSequence := 0
+
+	for _, filename := range files {
+		if migration, err := r.embeddedMigration.parseMigrationFilename(filename); err == nil {
+			if migration.Sequence > maxSequence {
+				maxSequence = migration.Sequence
+			}
+		}
+	}
+
+	return maxSequence
 }
 
 func (l *migrateLogger) Printf(format string, v ...interface{}) {

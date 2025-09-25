@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestLoadConfig tests the LoadConfig function with various scenarios
+// TestLoadConfig tests the LoadConfig function with various scenarios.
 func TestLoadConfig(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -113,7 +113,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-// TestConfigValidate tests the Validate method with various configurations
+// TestConfigValidate tests the Validate method with various configurations.
 func TestConfigValidate(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -183,7 +183,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-// TestConfigString tests the String method
+// TestConfigString tests the String method.
 func TestConfigString(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -253,7 +253,7 @@ func TestConfigString(t *testing.T) {
 	}
 }
 
-// TestGetEnvOrDefault tests the getEnvOrDefault function
+// TestGetEnvOrDefault tests the getEnvOrDefault function.
 func TestGetEnvOrDefault(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -319,7 +319,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 	}
 }
 
-// TestMaskDatabaseURL tests the maskDatabaseURL function
+// TestMaskDatabaseURL tests the maskDatabaseURL function.
 func TestMaskDatabaseURL(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -382,7 +382,7 @@ func TestMaskDatabaseURL(t *testing.T) {
 	}
 }
 
-// TestConfigIntegration tests the full integration flow for embedded mode
+// TestConfigIntegration tests the full integration flow for embedded mode.
 func TestConfigIntegration(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
