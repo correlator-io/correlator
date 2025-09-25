@@ -692,6 +692,34 @@ func TestDropCommandIntegration(t *testing.T) {
 	})
 }
 
+// TestRunnerGetMaxEmbeddedSchemaVersionWithRealEmbedded tests the method with actual embedded migrations.
+func TestRunnerGetMaxEmbeddedSchemaVersionWithRealEmbedded(t *testing.T) {
+	skipIfNotShort(t)
+
+	// Create a Runner with real embedded migrations
+	embeddedMigration := NewEmbeddedMigration(nil) // Uses real embedded FS
+	runner := &Runner{
+		embeddedMigration: embeddedMigration,
+	}
+
+	// Test with actual embedded migrations
+	result := runner.getMaxEmbeddedSchemaVersion()
+
+	// We know we have at least 002_performance_optimization migration
+	expectedMin := 2
+	if result < expectedMin {
+		t.Errorf("getMaxEmbeddedSchemaVersion() = %d, expected at least %d", result, expectedMin)
+	}
+
+	// Sanity check: should not be unreasonably high
+	maxReasonable := 999
+	if result > maxReasonable {
+		t.Errorf("getMaxEmbeddedSchemaVersion() = %d, seems unreasonably high (>%d)", result, maxReasonable)
+	}
+
+	t.Logf("✅ Real embedded migrations max schema version: %d", result)
+}
+
 // BenchmarkMigrationRunnerIntegrationOperations benchmarks migration operations with actual embedded migrations.
 func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 	if testing.Short() {
