@@ -27,13 +27,10 @@ Example: fix(ingestion): resolve OpenLineage event parsing error
 ## Quality Assurance Checklist
 <!-- Mark completed items with an 'x' -->
 - [ ] I have reviewed my own code before requesting review
-- [ ] All tests pass locally (`make test`)
-- [ ] Code passes go vet checks (`make vet`)
-- [ ] Code passes go lint checks (`make fmt`)
-- [ ] Code passes go lint checks (`make lint`)
+- [ ] All quality checks pass locally (`make check`)
 - [ ] I have added/updated tests for the changes
 - [ ] Database migrations include proper rollback (if applicable)
-- [ ] Zero-config Docker deployment still works (`docker-compose up`)
+- [ ] Zero-config Docker deployment still works (`make deploy`)
 - [ ] OpenLineage compliance verified (for ingestion changes)
 - [ ] Performance impact assessed (<5 minute correlation target maintained)
 - [ ] Documentation updated where necessary

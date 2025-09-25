@@ -310,8 +310,8 @@ func (r *Runner) showSchemaCompatibility(currentVersion int) {
 	maxSchemaVersion := r.getMaxEmbeddedSchemaVersion()
 
 	log.Printf("Schema Compatibility:")
-	log.Printf("  Database Schema: v0.0.%d", currentVersion)
-	log.Printf("  Migrator Supports: v0.0.%d", maxSchemaVersion)
+	log.Printf("  Database Schema: v%03d", currentVersion)
+	log.Printf("  Migrator Supports: v%03d", maxSchemaVersion)
 
 	switch {
 	case currentVersion == maxSchemaVersion:
@@ -322,7 +322,7 @@ func (r *Runner) showSchemaCompatibility(currentVersion int) {
 	default:
 		log.Printf("  Status: ⚠️  Database schema newer than migrator supports")
 		log.Printf(
-			"  Warning: Please update migrator tool to handle schema v0.0.%d",
+			"  Warning: Please update migrator tool to handle schema v%03d",
 			currentVersion,
 		)
 	}

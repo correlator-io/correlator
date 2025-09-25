@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -574,4 +575,150 @@ func TestExecuteCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRunnerGetMaxEmbeddedSchemaVersion tests the getMaxEmbeddedSchemaVersion method
+// of the Runner struct for accurate schema version detection.
+func TestRunnerGetMaxEmbeddedSchemaVersion(t *testing.T) {
+	skipIfNotShort(t)
+
+	tests := []struct {
+		name           string
+		migrationFiles map[string]*fstest.MapFile
+		expected       int
+		description    string
+	}{
+		{
+			name:           "no_migration_files",
+			migrationFiles: map[string]*fstest.MapFile{},
+			expected:       0,
+			description:    "Returns 0 when no migration files exist",
+		},
+		{
+			name: "single_migration_sequence",
+			migrationFiles: map[string]*fstest.MapFile{
+				"001_initial.up.sql":   {Data: []byte("CREATE TABLE test;")},
+				"001_initial.down.sql": {Data: []byte("DROP TABLE test;")},
+			},
+			expected:    1,
+			description: "Returns correct sequence for single migration",
+		},
+		{
+			name: "multiple_migration_sequences_unordered",
+			migrationFiles: map[string]*fstest.MapFile{
+				"001_initial.up.sql":    {Data: []byte("CREATE TABLE test;")},
+				"001_initial.down.sql":  {Data: []byte("DROP TABLE test;")},
+				"005_features.up.sql":   {Data: []byte("ALTER TABLE test ADD COLUMN name VARCHAR(255);")},
+				"005_features.down.sql": {Data: []byte("ALTER TABLE test DROP COLUMN name;")},
+				"003_indexes.up.sql":    {Data: []byte("CREATE INDEX idx_test ON test(id);")},
+				"003_indexes.down.sql":  {Data: []byte("DROP INDEX idx_test;")},
+			},
+			expected:    5,
+			description: "Returns highest sequence from unordered migrations",
+		},
+		{
+			name: "high_sequence_numbers",
+			migrationFiles: map[string]*fstest.MapFile{
+				"112_advanced.up.sql":   {Data: []byte("CREATE MATERIALIZED VIEW test_view;")},
+				"112_advanced.down.sql": {Data: []byte("DROP MATERIALIZED VIEW test_view;")},
+				"050_middle.up.sql":     {Data: []byte("CREATE INDEX test_idx;")},
+				"050_middle.down.sql":   {Data: []byte("DROP INDEX test_idx;")},
+				"999_final.up.sql":      {Data: []byte("CREATE SEQUENCE test_seq;")},
+				"999_final.down.sql":    {Data: []byte("DROP SEQUENCE test_seq;")},
+			},
+			expected:    999,
+			description: "Handles high sequence numbers correctly",
+		},
+		{
+			name: "mixed_valid_and_invalid_files",
+			migrationFiles: map[string]*fstest.MapFile{
+				"001_initial.up.sql":    {Data: []byte("CREATE TABLE test;")},
+				"001_initial.down.sql":  {Data: []byte("DROP TABLE test;")},
+				"invalid_file.sql":      {Data: []byte("INVALID;")},
+				"007_features.up.sql":   {Data: []byte("ALTER TABLE test;")},
+				"007_features.down.sql": {Data: []byte("ALTER TABLE test;")},
+				"not_a_migration.txt":   {Data: []byte("TEXT FILE")},
+				"readme.md":             {Data: []byte("# Migrations")},
+			},
+			expected:    7,
+			description: "Ignores invalid files and returns max valid sequence",
+		},
+		{
+			name: "only_invalid_files",
+			migrationFiles: map[string]*fstest.MapFile{
+				"invalid_file.sql":    {Data: []byte("INVALID;")},
+				"not_a_migration.txt": {Data: []byte("TEXT FILE")},
+				"random.doc":          {Data: []byte("DOCUMENT")},
+				"config.json":         {Data: []byte("{}")},
+			},
+			expected:    0,
+			description: "Returns 0 when only invalid migration files exist",
+		},
+		{
+			name: "realistic_migration_set",
+			migrationFiles: map[string]*fstest.MapFile{
+				"001_initial_schema.up.sql":   {Data: []byte("CREATE TABLE users (id SERIAL PRIMARY KEY);")},
+				"001_initial_schema.down.sql": {Data: []byte("DROP TABLE users;")},
+				"002_add_indexes.up.sql":      {Data: []byte("CREATE INDEX idx_users_email ON users(email);")},
+				"002_add_indexes.down.sql":    {Data: []byte("DROP INDEX idx_users_email;")},
+				"003_performance_optimization.up.sql": {
+					Data: []byte("CREATE INDEX CONCURRENTLY idx_performance ON users(created_at);"),
+				},
+				"003_performance_optimization.down.sql": {Data: []byte("DROP INDEX idx_performance;")},
+			},
+			expected:    3,
+			description: "Returns correct max from realistic migration set",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create test filesystem with migration files
+			testFS := fstest.MapFS(tc.migrationFiles)
+
+			// Create embedded migration with test filesystem
+			embeddedMigration := NewEmbeddedMigration(testFS)
+
+			// Create a minimal Runner instance for testing
+			// We only need the embeddedMigration field for this test
+			runner := &Runner{
+				embeddedMigration: embeddedMigration,
+			}
+
+			// Test getMaxEmbeddedSchemaVersion
+			result := runner.getMaxEmbeddedSchemaVersion()
+
+			if result != tc.expected {
+				t.Errorf("getMaxEmbeddedSchemaVersion() = %d, expected %d - %s",
+					result, tc.expected, tc.description)
+			}
+
+			t.Logf("✅ %s: got %d (expected %d)", tc.description, result, tc.expected)
+		})
+	}
+}
+
+// TestRunnerGetMaxEmbeddedSchemaVersionErrorHandling tests error scenarios.
+func TestRunnerGetMaxEmbeddedSchemaVersionErrorHandling(t *testing.T) {
+	skipIfNotShort(t)
+
+	// Create a runner with an EmbeddedMigration that will fail to list files
+	// We can't easily mock the filesystem error, but we can test with an
+	// EmbeddedMigration that has no migrations
+	emptyFS := fstest.MapFS{}
+	embeddedMigration := NewEmbeddedMigration(emptyFS)
+
+	runner := &Runner{
+		embeddedMigration: embeddedMigration,
+	}
+
+	result := runner.getMaxEmbeddedSchemaVersion()
+
+	// Should return 0 when no migrations found
+	expected := 0
+	if result != expected {
+		t.Errorf("getMaxEmbeddedSchemaVersion() with empty FS = %d, expected %d", result, expected)
+	}
+
+	t.Logf("✅ Error handling: empty filesystem returns %d", result)
 }

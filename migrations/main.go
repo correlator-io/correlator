@@ -149,7 +149,7 @@ func printVersionInfo() {
 	log.Printf("%s v%s", Name(), Version())
 	log.Printf("Git Commit: %s", GitCommit())
 	log.Printf("Build Time: %s", BuildTime())
-	log.Printf("Max Schema Version: v0.0.%d", getMaxSchemaVersion())
+	log.Printf("Max Schema Version: v%03d", getMaxSchemaVersion())
 	log.Printf("Database Migration Tool for Correlator")
 }
 
