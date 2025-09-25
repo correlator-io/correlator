@@ -1,12 +1,11 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
 
-// TestLoadConfig tests the LoadConfig function with various scenarios
+// TestLoadConfig tests the LoadConfig function with various scenarios.
 func TestLoadConfig(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -27,6 +26,7 @@ func TestLoadConfig(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
+				t.Helper()
 				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected DATABASE_URL from env var, got %s", config.DatabaseURL)
 				}
@@ -43,6 +43,7 @@ func TestLoadConfig(t *testing.T) {
 			},
 			wantErr: false,
 			validate: func(t *testing.T, config *Config) {
+				t.Helper()
 				if config.DatabaseURL != "postgres://user:pass@localhost:5432/testdb" { // pragma: allowlist secret`
 					t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 				}
@@ -64,28 +65,14 @@ func TestLoadConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup environment variables
-			originalEnv := make(map[string]string)
+			// Setup environment variables using t.Setenv for automatic cleanup
 			for key, value := range tt.envVars {
-				originalEnv[key] = os.Getenv(key)
 				if value == "" {
-					os.Unsetenv(key)
+					t.Setenv(key, "")
 				} else {
-					os.Setenv(key, value)
+					t.Setenv(key, value)
 				}
 			}
-
-			// Cleanup function
-			defer func() {
-				// Restore original environment
-				for key, originalValue := range originalEnv {
-					if originalValue == "" {
-						os.Unsetenv(key)
-					} else {
-						os.Setenv(key, originalValue)
-					}
-				}
-			}()
 
 			// Test LoadConfig
 			config, err := LoadConfig()
@@ -94,22 +81,27 @@ func TestLoadConfig(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected error but got none")
+
 					return
 				}
+
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Expected error to contain '%s', got: %v", tt.errContains, err)
 				}
+
 				return
 			}
 
 			// Validate success case
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
 			if config == nil {
 				t.Error("Expected config but got nil")
+
 				return
 			}
 
@@ -121,7 +113,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-// TestConfigValidate tests the Validate method with various configurations
+// TestConfigValidate tests the Validate method with various configurations.
 func TestConfigValidate(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -170,24 +162,28 @@ func TestConfigValidate(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected error but got none")
+
 					return
 				}
+
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Expected error to contain '%s', got: %v", tt.errContains, err)
 				}
+
 				return
 			}
 
 			// Check success case
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 		})
 	}
 }
 
-// TestConfigString tests the String method
+// TestConfigString tests the String method.
 func TestConfigString(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -257,7 +253,7 @@ func TestConfigString(t *testing.T) {
 	}
 }
 
-// TestGetEnvOrDefault tests the getEnvOrDefault function
+// TestGetEnvOrDefault tests the getEnvOrDefault function.
 func TestGetEnvOrDefault(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -306,21 +302,11 @@ func TestGetEnvOrDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Store original value
-			originalValue := os.Getenv(tt.key)
-			defer func() {
-				if originalValue == "" {
-					os.Unsetenv(tt.key)
-				} else {
-					os.Setenv(tt.key, originalValue)
-				}
-			}()
-
-			// Set up environment
+			// Set up environment using t.Setenv for automatic cleanup
 			if tt.setEnv {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 			} else {
-				os.Unsetenv(tt.key)
+				t.Setenv(tt.key, "")
 			}
 
 			// Test function
@@ -333,7 +319,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 	}
 }
 
-// TestMaskDatabaseURL tests the maskDatabaseURL function
+// TestMaskDatabaseURL tests the maskDatabaseURL function.
 func TestMaskDatabaseURL(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -396,36 +382,19 @@ func TestMaskDatabaseURL(t *testing.T) {
 	}
 }
 
-// TestConfigIntegration tests the full integration flow for embedded mode
+// TestConfigIntegration tests the full integration flow for embedded mode.
 func TestConfigIntegration(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
 	t.Run("embedded configuration workflow", func(t *testing.T) {
-		// Set environment variables for embedded mode
-		originalDB := os.Getenv("DATABASE_URL")
-		originalTable := os.Getenv("MIGRATION_TABLE")
-
-		os.Setenv(
+		// Set environment variables for embedded mode using t.Setenv for automatic cleanup
+		t.Setenv(
 			"DATABASE_URL",
 			"postgres://testuser:testpass@localhost:5432/testdb", // pragma: allowlist secret`
-		) // pragma: allowlist secret`
-		os.Setenv("MIGRATION_TABLE", "test_migrations")
-
-		defer func() {
-			// Restore environment
-			if originalDB == "" {
-				os.Unsetenv("DATABASE_URL")
-			} else {
-				os.Setenv("DATABASE_URL", originalDB)
-			}
-			if originalTable == "" {
-				os.Unsetenv("MIGRATION_TABLE")
-			} else {
-				os.Setenv("MIGRATION_TABLE", originalTable)
-			}
-		}()
+		)
+		t.Setenv("MIGRATION_TABLE", "test_migrations")
 
 		// Load configuration
 		config, err := LoadConfig()
@@ -437,6 +406,7 @@ func TestConfigIntegration(t *testing.T) {
 		if config.DatabaseURL != "postgres://testuser:testpass@localhost:5432/testdb" { // pragma: allowlist secret`
 			t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 		}
+
 		if config.MigrationTable != "test_migrations" {
 			t.Errorf("Expected custom MIGRATION_TABLE, got %s", config.MigrationTable)
 		}
@@ -446,6 +416,7 @@ func TestConfigIntegration(t *testing.T) {
 		if !strings.Contains(configStr, "testuser:***@localhost:5432") {
 			t.Errorf("Expected masked password in config string, got: %s", configStr)
 		}
+
 		if strings.Contains(configStr, "testpass") {
 			t.Errorf("Password should be masked in config string, got: %s", configStr)
 		}

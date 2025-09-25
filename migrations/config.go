@@ -1,11 +1,20 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 )
 
-// Config holds all configuration for the migration tool
+// Static errors for validation.
+var (
+	ErrDatabaseURLEmpty    = errors.New("DATABASE_URL cannot be empty")
+	ErrMigrationTableEmpty = errors.New("MIGRATION_TABLE cannot be empty")
+)
+
+// Config holds all configuration for the migration tool.
 type Config struct {
 	// DatabaseURL is the PostgreSQL connection string
 	DatabaseURL string
@@ -14,34 +23,35 @@ type Config struct {
 	MigrationTable string
 }
 
-// LoadConfig loads configuration from environment variables with sensible defaults
+// LoadConfig loads configuration from environment variables with sensible defaults.
 func LoadConfig() (*Config, error) {
 	config := &Config{
 		DatabaseURL:    getEnvOrDefault("DATABASE_URL", ""),
 		MigrationTable: getEnvOrDefault("MIGRATION_TABLE", "schema_migrations"),
 	}
 
-	if err := config.Validate(); err != nil {
+	err := config.Validate()
+	if err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
 	return config, nil
 }
 
-// Validate checks that the configuration is valid
+// Validate checks that the configuration is valid.
 func (c *Config) Validate() error {
 	if c.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL cannot be empty")
+		return ErrDatabaseURLEmpty
 	}
 
 	if c.MigrationTable == "" {
-		return fmt.Errorf("MIGRATION_TABLE cannot be empty")
+		return ErrMigrationTableEmpty
 	}
 
 	return nil
 }
 
-// String returns a string representation of the configuration (safe for logging)
+// String returns a string representation of the configuration (safe for logging).
 func (c *Config) String() string {
 	maskedURL := maskDatabaseURL(c.DatabaseURL)
 
@@ -49,75 +59,44 @@ func (c *Config) String() string {
 		maskedURL, c.MigrationTable)
 }
 
-// getEnvOrDefault returns the environment variable value or a default if not set
+// getEnvOrDefault returns the environment variable value or a default if not set.
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }
 
-// maskDatabaseURL masks sensitive information in database URLs for logging
-func maskDatabaseURL(url string) string {
-	if url == "" {
+// maskDatabaseURL masks sensitive information in database URLs for logging.
+func maskDatabaseURL(urlStr string) string {
+	if urlStr == "" {
 		return ""
 	}
 
-	// Find the "//" that indicates the start of the authority section
-	authStart := -1
-	for i := 0; i < len(url)-1; i++ {
-		if url[i] == '/' && url[i+1] == '/' {
-			authStart = i + 2
-			break
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		// If parsing fails, return the original URL as-is
+		// This maintains backwards compatibility with malformed URLs
+		return urlStr
+	}
+
+	if u.User == nil {
+		return urlStr
+	}
+
+	// Check if there's a password to mask
+	if password, hasPassword := u.User.Password(); hasPassword {
+		if password != "" {
+			// Create new user info with masked password
+			u.User = url.UserPassword(u.User.Username(), "***")
+			// Convert back to string and manually fix the URL encoding issue
+			// net/url encodes *** as %2A%2A%2A, but we want literal ***
+			result := u.String()
+
+			return strings.Replace(result, "%2A%2A%2A", "***", 1)
 		}
 	}
 
-	// If no "//" found, return original URL (no authority section)
-	if authStart == -1 {
-		return url
-	}
-
-	// Find the "@" symbol which separates user info from host
-	// We need to find the LAST "@" in the authority section in case the password contains "@"
-	atPos := -1
-	for i := authStart; i < len(url); i++ {
-		if url[i] == '@' {
-			atPos = i
-			// Don't break - keep looking for the last "@"
-		}
-		// Stop at path, query, or fragment
-		if url[i] == '/' || url[i] == '?' || url[i] == '#' {
-			break
-		}
-	}
-
-	// If no "@" found, there's no user info to mask
-	if atPos == -1 {
-		return url
-	}
-
-	// Find the ":" in the user info section (between authStart and atPos)
-	colonPos := -1
-	for i := authStart; i < atPos; i++ {
-		if url[i] == ':' {
-			colonPos = i
-			break
-		}
-	}
-
-	// If no ":" found in user info, there's no password to mask
-	if colonPos == -1 {
-		return url
-	}
-
-	// Calculate password length
-	passwordLen := atPos - (colonPos + 1) // pragma: allowlist secret`
-
-	// If password is empty, don't mask anything
-	if passwordLen == 0 {
-		return url
-	}
-
-	// Replace password with asterisks
-	return url[:colonPos+1] + "***" + url[atPos:]
+	return urlStr
 }

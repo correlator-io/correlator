@@ -282,6 +282,8 @@ make check                    # Full suite before commit
 ```
 
 ### Test Conventions
+We use `testing.Short()` flag to separate unit tests from integration tests. You must add the `testing.Short()` flag 
+at the beginning of the unit test suit and the negated flag `!testing.Short()` at the beginning of the integration test suite.
 
 **Unit Tests**:
 ```go
@@ -389,8 +391,7 @@ make docker                   # Shows available docker operations
 ### Further Reading
 
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
-- **[Architecture Overview](../README.md)** - System design
-- **[Migration Guide](migrations/README.md)** - Database schema
+- **[Migrator](migrations/README.md)** - Database migrator
 
 ---
 

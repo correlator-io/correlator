@@ -17,12 +17,12 @@ import (
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// setupPostgresContainer creates and starts a PostgreSQL container for testing
-// Returns the container and connection string
+// setupPostgresContainer creates and starts a PostgreSQL container for testing.
+// Returns the connection string.
 func setupPostgresContainer(
 	ctx context.Context,
 	t *testing.T,
-) (*postgrescontainer.PostgresContainer, string) {
+) string {
 	t.Helper()
 
 	// Create PostgreSQL container with optimized settings for dev containers
@@ -42,7 +42,8 @@ func setupPostgresContainer(
 
 	// Set up cleanup
 	t.Cleanup(func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
+		err := pgContainer.Terminate(ctx)
+		if err != nil {
 			t.Logf("failed to terminate postgres container: %v", err)
 		}
 	})
@@ -53,7 +54,7 @@ func setupPostgresContainer(
 		t.Fatalf("failed to get connection string: %v", err)
 	}
 
-	return pgContainer, connStr
+	return connStr
 }
 
 func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
@@ -80,15 +81,18 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 	// Test 2: Performance characteristics - embedded access should be consistent and fast
 	// Measure time for repeated access - embedded should be consistent
 	start := time.Now()
-	for i := 0; i < 100; i++ {
+
+	for range 100 {
 		files, err := eMigration.ListEmbeddedMigrations()
 		if err != nil {
 			t.Fatalf("failed to list migrations: %v", err)
 		}
+
 		if len(files) == 0 {
 			t.Error("embedded migrations should always be available")
 		}
 	}
+
 	elapsed := time.Since(start)
 
 	// True embedded system should be fast and consistent
@@ -101,23 +105,28 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 		file, err := fsys.Open(filename)
 		if err != nil {
 			t.Errorf("failed to open embedded file %s: %v", filename, err)
+
 			continue
 		}
+
 		_ = file.Close()
 
 		// Also test content reading
 		content, err := eMigration.GetEmbeddedMigrationContent(filename)
 		if err != nil {
 			t.Errorf("failed to read content of embedded file %s: %v", filename, err)
+
 			continue
 		}
+
 		if len(content) == 0 {
 			t.Errorf("embedded file %s should not be empty", filename)
 		}
 	}
 
 	// Test 4: Validation should work with embedded migrations
-	if err := eMigration.ValidateEmbeddedMigrations(); err != nil {
+	err = eMigration.ValidateEmbeddedMigrations()
+	if err != nil {
 		t.Errorf("embedded migration validation failed: %v", err)
 	}
 
@@ -127,7 +136,7 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 }
 
 // TestMigrationRunnerIntegration tests the complete migration runner workflow
-// with actual embedded migrations and a real PostgreSQL database using testcontainers
+// with actual embedded migrations and a real PostgreSQL database using testcontainers.
 func TestMigrationRunnerWorkFlow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -136,7 +145,7 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up PostgreSQL container
-	_, connStr := setupPostgresContainer(ctx, t)
+	connStr := setupPostgresContainer(ctx, t)
 
 	// Create configuration using actual embedded migrations
 	config := &Config{
@@ -150,12 +159,14 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected successful creation, got error: %v", err)
 		}
+
 		if runner == nil {
 			t.Fatal("expected non-nil runner")
 		}
 
 		// Clean up
-		if err := runner.Close(); err != nil {
+		err = runner.Close()
+		if err != nil {
 			t.Logf("cleanup error: %v", err)
 		}
 	})
@@ -166,55 +177,65 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create runner: %v", err)
 		}
+
 		defer func() {
-			if err := runner.Close(); err != nil {
+			err := runner.Close()
+			if err != nil {
 				t.Logf("cleanup error: %v", err)
 			}
 		}()
 
 		// Initial status - should show no migrations applied
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("initial status failed: %v", err)
 		}
 
 		// Apply all embedded migrations (001_initial_schema.up.sql + 002_performance_optimization.up.sql)
-		if err := runner.Up(); err != nil {
+		err = runner.Up()
+		if err != nil {
 			t.Errorf("migration up failed: %v", err)
 		}
 
 		// Check status after applying all migrations
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("post-migration status failed: %v", err)
 		}
 
 		// Check current version
-		if err := runner.Version(); err != nil {
+		err = runner.Version()
+		if err != nil {
 			t.Errorf("version check failed: %v", err)
 		}
 
 		// Rollback one migration (002_performance_optimization.down.sql)
-		if err := runner.Down(); err != nil {
+		err = runner.Down()
+		if err != nil {
 			t.Errorf("migration down failed: %v", err)
 		}
 
 		// Check status after rollback
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("post-rollback status failed: %v", err)
 		}
 
 		// Apply migrations again to test full cycle
-		if err := runner.Up(); err != nil {
+		err = runner.Up()
+		if err != nil {
 			t.Errorf("re-applying migration up failed: %v", err)
 		}
 
 		// Final status check
-		if err := runner.Status(); err != nil {
+		err = runner.Status()
+		if err != nil {
 			t.Errorf("final status failed: %v", err)
 		}
 	})
 }
 
-// TestMigrationRunnerConfiguration tests error conditions with bad database configuration
+// TestMigrationRunnerConfiguration tests error conditions with bad database configuration.
 func TestMigrationRunnerBadConfiguration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -259,34 +280,41 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner, err := NewMigrationRunner(tt.config)
 
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Errorf("expected error containing %q, got %q", tt.errorContains, err.Error())
-				}
-				if runner != nil {
-					t.Error("expected nil runner when error occurs")
-				}
-			} else {
+			if !tt.expectError {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
+
 				if runner == nil {
 					t.Fatal("expected non-nil runner when no error")
 				}
 
 				// Clean up
-				if err := runner.Close(); err != nil {
+				err = runner.Close()
+				if err != nil {
 					t.Logf("cleanup error: %v", err)
 				}
+
+				return
+			}
+
+			// Handle expected error case
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+				t.Errorf("expected error containing %q, got %q", tt.errorContains, err.Error())
+			}
+
+			if runner != nil {
+				t.Error("expected nil runner when error occurs")
 			}
 		})
 	}
 }
 
-// TestMigrationRunnerSQLErrors tests migration errors with invalid SQL using embedded test filesystems
+// TestMigrationRunnerSQLErrors tests migration errors with invalid SQL using embedded test filesystems.
 func TestMigrationRunnerSQLErrors(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -295,7 +323,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up PostgreSQL container
-	_, connStr := setupPostgresContainer(ctx, t)
+	connStr := setupPostgresContainer(ctx, t)
 
 	t.Run("invalid_sql_syntax", func(t *testing.T) {
 		// Create test filesystem with invalid SQL
@@ -312,7 +340,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		}
 
 		// Create migration runner with custom embedded filesystem containing invalid SQL
-		runner := &migrationRunner{
+		runner := &Runner{
 			config:            config,
 			embeddedMigration: NewEmbeddedMigration(invalidSQLFS),
 		}
@@ -322,10 +350,13 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
-		if err := db.Ping(); err != nil {
+
+		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to ping database: %v", err)
 		}
+
 		runner.db = db
 
 		// Create database driver
@@ -334,6 +365,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		})
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create postgres driver: %v", err)
 		}
 
@@ -341,6 +373,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		sourceDriver, err := iofs.New(invalidSQLFS, ".")
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create test migration source: %v", err)
 		}
 
@@ -348,8 +381,10 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create migrate instance: %v", err)
 		}
+
 		runner.migrate = m
 
 		defer func() {
@@ -363,6 +398,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		if err == nil {
 			t.Error("expected error due to invalid SQL syntax, got nil")
 		}
+
 		if err != nil && !strings.Contains(err.Error(), "migration up failed") {
 			t.Errorf("expected migration error, got: %v", err)
 		}
@@ -393,7 +429,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		}
 
 		// Create migration runner with custom embedded filesystem containing constraint violation
-		runner := &migrationRunner{
+		runner := &Runner{
 			config:            config,
 			embeddedMigration: NewEmbeddedMigration(constraintViolationFS),
 		}
@@ -403,10 +439,13 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
-		if err := db.Ping(); err != nil {
+
+		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to ping database: %v", err)
 		}
+
 		runner.db = db
 
 		// Create database driver
@@ -415,6 +454,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		})
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create postgres driver: %v", err)
 		}
 
@@ -422,6 +462,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		sourceDriver, err := iofs.New(constraintViolationFS, ".")
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create test migration source: %v", err)
 		}
 
@@ -429,8 +470,10 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 		if err != nil {
 			_ = db.Close()
+
 			t.Fatalf("failed to create migrate instance: %v", err)
 		}
+
 		runner.migrate = m
 
 		defer func() {
@@ -444,13 +487,212 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		if err == nil {
 			t.Error("expected error due to foreign key constraint violation, got nil")
 		}
+
 		if err != nil && !strings.Contains(err.Error(), "migration up failed") {
 			t.Errorf("expected migration error, got: %v", err)
 		}
 	})
 }
 
-// BenchmarkMigrationRunnerIntegrationOperations benchmarks migration operations with actual embedded migrations
+// TestDropCommandIntegration tests the drop command with --force flag requirement using actual database.
+func TestDropCommandIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	// Set up PostgreSQL container
+	connStr := setupPostgresContainer(ctx, t)
+
+	config := &Config{
+		DatabaseURL:    connStr,
+		MigrationTable: "schema_migrations",
+	}
+
+	t.Run("drop_without_force_flag_fails", func(t *testing.T) {
+		// Test that executeCommand properly rejects drop without --force
+		runner, err := NewMigrationRunner(config)
+		if err != nil {
+			t.Fatalf("failed to create runner: %v", err)
+		}
+
+		defer func() {
+			if err := runner.Close(); err != nil {
+				t.Logf("cleanup error: %v", err)
+			}
+		}()
+
+		// Apply some migrations first to have data to potentially drop
+		err = runner.Up()
+		if err != nil {
+			t.Fatalf("failed to apply initial migrations: %v", err)
+		}
+
+		// Test CLI command execution without --force flag
+		err = executeCommand("drop", runner, false) // force = false
+		if err == nil {
+			t.Fatal("expected error when drop command used without --force flag")
+		}
+
+		expectedError := "drop command requires --force flag for safety"
+		if !strings.Contains(err.Error(), expectedError) {
+			t.Errorf("expected error containing %q, got %q", expectedError, err.Error())
+		}
+
+		// Verify database still has tables (drop was prevented)
+		err = runner.Status()
+		if err != nil {
+			t.Errorf("status check failed after prevented drop: %v", err)
+		}
+	})
+
+	t.Run("drop_with_force_flag_succeeds", func(t *testing.T) {
+		// Test that executeCommand properly executes drop with --force
+		runner, err := NewMigrationRunner(config)
+		if err != nil {
+			t.Fatalf("failed to create runner: %v", err)
+		}
+
+		defer func() {
+			if err := runner.Close(); err != nil {
+				t.Logf("cleanup error: %v", err)
+			}
+		}()
+
+		// Apply migrations to have something to drop
+		err = runner.Up()
+		if err != nil {
+			t.Fatalf("failed to apply migrations before drop test: %v", err)
+		}
+
+		// Verify we have migrations applied
+		err = runner.Status()
+		if err != nil {
+			t.Fatalf("status check failed before drop: %v", err)
+		}
+
+		// Test CLI command execution with --force flag
+		err = executeCommand("drop", runner, true) // force = true
+		if err != nil {
+			t.Fatalf("drop command with --force flag should succeed, got error: %v", err)
+		}
+
+		// Verify database tables are actually dropped
+		// After drop, status should work but show no migrations
+		err = runner.Status()
+		if err != nil {
+			t.Errorf("status check failed after drop: %v", err)
+		}
+
+		// Version should show no migrations applied
+		err = runner.Version()
+		if err != nil {
+			t.Errorf("version check failed after drop: %v", err)
+		}
+	})
+
+	t.Run("drop_integration_full_workflow", func(t *testing.T) {
+		// Test complete workflow: up -> drop --force -> up again
+		runner, err := NewMigrationRunner(config)
+		if err != nil {
+			t.Fatalf("failed to create runner: %v", err)
+		}
+
+		defer func() {
+			if err := runner.Close(); err != nil {
+				t.Logf("cleanup error: %v", err)
+			}
+		}()
+
+		// Step 1: Apply migrations
+		err = runner.Up()
+		if err != nil {
+			t.Fatalf("initial migration up failed: %v", err)
+		}
+
+		// Step 2: Verify migrations are applied
+		err = runner.Status()
+		if err != nil {
+			t.Fatalf("status after initial up failed: %v", err)
+		}
+
+		// Step 3: Drop with --force flag
+		err = executeCommand("drop", runner, true)
+		if err != nil {
+			t.Fatalf("drop with --force failed: %v", err)
+		}
+
+		// Step 4: Verify drop was successful (status should still work)
+		err = runner.Status()
+		if err != nil {
+			t.Fatalf("status after drop failed: %v", err)
+		}
+
+		// Step 5: Apply migrations again to verify database is clean
+		// Note: After drop, we need a fresh runner since the migration state is reset
+		err = runner.Close()
+		if err != nil {
+			t.Logf("cleanup after drop: %v", err)
+		}
+
+		// Create a fresh runner for re-applying migrations after drop
+		freshRunner, err := NewMigrationRunner(config)
+		if err != nil {
+			t.Fatalf("failed to create fresh runner after drop: %v", err)
+		}
+
+		defer func() {
+			if err := freshRunner.Close(); err != nil {
+				t.Logf("cleanup error for fresh runner: %v", err)
+			}
+		}()
+
+		err = freshRunner.Up()
+		if err != nil {
+			t.Fatalf("migration up after drop failed: %v", err)
+		}
+
+		// Step 6: Final verification with fresh runner
+		err = freshRunner.Status()
+		if err != nil {
+			t.Fatalf("final status check failed: %v", err)
+		}
+	})
+
+	t.Run("drop_with_database_error_handling", func(t *testing.T) {
+		// Test that drop command properly handles and reports database errors
+		runner, err := NewMigrationRunner(config)
+		if err != nil {
+			t.Fatalf("failed to create runner: %v", err)
+		}
+
+		// Apply migrations first
+		err = runner.Up()
+		if err != nil {
+			t.Fatalf("failed to apply migrations: %v", err)
+		}
+
+		// Close the database connection to simulate a connection error
+		err = runner.Close()
+		if err != nil {
+			t.Fatalf("failed to close runner: %v", err)
+		}
+
+		// Now try to drop with a closed connection - should get a meaningful error
+		err = executeCommand("drop", runner, true)
+		if err == nil {
+			t.Fatal("expected error when trying to drop with closed connection")
+		}
+
+		// Should be a meaningful error, not just "requires --force"
+		if strings.Contains(err.Error(), "requires --force flag") {
+			t.Error("error should be about database connection, not missing --force flag")
+		}
+	})
+}
+
+// BenchmarkMigrationRunnerIntegrationOperations benchmarks migration operations with actual embedded migrations.
 func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping this benchmark in short mode")
@@ -494,6 +736,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create runner: %v", err)
 	}
+
 	defer func() {
 		if err := runner.Close(); err != nil {
 			b.Logf("cleanup error: %v", err)
@@ -509,7 +752,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark status operations
 	b.Run("Status", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if err := runner.Status(); err != nil {
 				b.Fatalf("status check failed: %v", err)
 			}
@@ -518,7 +761,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark version operations
 	b.Run("Version", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if err := runner.Version(); err != nil {
 				b.Fatalf("version check failed: %v", err)
 			}
@@ -527,7 +770,7 @@ func BenchmarkMigrationRunnerIntegrationOperations(b *testing.B) {
 
 	// Benchmark migration operations (rollback and reapply)
 	b.Run("MigrationOperations", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			// Rollback last migration
 			if err := runner.Down(); err != nil {
 				b.Fatalf("migration down failed: %v", err)
