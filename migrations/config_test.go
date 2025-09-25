@@ -81,22 +81,27 @@ func TestLoadConfig(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected error but got none")
+
 					return
 				}
+
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Expected error to contain '%s', got: %v", tt.errContains, err)
 				}
+
 				return
 			}
 
 			// Validate success case
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
 			if config == nil {
 				t.Error("Expected config but got nil")
+
 				return
 			}
 
@@ -157,17 +162,21 @@ func TestConfigValidate(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Expected error but got none")
+
 					return
 				}
+
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Expected error to contain '%s', got: %v", tt.errContains, err)
 				}
+
 				return
 			}
 
 			// Check success case
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 		})
@@ -397,6 +406,7 @@ func TestConfigIntegration(t *testing.T) {
 		if config.DatabaseURL != "postgres://testuser:testpass@localhost:5432/testdb" { // pragma: allowlist secret`
 			t.Errorf("Expected custom DATABASE_URL, got %s", config.DatabaseURL)
 		}
+
 		if config.MigrationTable != "test_migrations" {
 			t.Errorf("Expected custom MIGRATION_TABLE, got %s", config.MigrationTable)
 		}
@@ -406,6 +416,7 @@ func TestConfigIntegration(t *testing.T) {
 		if !strings.Contains(configStr, "testuser:***@localhost:5432") {
 			t.Errorf("Expected masked password in config string, got: %s", configStr)
 		}
+
 		if strings.Contains(configStr, "testpass") {
 			t.Errorf("Password should be masked in config string, got: %s", configStr)
 		}

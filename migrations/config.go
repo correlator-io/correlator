@@ -67,6 +67,7 @@ func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }
 
@@ -107,12 +108,14 @@ func findAuthorityStart(url string) int {
 			return i + authorityStartOffset
 		}
 	}
+
 	return -1
 }
 
 // findLastAtSymbol finds the last "@" symbol in the authority section.
 func findLastAtSymbol(url string, authStart int) int {
 	atPos := -1
+
 	for i := authStart; i < len(url); i++ {
 		if url[i] == '@' {
 			atPos = i
@@ -123,6 +126,7 @@ func findLastAtSymbol(url string, authStart int) int {
 			break
 		}
 	}
+
 	return atPos
 }
 
@@ -133,5 +137,6 @@ func findColonInUserInfo(url string, authStart, atPos int) int {
 			return i
 		}
 	}
+
 	return -1
 }

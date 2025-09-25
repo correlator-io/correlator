@@ -85,6 +85,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	err = db.PingContext(context.Background())
 	if err != nil {
 		_ = db.Close()
+
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -106,6 +107,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	sourceDriver, err := iofs.New(embeddedMigration.GetEmbeddedMigrations(), ".")
 	if err != nil {
 		_ = db.Close()
+
 		return nil, fmt.Errorf("failed to create embedded migration source: %w", err)
 	}
 
@@ -113,6 +115,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 	if err != nil {
 		_ = db.Close()
+
 		return nil, fmt.Errorf(
 			"failed to create migrate instance with embedded migrations: %w",
 			err,
@@ -190,8 +193,10 @@ func (r *migrationRunner) Status() error {
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
 			log.Println("Migration Status: No migrations applied yet")
+
 			return nil
 		}
+
 		return fmt.Errorf("failed to get migration version: %w", err)
 	}
 
@@ -217,8 +222,10 @@ func (r *migrationRunner) Version() error {
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
 			log.Println("Current Version: No migrations applied")
+
 			return nil
 		}
+
 		return fmt.Errorf("failed to get migration version: %w", err)
 	}
 
@@ -228,6 +235,7 @@ func (r *migrationRunner) Version() error {
 	}
 
 	log.Printf("Current Version: %d%s\n", ver, dirtyNote)
+
 	return nil
 }
 
@@ -249,6 +257,7 @@ func (r *migrationRunner) Drop() error {
 	}
 
 	log.Println("All tables dropped successfully")
+
 	return nil
 }
 
@@ -290,6 +299,7 @@ func (r *migrationRunner) showPendingMigrations() error {
 
 	// For now, we'll just indicate that this feature could be enhanced
 	log.Println("Note: Use 'up' command to apply any pending migrations")
+
 	return nil
 }
 
@@ -303,5 +313,6 @@ func (l *migrateLogger) Verbose() bool {
 
 func (l *migrateLogger) Write(p []byte) (int, error) {
 	log.Printf("[MIGRATE] %s", string(p))
+
 	return len(p), nil
 }

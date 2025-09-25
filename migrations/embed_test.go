@@ -13,9 +13,9 @@ import (
 
 // Test data constants to avoid hardcoding and improve maintainability.
 const (
-	validMigrationContent   = "CREATE TABLE users (id INTEGER);"
+	validMigrationContent     = "CREATE TABLE users (id INTEGER);"
 	validDownMigrationContent = "DROP TABLE users;"
-	modifiedMigrationContent = "CREATE TABLE users (id INTEGER, email VARCHAR(255));"
+	modifiedMigrationContent  = "CREATE TABLE users (id INTEGER, email VARCHAR(255));"
 )
 
 // getExpectedEmbeddedFiles returns the expected migration files for tests.
@@ -34,6 +34,7 @@ func getExpectedEmbeddedFiles() []string {
 // skipIfNotShort extracts the common skip logic to reduce duplication.
 func skipIfNotShort(t *testing.T) {
 	t.Helper()
+
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -43,6 +44,7 @@ func skipIfNotShort(t *testing.T) {
 func createTestMigration(seq int, name, direction string, content ...string) (string, *fstest.MapFile) {
 	filename := fmt.Sprintf("%03d_%s.%s.sql", seq, name, direction)
 	migrationContent := validMigrationContent
+
 	if len(content) > 0 {
 		migrationContent = content[0]
 	}
@@ -65,8 +67,10 @@ func createMigrationPair(seq int, name string) map[string]*fstest.MapFile {
 func assertErrorContains(t *testing.T, err error, expectedKeywords []string, context string) {
 	t.Helper()
 	t.Helper()
+
 	if err == nil {
 		t.Errorf("%s: expected error containing %v, got nil", context, expectedKeywords)
+
 		return
 	}
 
@@ -84,6 +88,7 @@ func assertErrorContains(t *testing.T, err error, expectedKeywords []string, con
 func assertErrorIs(t *testing.T, err, expectedErr error, context string) {
 	t.Helper()
 	t.Helper()
+
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("%s: expected error %v, got %v", context, expectedErr, err)
 	}
@@ -92,10 +97,12 @@ func assertErrorIs(t *testing.T, err, expectedErr error, context string) {
 // mustCreateEmbeddedMigration creates an EmbeddedMigration or fails the test.
 func mustCreateEmbeddedMigration(t *testing.T, filesystem fs.FS) *EmbeddedMigration {
 	t.Helper()
+
 	migration := NewEmbeddedMigration(filesystem)
 	if migration == nil {
 		t.Fatal("expected non-nil EmbeddedMigration instance")
 	}
+
 	return migration
 }
 
@@ -156,6 +163,7 @@ func TestListEmbeddedMigrations(t *testing.T) {
 
 	t.Run("lists actual embedded migrations", func(t *testing.T) {
 		migration := mustCreateEmbeddedMigration(t, nil)
+
 		result, err := migration.ListEmbeddedMigrations()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -163,6 +171,7 @@ func TestListEmbeddedMigrations(t *testing.T) {
 
 		// Sort both slices for comparison
 		sort.Strings(result)
+
 		expectedFiles := getExpectedEmbeddedFiles()
 		expectedSorted := make([]string, len(expectedFiles))
 		copy(expectedSorted, expectedFiles)
@@ -194,6 +203,7 @@ func TestListEmbeddedMigrations(t *testing.T) {
 
 		testFS := fstest.MapFS(migrations)
 		migration := mustCreateEmbeddedMigration(t, testFS)
+
 		result, err := migration.ListEmbeddedMigrations()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -219,6 +229,7 @@ func TestValidateEmbeddedMigrations(t *testing.T) {
 
 	t.Run("validates actual embedded migrations successfully", func(t *testing.T) {
 		migration := mustCreateEmbeddedMigration(t, nil)
+
 		err := migration.ValidateEmbeddedMigrations()
 		if err != nil {
 			t.Errorf("embedded migration validation failed: %v", err)
@@ -281,6 +292,7 @@ func TestGetEmbeddedMigrationContent(t *testing.T) {
 		if err == nil {
 			t.Error("expected error when reading non-existent file, got nil")
 		}
+
 		assertErrorContains(t, err, []string{"file does not exist"}, "non-existent file")
 	})
 }
@@ -393,8 +405,10 @@ func TestMigrationValidationScenarios(t *testing.T) {
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("expected validation to fail for %s, got nil error", tt.name)
+
 					return
 				}
+
 				if tt.errorCheck != nil {
 					tt.errorCheck(t, err)
 				}
@@ -453,6 +467,7 @@ func BenchmarkListEmbeddedMigrations(b *testing.B) {
 	migration := NewEmbeddedMigration(nil)
 
 	b.ResetTimer()
+
 	for range b.N {
 		_, err := migration.ListEmbeddedMigrations()
 		if err != nil {
@@ -470,6 +485,7 @@ func BenchmarkGetEmbeddedMigrationContent(b *testing.B) {
 	filename := "001_initial_schema.up.sql"
 
 	b.ResetTimer()
+
 	for range b.N {
 		_, err := migration.GetEmbeddedMigrationContent(filename)
 		if err != nil {

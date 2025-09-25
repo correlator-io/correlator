@@ -64,6 +64,7 @@ func runTestCases(t *testing.T, tests []testCase, operation func(MigrationRunner
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
+
 				if tt.errorText != "" && !strings.Contains(err.Error(), tt.errorText) {
 					t.Errorf("expected error containing %q, got %q", tt.errorText, err.Error())
 				}
@@ -327,7 +328,6 @@ func TestMigrationRunnerInterface(_ *testing.T) {
 // TestMigrationRunnerLifecycle tests the complete lifecycle of a migration runner
 func TestMigrationRunnerLifecycle(t *testing.T) {
 	// This test defines the expected workflow for migration operations
-
 	mock := &mockMigrationRunner{
 		upError:      nil,
 		statusError:  nil,
@@ -445,19 +445,19 @@ func BenchmarkMigrationRunnerOperations(b *testing.B) {
 	mock := &mockMigrationRunner{}
 
 	b.Run("Status", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_ = mock.Status()
 		}
 	})
 
 	b.Run("Version", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_ = mock.Version()
 		}
 	})
 
 	b.Run("Up", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_ = mock.Up()
 		}
 	})

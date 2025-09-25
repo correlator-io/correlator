@@ -87,6 +87,7 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to list migrations: %v", err)
 		}
+
 		if len(files) == 0 {
 			t.Error("embedded migrations should always be available")
 		}
@@ -117,6 +118,7 @@ func TestEmbeddedMigrationsPerformanceWithActualEmbedding(t *testing.T) {
 
 			continue
 		}
+
 		if len(content) == 0 {
 			t.Errorf("embedded file %s should not be empty", filename)
 		}
@@ -157,6 +159,7 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected successful creation, got error: %v", err)
 		}
+
 		if runner == nil {
 			t.Fatal("expected non-nil runner")
 		}
@@ -281,6 +284,7 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
+
 				if runner == nil {
 					t.Fatal("expected non-nil runner when no error")
 				}
@@ -290,6 +294,7 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 				if err != nil {
 					t.Logf("cleanup error: %v", err)
 				}
+
 				return
 			}
 
@@ -297,9 +302,11 @@ func TestMigrationRunnerBadConfiguration(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
+
 			if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
 				t.Errorf("expected error containing %q, got %q", tt.errorContains, err.Error())
 			}
+
 			if runner != nil {
 				t.Error("expected nil runner when error occurs")
 			}
@@ -343,6 +350,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
+
 		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
 
@@ -390,6 +398,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		if err == nil {
 			t.Error("expected error due to invalid SQL syntax, got nil")
 		}
+
 		if err != nil && !strings.Contains(err.Error(), "migration up failed") {
 			t.Errorf("expected migration error, got: %v", err)
 		}
@@ -430,6 +439,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		if err != nil {
 			t.Fatalf("failed to open database connection: %v", err)
 		}
+
 		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
 
@@ -477,6 +487,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		if err == nil {
 			t.Error("expected error due to foreign key constraint violation, got nil")
 		}
+
 		if err != nil && !strings.Contains(err.Error(), "migration up failed") {
 			t.Errorf("expected migration error, got: %v", err)
 		}
