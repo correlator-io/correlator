@@ -184,38 +184,39 @@ DATABASE_URL="postgres://user:***@host:5432/db?sslmode=disable"
 MIGRATION_TABLE="schema_migrations"  # Optional, defaults to "schema_migrations"
 ```
 
-### Docker Deployment
+### Production Usage with Make Commands
 
-```yaml
-# docker-compose.yml
-services:
-  migrator:
-    build: .
-    command: ./migrator up
-    environment:
-      DATABASE_URL: postgres://correlator:${DB_PASSWORD}@postgres:5432/correlator?sslmode=disable
-    depends_on:
-      - postgres
-
-  # For database reset (DESTRUCTIVE - use in development only)
-  migrator-drop:
-    build: .
-    command: ./migrator drop --force
-    environment:
-      DATABASE_URL: postgres://correlator:${DB_PASSWORD}@postgres:5432/correlator?sslmode=disable
-    depends_on:
-      - postgres
-    profiles: [reset]  # Only run when explicitly requested
-```
-
-**Docker Usage Examples:**
+**Apply all pending migrations:**
 ```bash
-# Apply migrations
-docker-compose up migrator
-
-# Drop all tables (DESTRUCTIVE - development only)
-docker-compose --profile reset up migrator-drop
+make run migrate up
 ```
+
+**Check migration status:**
+```bash
+make run migrate status
+```
+
+**Show current migration version:**
+```bash
+make run migrate version
+```
+
+**Rollback last migration:**
+```bash
+make run migrate down
+```
+
+**Drop all tables (DESTRUCTIVE - development only):**
+```bash
+make run migrate drop
+```
+
+**Note**: These commands work consistently across all environments:
+- ✅ **Local development**: Uses local binary or builds one automatically
+- ✅ **Dev container**: Uses containerized environment with proper networking
+- ✅ **Production**: Uses Docker Compose with database connectivity
+- ✅ **Zero-config**: Automatically detects environment and handles setup
+
 
 ### Migration Safety
 
