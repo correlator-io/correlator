@@ -37,8 +37,8 @@ type (
 		Close() error
 	}
 
-	// migrationRunner implements MigrationRunner using golang-migrate.
-	migrationRunner struct {
+	// Runner implements MigrationRunner using golang-migrate.
+	Runner struct {
 		config            *Config
 		migrate           *migrate.Migrate
 		db                *sql.DB
@@ -56,7 +56,7 @@ var _ migrate.Logger = (*migrateLogger)(nil)
 var _ io.Writer = (*migrateLogger)(nil)
 
 // NewMigrationRunner creates a new migration runner with the given configuration.
-func NewMigrationRunner(config *Config) (*migrationRunner, error) {
+func NewMigrationRunner(config *Config) (*Runner, error) {
 	log.Printf("Initializing migration runner with config: %s", config.String())
 
 	// Initialize embedded migration
@@ -124,7 +124,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 
 	log.Println("Migration runner initialized successfully")
 
-	return &migrationRunner{
+	return &Runner{
 		config:            config,
 		migrate:           m,
 		db:                db,
@@ -133,7 +133,7 @@ func NewMigrationRunner(config *Config) (*migrationRunner, error) {
 }
 
 // Up applies all pending migrations.
-func (r *migrationRunner) Up() error {
+func (r *Runner) Up() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
 
@@ -159,7 +159,7 @@ func (r *migrationRunner) Up() error {
 }
 
 // Down rollbacks the last migration.
-func (r *migrationRunner) Down() error {
+func (r *Runner) Down() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
 
@@ -185,7 +185,7 @@ func (r *migrationRunner) Down() error {
 }
 
 // Status shows the current migration status with schema compatibility information.
-func (r *migrationRunner) Status() error {
+func (r *Runner) Status() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
@@ -218,7 +218,7 @@ func (r *migrationRunner) Status() error {
 }
 
 // Version shows the current migration version with schema compatibility.
-func (r *migrationRunner) Version() error {
+func (r *Runner) Version() error {
 	ver, dirty, err := r.migrate.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
@@ -245,7 +245,7 @@ func (r *migrationRunner) Version() error {
 }
 
 // Drop drops all tables (destructive operation).
-func (r *migrationRunner) Drop() error {
+func (r *Runner) Drop() error {
 	// Validate embedded migrations before state-changing operations
 	log.Println("Pre-operation validation: checking embedded migrations...")
 
@@ -267,7 +267,7 @@ func (r *migrationRunner) Drop() error {
 }
 
 // Close closes database connections.
-func (r *migrationRunner) Close() error {
+func (r *Runner) Close() error {
 	var errs []error
 
 	if r.migrate != nil {
@@ -292,7 +292,7 @@ func (r *migrationRunner) Close() error {
 }
 
 // showPendingMigrations attempts to show information about pending migrations.
-func (r *migrationRunner) showPendingMigrations() error {
+func (r *Runner) showPendingMigrations() error {
 	// This is a best-effort attempt to show pending migrations
 	// The golang-migrate library doesn't provide a direct way to list pending migrations
 	// In a production system, you might want to implement this by reading the source
@@ -306,7 +306,7 @@ func (r *migrationRunner) showPendingMigrations() error {
 
 // showSchemaCompatibility displays schema version compatibility information
 // between the migrator tool capabilities and current database state.
-func (r *migrationRunner) showSchemaCompatibility(currentVersion int) {
+func (r *Runner) showSchemaCompatibility(currentVersion int) {
 	maxSchemaVersion := r.getMaxEmbeddedSchemaVersion()
 
 	log.Printf("Schema Compatibility:")
@@ -330,7 +330,7 @@ func (r *migrationRunner) showSchemaCompatibility(currentVersion int) {
 
 // getMaxEmbeddedSchemaVersion returns the highest migration sequence number
 // from embedded migration files in this migrator binary.
-func (r *migrationRunner) getMaxEmbeddedSchemaVersion() int {
+func (r *Runner) getMaxEmbeddedSchemaVersion() int {
 	files, err := r.embeddedMigration.ListEmbeddedMigrations()
 	if err != nil {
 		return 0 // If we can't read migrations, assume no schema support

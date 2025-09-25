@@ -323,7 +323,7 @@ func TestMigrationRunnerInterface(_ *testing.T) {
 	var _ MigrationRunner = (*mockMigrationRunner)(nil)
 
 	// Also test that our real implementation complies with the interface
-	var _ MigrationRunner = (*migrationRunner)(nil) // This should compile when implemented
+	var _ MigrationRunner = (*Runner)(nil) // This should compile when implemented
 }
 
 // TestMigrationRunnerLifecycle tests the complete lifecycle of a migration runner.

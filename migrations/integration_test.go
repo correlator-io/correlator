@@ -340,7 +340,7 @@ func TestMigrationRunnerSQLErrors(t *testing.T) {
 		}
 
 		// Create migration runner with custom embedded filesystem containing invalid SQL
-		runner := &migrationRunner{
+		runner := &Runner{
 			config:            config,
 			embeddedMigration: NewEmbeddedMigration(invalidSQLFS),
 		}
@@ -429,7 +429,7 @@ INSERT INTO posts (user_id, title) VALUES (999, 'Test Post');`)},
 		}
 
 		// Create migration runner with custom embedded filesystem containing constraint violation
-		runner := &migrationRunner{
+		runner := &Runner{
 			config:            config,
 			embeddedMigration: NewEmbeddedMigration(constraintViolationFS),
 		}
