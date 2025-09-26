@@ -1,0 +1,838 @@
+openapi: 3.0.3
+info:
+  title: Correlator API
+  version: 1.0.0
+  description: |
+    **Correlator Incident Correlation Engine API**
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://correlator.yourdomain.com/api/v1
+    description: Production server
+
+security:
+  - ApiKeyAuth: []
+  - {} # No authentication for MVP (localhost binding)
+
+paths:
+  # OpenLineage Ingestion - Primary plugin integration
+  /lineage/events:
+    post:
+      summary: Ingest OpenLineage events
+      description: |
+        Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant events
+        from external plugins (correlator-dbt, correlator-airflow, etc.).
+
+        **Correlation Logic**: Extracts canonical `jobRunId` from RunEvent for linking
+        test failures to job runs with >90% accuracy.
+
+        **Performance**: Designed for 1,000 events/second sustained throughput.
+      operationId: ingestLineageEvents
+      tags:
+        - OpenLineage Ingestion
+      requestBody:
+        description: OpenLineage RunEvent, DatasetEvent, or JobEvent
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenLineageEvent'
+            examples:
+              dbt_run_start:
+                $ref: '#/components/examples/dbt_run_start'
+              airflow_task_complete:
+                $ref: '#/components/examples/airflow_task_complete'
+          application/x-ndjson:
+            schema:
+              type: string
+              description: Newline-delimited JSON for bulk ingestion
+            example: |
+              {"eventTime":"2024-01-01T12:00:00Z","producer":"correlator-dbt","schemaURL":"https://openlineage.io/spec/1-0-0/OpenLineage.json","eventType":"START","run":{"runId":"dbt:abc123-def456"},"job":{"namespace":"dbt","name":"models.users"}}
+              {"eventTime":"2024-01-01T12:05:00Z","producer":"correlator-dbt","schemaURL":"https://openlineage.io/spec/1-0-0/OpenLineage.json","eventType":"COMPLETE","run":{"runId":"dbt:abc123-def456"},"job":{"namespace":"dbt","name":"models.users"}}
+      responses:
+        '200':
+          description: Event(s) ingested successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionResponse'
+        '202':
+          description: Event(s) accepted for processing (async mode)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # Test Results Ingestion
+  /test-results:
+    post:
+      summary: Ingest data quality test results
+      description: |
+        Ingest test results from data quality tools (Great Expectations, dbt tests, custom validators).
+
+        **Critical for Correlation**: Test results linked to `jobRunId` enable correlation
+        of test failures with producing job runs.
+      operationId: ingestTestResults
+      tags:
+        - Test Results
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TestResult'
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/TestResult'
+            examples:
+              single_test_failure:
+                $ref: '#/components/examples/test_failure'
+              bulk_test_results:
+                $ref: '#/components/examples/bulk_test_results'
+      responses:
+        '200':
+          description: Test result(s) ingested successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # Plugin Management
+  /plugins/health:
+    get:
+      summary: Plugin health check endpoint
+      description: |
+        Health check endpoint for plugin integration validation. Used by setup wizard
+        and continuous monitoring to ensure plugin connectivity.
+      operationId: checkPluginHealth
+      tags:
+        - Plugin Management
+      parameters:
+        - name: plugin_name
+          in: query
+          description: Specific plugin to check (e.g., 'correlator-dbt', 'correlator-airflow')
+          schema:
+            type: string
+            enum: [correlator-dbt, correlator-airflow, correlator-ge, custom]
+      responses:
+        '200':
+          description: Plugin health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginHealthResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /plugins/discovery:
+    get:
+      summary: Plugin discovery and registration
+      description: Plugin discovery endpoint for automatic plugin detection and registration
+      operationId: discoverPlugins
+      tags:
+        - Plugin Management
+      responses:
+        '200':
+          description: Available plugins
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginDiscoveryResponse'
+
+  # Correlation Queries - For UI and 2-click Navigation
+  /incidents:
+    get:
+      summary: List recent incidents
+      description: |
+        Retrieve recent incidents for dashboard display. Supports 2-click navigation:
+        incident list → incident detail.
+
+        **Performance Target**: <200ms response time for dashboard queries.
+      operationId: listIncidents
+      tags:
+        - Correlation Queries
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of incidents to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Number of incidents to skip for pagination
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: status
+          in: query
+          description: Filter by incident status
+          schema:
+            type: string
+            enum: [active, resolved, investigating]
+        - name: severity
+          in: query
+          description: Filter by incident severity
+          schema:
+            type: string
+            enum: [critical, high, medium, low]
+        - name: time_range
+          in: query
+          description: Time range for incidents
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d, 30d]
+            default: 24h
+      responses:
+        '200':
+          description: List of incidents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /incidents/{incident_id}:
+    get:
+      summary: Get incident details
+      description: |
+        Retrieve detailed incident information for root cause analysis. Second click
+        in 2-click navigation workflow.
+
+        **Performance Target**: <1s response time for complex lineage queries.
+      operationId: getIncidentDetails
+      tags:
+        - Correlation Queries
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          description: Unique incident identifier
+          schema:
+            type: string
+            format: uuid
+        - name: include_lineage
+          in: query
+          description: Include upstream/downstream lineage information
+          schema:
+            type: boolean
+            default: true
+        - name: lineage_depth
+          in: query
+          description: Maximum depth for lineage traversal
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: Incident details with correlation information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetailsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /lineage/traverse:
+    get:
+      summary: Traverse dataset lineage
+      description: |
+        Traverse dataset lineage for impact analysis. Used by incident detail view
+        to show upstream/downstream relationships.
+      operationId: traverseLineage
+      tags:
+        - Correlation Queries
+      parameters:
+        - name: dataset_urn
+          in: query
+          required: true
+          description: Dataset URN to start traversal from
+          schema:
+            type: string
+            example: "postgres://prod.db/clean.users"
+        - name: direction
+          in: query
+          description: Traversal direction
+          schema:
+            type: string
+            enum: [upstream, downstream, both]
+            default: both
+        - name: depth
+          in: query
+          description: Maximum traversal depth
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: Lineage traversal results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineageTraversalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # System Health and Metrics
+  /health:
+    get:
+      summary: System health check
+      description: |
+        Overall system health for setup validation and monitoring. Used by
+        `correlator validate-setup` command and health dashboards.
+      operationId: getSystemHealth
+      tags:
+        - System Health
+      responses:
+        '200':
+          description: System health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthResponse'
+        '503':
+          description: System unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthResponse'
+
+  /metrics:
+    get:
+      summary: Get system metrics
+      description: |
+        System performance and correlation accuracy metrics. Critical for monitoring
+        >90% correlation accuracy target.
+      operationId: getSystemMetrics
+      tags:
+        - System Health
+      parameters:
+        - name: format
+          in: query
+          description: Metrics format
+          schema:
+            type: string
+            enum: [json, prometheus]
+            default: json
+        - name: time_range
+          in: query
+          description: Time range for metrics
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d]
+            default: 1h
+      responses:
+        '200':
+          description: System metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemMetricsResponse'
+            text/plain:
+              schema:
+                type: string
+                description: Prometheus-formatted metrics
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /metrics/correlation-accuracy:
+    get:
+      summary: Get correlation accuracy metrics
+      description: |
+        Detailed correlation accuracy metrics for validation of >90% accuracy target.
+        Used by monitoring systems and business metrics tracking.
+      operationId: getCorrelationAccuracy
+      tags:
+        - System Health
+      parameters:
+        - name: time_window
+          in: query
+          description: Time window for accuracy measurement
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d]
+            default: 24h
+        - name: breakdown_by
+          in: query
+          description: Break down accuracy by dimension
+          schema:
+            type: string
+            enum: [plugin, job_type, dataset_type]
+      responses:
+        '200':
+          description: Correlation accuracy metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CorrelationAccuracyResponse'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API key authentication for production environments. Not required for MVP
+        (localhost binding) but available for enterprise upgrade path.
+
+  schemas:
+    # OpenLineage Event Schema (reference to external file)
+    OpenLineageEvent:
+      $ref: './schemas/openlineage.yaml#/components/schemas/OpenLineageEvent'
+
+    # Test Result Schema
+    TestResult:
+      type: object
+      required:
+        - test_name
+        - dataset_urn
+        - job_run_id
+        - status
+        - executed_at
+      properties:
+        test_name:
+          type: string
+          description: Name of the data quality test
+          example: "not_null_user_id"
+        dataset_urn:
+          type: string
+          description: Dataset URN being tested
+          example: "postgres://prod.db/clean.users"
+        job_run_id:
+          type: string
+          description: Canonical job run ID (correlation key)
+          example: "dbt:abc123-def456"
+        status:
+          type: string
+          enum: [passed, failed, error, warning, skipped]
+          description: Test execution status
+        message:
+          type: string
+          description: Test result message or error details
+          example: "Found 3 null values in user_id column"
+        executed_at:
+          type: string
+          format: date-time
+          description: When the test was executed
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional test metadata
+          example:
+            assertion_type: "not_null"
+            column_name: "user_id"
+            row_count: 1000
+            failed_rows: 3
+
+    # Correlation Response Schemas (reference to external file)
+    IncidentListResponse:
+      $ref: './schemas/correlation.yaml#/components/schemas/IncidentListResponse'
+
+    IncidentDetailsResponse:
+      $ref: './schemas/correlation.yaml#/components/schemas/IncidentDetailsResponse'
+
+    LineageTraversalResponse:
+      $ref: './schemas/correlation.yaml#/components/schemas/LineageTraversalResponse'
+
+    # System Health Schemas
+    SystemHealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: Overall system health status
+        version:
+          type: string
+          description: API version
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+        setup_time:
+          type: string
+          description: Time taken for system setup
+          example: "23s"
+        database:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [connected, disconnected, error]
+            latency_ms:
+              type: number
+              description: Database connection latency
+        integrations:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ready, error, not_configured]
+          description: Plugin integration status
+          example:
+            dbt: "ready"
+            airflow: "ready"
+            great_expectations: "not_configured"
+        correlation_accuracy:
+          type: string
+          description: Current correlation accuracy percentage
+          example: "94.2%"
+
+    SystemMetricsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        time_range:
+          type: string
+          example: "1h"
+        metrics:
+          type: object
+          properties:
+            events_processed_total:
+              type: object
+              additionalProperties:
+                type: number
+              example:
+                openlineage: 1247
+                test_results: 342
+            correlation_latency_seconds:
+              type: object
+              additionalProperties:
+                type: number
+              example:
+                p50: 0.234
+                p95: 1.2
+                p99: 2.8
+            incidents_created_total:
+              type: object
+              additionalProperties:
+                type: number
+              example:
+                critical: 2
+                warning: 8
+                info: 15
+            database_query_duration_seconds:
+              type: object
+              additionalProperties:
+                type: number
+              example:
+                incident: 0.089
+                lineage: 0.156
+
+    CorrelationAccuracyResponse:
+      type: object
+      properties:
+        overall_accuracy:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Overall correlation accuracy percentage
+          example: 94.2
+        time_window:
+          type: string
+          example: "24h"
+        total_incidents:
+          type: integer
+          description: Total incidents in time window
+        successfully_correlated:
+          type: integer
+          description: Successfully correlated incidents
+        breakdown:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              accuracy:
+                type: number
+                format: float
+              incident_count:
+                type: integer
+          example:
+            dbt:
+              accuracy: 96.8
+              incident_count: 45
+            airflow:
+              accuracy: 91.3
+              incident_count: 23
+
+    # Plugin Management Schemas
+    PluginHealthResponse:
+      type: object
+      properties:
+        overall_status:
+          type: string
+          enum: [healthy, degraded, error]
+        plugins:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [connected, error, not_configured]
+              last_event:
+                type: string
+                format: date-time
+              error_message:
+                type: string
+          example:
+            correlator-dbt:
+              status: "connected"
+              last_event: "2024-01-01T12:00:00Z"
+            correlator-airflow:
+              status: "error"
+              error_message: "Connection timeout"
+
+    PluginDiscoveryResponse:
+      type: object
+      properties:
+        available_plugins:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              version:
+                type: string
+              status:
+                type: string
+                enum: [installed, available, error]
+              description:
+                type: string
+              setup_url:
+                type: string
+                format: uri
+
+    # Response Schemas
+    IngestionResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Events processed successfully"
+        events_processed:
+          type: integer
+          example: 1
+        correlation_id:
+          type: string
+          format: uuid
+          description: Correlation ID for tracking
+        processing_time_ms:
+          type: number
+          example: 45.7
+
+    # Error Response Schemas (reference to external file)
+    Error:
+      $ref: './schemas/errors.yaml#/components/schemas/Error'
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "BAD_REQUEST"
+              message: "Invalid OpenLineage event format"
+              details:
+                field: "eventTime"
+                issue: "Invalid date-time format"
+
+    ValidationError:
+      description: Validation error - request doesn't meet schema requirements
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Schema validation failed"
+              details:
+                - field: "run.runId"
+                  issue: "Required field missing"
+                - field: "job.namespace"
+                  issue: "Must not be empty"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Incident not found"
+              details:
+                incident_id: "123e4567-e89b-12d3-a456-426614174000"
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "RATE_LIMITED"
+              message: "Rate limit exceeded"
+              details:
+                limit: 1000
+                window: "1h"
+                retry_after: 300
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"
+              correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+
+  examples:
+    dbt_run_start:
+      summary: dbt model run start event
+      value:
+        eventTime: "2024-01-01T12:00:00Z"
+        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "START"
+        run:
+          runId: "dbt:abc123-def456"
+          facets:
+            nominalTime:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
+              nominalStartTime: "2024-01-01T12:00:00Z"
+        job:
+          namespace: "dbt"
+          name: "models.users"
+          facets:
+            sql:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
+              query: "SELECT * FROM raw.users WHERE created_at > CURRENT_DATE - 7"
+        inputs:
+          - namespace: "postgres"
+            name: "prod.raw.users"
+            facets:
+              schema:
+                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json"
+                fields:
+                  - name: "user_id"
+                    type: "INTEGER"
+                  - name: "email"
+                    type: "VARCHAR"
+        outputs:
+          - namespace: "postgres"
+            name: "prod.clean.users"
+
+    airflow_task_complete:
+      summary: Airflow task completion event
+      value:
+        eventTime: "2024-01-01T12:05:00Z"
+        producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "COMPLETE"
+        run:
+          runId: "airflow:manual__2024-01-01T12:00:00"
+          facets:
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "2.7.0"
+              name: "airflow"
+        job:
+          namespace: "data_pipeline"
+          name: "user_etl.extract_users"
+        outputs:
+          - namespace: "postgres"
+            name: "prod.raw.users"
+
+    test_failure:
+      summary: Data quality test failure
+      value:
+        test_name: "not_null_user_id"
+        dataset_urn: "postgres://prod.db/clean.users"
+        job_run_id: "dbt:abc123-def456"
+        status: "failed"
+        message: "Found 3 null values in user_id column"
+        executed_at: "2024-01-01T12:05:30Z"
+        metadata:
+          assertion_type: "not_null"
+          column_name: "user_id"
+          row_count: 1000
+          failed_rows: 3
+
+    bulk_test_results:
+      summary: Bulk test results submission
+      value:
+        - test_name: "not_null_user_id"
+          dataset_urn: "postgres://prod.db/clean.users"
+          job_run_id: "dbt:abc123-def456"
+          status: "passed"
+          executed_at: "2024-01-01T12:05:30Z"
+        - test_name: "unique_email"
+          dataset_urn: "postgres://prod.db/clean.users"
+          job_run_id: "dbt:abc123-def456"
+          status: "failed"
+          message: "Found 2 duplicate email addresses"
+          executed_at: "2024-01-01T12:05:31Z"
+
+tags:
+  - name: OpenLineage Ingestion
+    description: Primary plugin integration endpoints for OpenLineage event ingestion
+  - name: Test Results
+    description: Data quality test result ingestion endpoints
+  - name: Plugin Management
+    description: Plugin health, discovery, and registration endpoints
+  - name: Correlation Queries
+    description: Incident and lineage query endpoints for UI and 2-click navigation
+  - name: System Health
+    description: System health and metrics endpoints for monitoring and validation

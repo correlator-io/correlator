@@ -1,0 +1,668 @@
+{
+  "_description": "Sample OpenLineage events for Correlator Plugin-Ready API integration testing and documentation",
+  "_usage": "These examples demonstrate OpenLineage v1.0 compliant events with Correlator-specific extensions for incident correlation",
+
+  "dbt_model_lifecycle": {
+    "_description": "Complete dbt model execution lifecycle (START → COMPLETE) with correlation metadata",
+
+    "dbt_model_start": {
+      "eventTime": "2024-01-01T12:00:00Z",
+      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "START",
+      "run": {
+        "runId": "dbt:abc123-def456-789ghi",
+        "facets": {
+          "nominalTime": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json",
+            "nominalStartTime": "2024-01-01T12:00:00Z"
+          },
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "1.6.0",
+            "name": "dbt",
+            "openlineageAdapterVersion": "1.0.0"
+          },
+          "correlator": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
+            "canonicalJobRunId": "dbt:abc123-def456-789ghi",
+            "toolMetadata": {
+              "dbt_version": "1.6.0",
+              "project_name": "analytics",
+              "target": "prod",
+              "invocation_id": "abc123-def456-789ghi",
+              "thread_id": "Thread-1"
+            },
+            "correlationTags": ["data-quality", "user-pipeline", "critical-path"]
+          }
+        }
+      },
+      "job": {
+        "namespace": "dbt",
+        "name": "models.marts.users",
+        "facets": {
+          "sql": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json",
+            "query": "SELECT u.user_id, u.email, u.created_at, COUNT(o.order_id) as order_count FROM {{ ref('staging_users') }} u LEFT JOIN {{ ref('staging_orders') }} o ON u.user_id = o.user_id WHERE u.created_at > CURRENT_DATE - INTERVAL '7 days' GROUP BY u.user_id, u.email, u.created_at"
+          },
+          "documentation": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationJobFacet.json",
+            "description": "Clean user data with enriched order metrics for analytics"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.staging.staging_users",
+          "facets": {
+            "schema": {
+              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json",
+              "fields": [
+                {"name": "user_id", "type": "INTEGER", "description": "Unique user identifier"},
+                {"name": "email", "type": "VARCHAR(255)", "description": "User email address"},
+                {"name": "created_at", "type": "TIMESTAMP", "description": "User registration timestamp"},
+                {"name": "is_active", "type": "BOOLEAN", "description": "User active status"}
+              ]
+            },
+            "correlator": {
+              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
+              "businessCriticality": "high",
+              "dataOwner": "data-team@company.com",
+              "slaMinutes": 120,
+              "upstreamDependencies": ["postgres://prod.raw.users"]
+            }
+          }
+        },
+        {
+          "namespace": "postgres",
+          "name": "prod.staging.staging_orders",
+          "facets": {
+            "schema": {
+              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json",
+              "fields": [
+                {"name": "order_id", "type": "INTEGER", "description": "Unique order identifier"},
+                {"name": "user_id", "type": "INTEGER", "description": "User who placed the order"},
+                {"name": "order_total", "type": "DECIMAL(10,2)", "description": "Total order value"},
+                {"name": "created_at", "type": "TIMESTAMP", "description": "Order creation timestamp"}
+              ]
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.marts.users",
+          "facets": {
+            "correlator": {
+              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
+              "businessCriticality": "critical",
+              "dataOwner": "analytics-team@company.com",
+              "slaMinutes": 60,
+              "upstreamDependencies": [
+                "postgres://prod.staging.staging_users",
+                "postgres://prod.staging.staging_orders"
+              ]
+            }
+          }
+        }
+      ]
+    },
+
+    "dbt_model_complete": {
+      "eventTime": "2024-01-01T12:05:23Z",
+      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "COMPLETE",
+      "run": {
+        "runId": "dbt:abc123-def456-789ghi",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "1.6.0",
+            "name": "dbt",
+            "openlineageAdapterVersion": "1.0.0"
+          }
+        }
+      },
+      "job": {
+        "namespace": "dbt",
+        "name": "models.marts.users"
+      },
+      "outputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.marts.users",
+          "outputFacets": {
+            "outputStatistics": {
+              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/OutputStatisticsOutputDatasetFacet.json",
+              "rowCount": 15743,
+              "size": 2456789
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  "airflow_pipeline": {
+    "_description": "Airflow pipeline execution with OpenLineage integration",
+
+    "airflow_extract_start": {
+      "eventTime": "2024-01-01T11:30:00Z",
+      "producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "START",
+      "run": {
+        "runId": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "2.7.0",
+            "name": "airflow",
+            "openlineageAdapterVersion": "1.0.0"
+          },
+          "airflow": {
+            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/AirflowRunFacet.json",
+            "dag": {
+              "dag_id": "user_etl",
+              "schedule_interval": "@hourly",
+              "tags": ["etl", "users", "production"]
+            },
+            "task": {
+              "task_id": "extract_users",
+              "operator": "PostgresOperator",
+              "pool": "default_pool"
+            },
+            "taskInstance": {
+              "execution_date": "2024-01-01T11:30:00Z",
+              "try_number": 1
+            }
+          },
+          "correlator": {
+            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
+            "toolMetadata": {
+              "airflow_version": "2.7.0",
+              "dag_id": "user_etl",
+              "task_id": "extract_users",
+              "execution_date": "2024-01-01T11:30:00Z",
+              "run_id": "manual__2024-01-01T11:30:00",
+              "try_number": 1
+            },
+            "correlationTags": ["etl", "hourly", "user-data"]
+          }
+        }
+      },
+      "job": {
+        "namespace": "airflow",
+        "name": "user_etl.extract_users",
+        "facets": {
+          "sql": {
+            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json",
+            "query": "INSERT INTO staging.users SELECT user_id, email, first_name, last_name, created_at, updated_at FROM source_systems.user_api_data WHERE updated_at > NOW() - INTERVAL '1 hour'"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.source_systems.user_api_data",
+          "facets": {
+            "dataSource": {
+              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DatasourceDatasetFacet.json",
+              "name": "user_api",
+              "uri": "https://api.company.com/users"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.staging.users",
+          "facets": {
+            "correlator": {
+              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
+              "businessCriticality": "high",
+              "dataOwner": "data-engineering@company.com",
+              "slaMinutes": 90
+            }
+          }
+        }
+      ]
+    },
+
+    "airflow_extract_complete": {
+      "eventTime": "2024-01-01T11:35:42Z",
+      "producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "COMPLETE",
+      "run": {
+        "runId": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "2.7.0",
+            "name": "airflow"
+          }
+        }
+      },
+      "job": {
+        "namespace": "airflow",
+        "name": "user_etl.extract_users"
+      },
+      "outputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.staging.users",
+          "outputFacets": {
+            "outputStatistics": {
+              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/OutputStatisticsOutputDatasetFacet.json",
+              "rowCount": 2847,
+              "size": 456231
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  "great_expectations_validation": {
+    "_description": "Great Expectations data quality validation events",
+
+    "ge_validation_start": {
+      "eventTime": "2024-01-01T12:06:00Z",
+      "producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "START",
+      "run": {
+        "runId": "ge:user_validation_suite.validation_run_abc123",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "0.18.0",
+            "name": "great_expectations",
+            "openlineageAdapterVersion": "1.0.0"
+          },
+          "correlator": {
+            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
+            "toolMetadata": {
+              "ge_version": "0.18.0",
+              "expectation_suite_name": "user_data_quality_suite",
+              "batch_id": "batch_abc123",
+              "validation_run_id": "validation_run_abc123"
+            },
+            "correlationTags": ["data-quality", "validation", "users"]
+          }
+        }
+      },
+      "job": {
+        "namespace": "great_expectations",
+        "name": "user_validation_suite",
+        "facets": {
+          "documentation": {
+            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationJobFacet.json",
+            "description": "Comprehensive data quality validation suite for user data"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.marts.users",
+          "facets": {
+            "dataQuality": {
+              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityAssertionsDatasetFacet.json",
+              "assertions": [
+                {
+                  "assertion": "user_id_not_null",
+                  "column": "user_id",
+                  "success": true
+                },
+                {
+                  "assertion": "email_unique",
+                  "column": "email",
+                  "success": false,
+                  "failureCount": 2
+                },
+                {
+                  "assertion": "order_count_range",
+                  "column": "order_count",
+                  "success": true
+                }
+              ]
+            }
+          },
+          "inputFacets": {
+            "dataQualityMetrics": {
+              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json",
+              "rowCount": 15743,
+              "columnMetrics": {
+                "user_id": {
+                  "nullCount": 0,
+                  "distinctCount": 15743
+                },
+                "email": {
+                  "nullCount": 5,
+                  "distinctCount": 15741
+                },
+                "order_count": {
+                  "nullCount": 0,
+                  "min": 0,
+                  "max": 47,
+                  "mean": 3.2
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "ge_validation_fail": {
+      "eventTime": "2024-01-01T12:06:15Z",
+      "producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "FAIL",
+      "run": {
+        "runId": "ge:user_validation_suite.validation_run_abc123",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "0.18.0",
+            "name": "great_expectations"
+          },
+          "errorMessage": {
+            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ErrorMessageRunFacet.json",
+            "message": "Data quality validation failed: 1 of 3 expectations failed",
+            "programmingLanguage": "python"
+          }
+        }
+      },
+      "job": {
+        "namespace": "great_expectations",
+        "name": "user_validation_suite"
+      },
+      "inputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.marts.users",
+          "inputFacets": {
+            "dataQualityMetrics": {
+              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json",
+              "rowCount": 15743,
+              "validationResults": {
+                "success": false,
+                "statistics": {
+                  "evaluated_expectations": 3,
+                  "successful_expectations": 2,
+                  "unsuccessful_expectations": 1,
+                  "success_percent": 66.67
+                },
+                "results": [
+                  {
+                    "expectation_config": {
+                      "expectation_type": "expect_column_values_to_not_be_null",
+                      "kwargs": {"column": "user_id"}
+                    },
+                    "success": true
+                  },
+                  {
+                    "expectation_config": {
+                      "expectation_type": "expect_column_values_to_be_unique",
+                      "kwargs": {"column": "email"}
+                    },
+                    "success": false,
+                    "result": {
+                      "unexpected_count": 2,
+                      "unexpected_percent": 0.013,
+                      "partial_unexpected_list": ["user123@example.com", "user456@example.com"]
+                    }
+                  },
+                  {
+                    "expectation_config": {
+                      "expectation_type": "expect_column_values_to_be_between",
+                      "kwargs": {"column": "order_count", "min_value": 0, "max_value": 100}
+                    },
+                    "success": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  "spark_job_example": {
+    "_description": "Apache Spark job with OpenLineage integration",
+
+    "spark_etl_complete": {
+      "eventTime": "2024-01-01T10:45:33Z",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "COMPLETE",
+      "run": {
+        "runId": "spark:application_1704110400123_0042",
+        "facets": {
+          "processing_engine": {
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
+            "version": "3.4.1",
+            "name": "spark",
+            "openlineageAdapterVersion": "1.0.0"
+          },
+          "spark": {
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SparkApplicationDetailsRunFacet.json",
+            "applicationId": "application_1704110400123_0042",
+            "applicationName": "UserEventAggregation",
+            "master": "yarn",
+            "deployMode": "cluster"
+          }
+        }
+      },
+      "job": {
+        "namespace": "spark",
+        "name": "user_event_aggregation",
+        "facets": {
+          "spark": {
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SparkJobDetailsJobFacet.json",
+            "jobId": 0,
+            "jobDescription": "Aggregate user events for daily reporting"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "s3",
+          "name": "data-lake.events.user_events.2024.01.01",
+          "facets": {
+            "schema": {
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json",
+              "fields": [
+                {"name": "user_id", "type": "BIGINT"},
+                {"name": "event_type", "type": "STRING"},
+                {"name": "timestamp", "type": "TIMESTAMP"},
+                {"name": "properties", "type": "STRING"}
+              ]
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "namespace": "postgres",
+          "name": "prod.analytics.daily_user_metrics",
+          "outputFacets": {
+            "outputStatistics": {
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/OutputStatisticsOutputDatasetFacet.json",
+              "rowCount": 25847,
+              "size": 3456789
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  "bulk_ingestion_example": {
+    "_description": "Example of bulk event ingestion using newline-delimited JSON",
+    "_format": "application/x-ndjson",
+    "_events": [
+      "{\"eventTime\":\"2024-01-01T14:00:00Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"dbt:batch_001_model_1\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"}}",
+      "{\"eventTime\":\"2024-01-01T14:02:15Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"dbt:batch_001_model_1\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_orders\"}]}",
+      "{\"eventTime\":\"2024-01-01T14:02:30Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"dbt:batch_001_model_2\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"}}",
+      "{\"eventTime\":\"2024-01-01T14:04:45Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"dbt:batch_001_model_2\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_products\"}]}"
+    ]
+  },
+
+  "error_scenarios": {
+    "_description": "Examples of events that would trigger various error responses",
+
+    "invalid_schema_version": {
+      "_description": "Event with unsupported schema version",
+      "eventTime": "2024-01-01T12:00:00Z",
+      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/0-5-0/OpenLineage.json",
+      "eventType": "START",
+      "run": {
+        "runId": "dbt:invalid-schema-example"
+      },
+      "job": {
+        "namespace": "dbt",
+        "name": "models.test"
+      }
+    },
+
+    "missing_required_fields": {
+      "_description": "Event missing required fields (run.runId)",
+      "eventTime": "2024-01-01T12:00:00Z",
+      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "START",
+      "run": {},
+      "job": {
+        "namespace": "dbt",
+        "name": "models.test"
+      }
+    },
+
+    "invalid_event_type": {
+      "_description": "Event with invalid eventType",
+      "eventTime": "2024-01-01T12:00:00Z",
+      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
+      "eventType": "INVALID_TYPE",
+      "run": {
+        "runId": "dbt:invalid-event-type"
+      },
+      "job": {
+        "namespace": "dbt",
+        "name": "models.test"
+      }
+    }
+  },
+
+  "test_result_examples": {
+    "_description": "Sample test results that accompany OpenLineage events for correlation",
+
+    "dbt_test_results": [
+      {
+        "test_name": "not_null_user_id",
+        "dataset_urn": "postgres://prod.db/marts.users",
+        "job_run_id": "dbt:abc123-def456-789ghi",
+        "status": "passed",
+        "message": "All 15,743 rows have non-null user_id values",
+        "executed_at": "2024-01-01T12:05:25Z",
+        "metadata": {
+          "assertion_type": "not_null",
+          "column_name": "user_id",
+          "row_count": 15743,
+          "failed_rows": 0
+        }
+      },
+      {
+        "test_name": "unique_email",
+        "dataset_urn": "postgres://prod.db/marts.users",
+        "job_run_id": "dbt:abc123-def456-789ghi",
+        "status": "failed",
+        "message": "Found 2 duplicate email addresses",
+        "executed_at": "2024-01-01T12:05:26Z",
+        "metadata": {
+          "assertion_type": "unique",
+          "column_name": "email",
+          "row_count": 15743,
+          "failed_rows": 2,
+          "duplicate_values": ["user123@example.com", "user456@example.com"]
+        }
+      },
+      {
+        "test_name": "order_count_range",
+        "dataset_urn": "postgres://prod.db/marts.users",
+        "job_run_id": "dbt:abc123-def456-789ghi",
+        "status": "passed",
+        "message": "All order_count values are within expected range [0, 100]",
+        "executed_at": "2024-01-01T12:05:27Z",
+        "metadata": {
+          "assertion_type": "range",
+          "column_name": "order_count",
+          "min_value": 0,
+          "max_value": 47,
+          "expected_min": 0,
+          "expected_max": 100
+        }
+      }
+    ],
+
+    "great_expectations_test_results": [
+      {
+        "test_name": "expect_column_values_to_be_unique_email",
+        "dataset_urn": "postgres://prod.db/marts.users",
+        "job_run_id": "ge:user_validation_suite.validation_run_abc123",
+        "status": "failed",
+        "message": "Found 2 non-unique values in email column",
+        "executed_at": "2024-01-01T12:06:15Z",
+        "metadata": {
+          "expectation_type": "expect_column_values_to_be_unique",
+          "column": "email",
+          "unexpected_count": 2,
+          "unexpected_percent": 0.013,
+          "partial_unexpected_list": ["user123@example.com", "user456@example.com"]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,569 @@
+openapi: 3.0.3
+info:
+  title: Error Response Schemas
+  version: 1.0.0
+  description: |
+    Standard error response schemas for Correlator Plugin-Ready API.
+
+    Follows RFC 7807 Problem Details standard with Correlator-specific extensions
+    for enhanced debugging and plugin developer experience.
+
+components:
+  schemas:
+    # Base Error Schema - RFC 7807 compliant
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetails'
+
+    # Error Details - Main error information
+    ErrorDetails:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Schema validation failed"
+        type:
+          type: string
+          format: uri
+          description: URI reference identifying the problem type (RFC 7807)
+          example: "https://correlator.io/docs/errors#validation-error"
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type
+          example: "Validation Error"
+        status:
+          type: integer
+          description: HTTP status code
+          example: 422
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+          example: "The OpenLineage event is missing required fields"
+        instance:
+          type: string
+          format: uri
+          description: URI reference identifying the specific occurrence
+          example: "/api/v1/lineage/events"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the error occurred
+          example: "2024-01-01T12:05:30Z"
+        correlation_id:
+          type: string
+          format: uuid
+          description: Unique ID for tracking this error across systems
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        details:
+          oneOf:
+            - $ref: '#/components/schemas/ValidationErrorDetails'
+            - $ref: '#/components/schemas/PluginErrorDetails'
+            - $ref: '#/components/schemas/CorrelationErrorDetails'
+            - type: object
+              additionalProperties: true
+          description: Additional error-specific details
+
+    # Validation Error Details - Schema validation failures
+    ValidationErrorDetails:
+      type: object
+      properties:
+        field_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+          description: Specific field validation errors
+        schema_url:
+          type: string
+          format: uri
+          description: URL to the schema that failed validation
+          example: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        received_schema:
+          type: string
+          description: Schema URL found in the request
+        expected_schemas:
+          type: array
+          items:
+            type: string
+          description: List of accepted schema URLs
+
+    # Field Error - Individual field validation error
+    FieldError:
+      type: object
+      required:
+        - field
+        - issue
+      properties:
+        field:
+          type: string
+          description: JSON path to the field that failed validation
+          example: "run.runId"
+        issue:
+          type: string
+          description: Description of the validation issue
+          example: "Required field missing"
+        received_value:
+          description: The value that failed validation (any type)
+          example: null
+        expected_type:
+          type: string
+          description: Expected data type or format
+          example: "string"
+        constraint:
+          type: string
+          description: Validation constraint that was violated
+          example: "minLength: 1"
+
+    # Plugin Error Details - Plugin-specific errors
+    PluginErrorDetails:
+      type: object
+      properties:
+        plugin_name:
+          type: string
+          description: Name of the plugin that encountered the error
+          example: "correlator-dbt"
+        plugin_version:
+          type: string
+          description: Version of the plugin
+          example: "1.0.0"
+        plugin_operation:
+          type: string
+          description: Plugin operation that failed
+          example: "lineage_extraction"
+        tool_context:
+          type: object
+          additionalProperties: true
+          description: Tool-specific context information
+          example:
+            dbt_version: "1.6.0"
+            invocation_id: "abc123-def456"
+            model_name: "users"
+        suggested_actions:
+          type: array
+          items:
+            type: string
+          description: Suggested actions to resolve the error
+          example:
+            - "Check dbt project configuration"
+            - "Verify database connection"
+            - "Update correlator-dbt plugin version"
+
+    # Correlation Error Details - Correlation engine errors
+    CorrelationErrorDetails:
+      type: object
+      properties:
+        correlation_method:
+          type: string
+          description: Correlation method that failed
+          example: "job_run_id_canonicalization"
+        job_run_id:
+          type: string
+          description: Job run ID that couldn't be correlated
+          example: "unknown-format-12345"
+        canonicalization_attempts:
+          type: array
+          items:
+            type: object
+            properties:
+              rule:
+                type: string
+              pattern:
+                type: string
+              matched:
+                type: boolean
+          description: Canonicalization rules that were attempted
+        correlation_confidence:
+          type: number
+          format: float
+          description: Confidence score of attempted correlation
+          example: 23.5
+        related_events:
+          type: array
+          items:
+            type: string
+          description: Related event IDs that were considered
+        diagnostic_info:
+          type: object
+          additionalProperties: true
+          description: Additional diagnostic information
+
+    # Rate Limit Error Details
+    RateLimitErrorDetails:
+      type: object
+      properties:
+        limit:
+          type: integer
+          description: Rate limit threshold
+          example: 1000
+        window:
+          type: string
+          description: Rate limit time window
+          example: "1h"
+        current_usage:
+          type: integer
+          description: Current usage count
+          example: 1000
+        reset_at:
+          type: string
+          format: date-time
+          description: When the rate limit resets
+        retry_after:
+          type: integer
+          description: Seconds to wait before retrying
+          example: 300
+
+    # Authentication Error Details
+    AuthErrorDetails:
+      type: object
+      properties:
+        auth_method:
+          type: string
+          description: Authentication method that failed
+          example: "api_key"
+        provided_credentials:
+          type: object
+          properties:
+            api_key_provided:
+              type: boolean
+            api_key_format_valid:
+              type: boolean
+        required_permissions:
+          type: array
+          items:
+            type: string
+          description: Permissions required for this operation
+          example: ["lineage:write", "incidents:read"]
+
+    # Internal Error Details
+    InternalErrorDetails:
+      type: object
+      properties:
+        service:
+          type: string
+          description: Internal service that encountered the error
+          example: "correlation-engine"
+        operation:
+          type: string
+          description: Internal operation that failed
+          example: "database_query"
+        error_category:
+          type: string
+          enum: [database, network, processing, configuration, unknown]
+        retry_possible:
+          type: boolean
+          description: Whether the operation can be retried
+        support_reference:
+          type: string
+          description: Reference ID for support tickets
+          example: "CORR-2024-001-12345"
+
+  examples:
+    # Validation Error Examples
+    openlineage_validation_error:
+      summary: OpenLineage event validation error
+      value:
+        error:
+          code: "VALIDATION_ERROR"
+          message: "OpenLineage event validation failed"
+          type: "https://correlator.io/docs/errors#validation-error"
+          title: "Validation Error"
+          status: 422
+          detail: "The RunEvent is missing required fields and has invalid data types"
+          instance: "/api/v1/lineage/events"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+          details:
+            field_errors:
+              - field: "run.runId"
+                issue: "Required field missing"
+                received_value: null
+                expected_type: "string"
+              - field: "eventTime"
+                issue: "Invalid date-time format"
+                received_value: "2024-01-01"
+                expected_type: "string (ISO 8601 date-time)"
+                constraint: "format: date-time"
+              - field: "job.namespace"
+                issue: "Must not be empty"
+                received_value: ""
+                expected_type: "string"
+                constraint: "minLength: 1"
+            schema_url: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+            received_schema: "https://openlineage.io/spec/0-8-0/OpenLineage.json"
+            expected_schemas:
+              - "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+              - "https://openlineage.io/spec/2-0-0/OpenLineage.json"
+
+    test_result_validation_error:
+      summary: Test result validation error
+      value:
+        error:
+          code: "VALIDATION_ERROR"
+          message: "Test result validation failed"
+          status: 422
+          detail: "The test result payload has invalid field values"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "234e5678-e89b-12d3-a456-426614174001"
+          details:
+            field_errors:
+              - field: "job_run_id"
+                issue: "Required field missing"
+                received_value: null
+                expected_type: "string"
+              - field: "status"
+                issue: "Invalid enum value"
+                received_value: "unknown"
+                expected_type: "string"
+                constraint: "enum: [passed, failed, error, warning, skipped]"
+              - field: "executed_at"
+                issue: "Invalid date-time format"
+                received_value: "invalid-date"
+                expected_type: "string (ISO 8601 date-time)"
+
+    # Plugin Error Examples
+    dbt_plugin_error:
+      summary: dbt plugin configuration error
+      value:
+        error:
+          code: "PLUGIN_ERROR"
+          message: "dbt plugin configuration error"
+          type: "https://correlator.io/docs/errors#plugin-error"
+          title: "Plugin Error"
+          status: 400
+          detail: "The dbt plugin could not extract lineage from the provided invocation"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "345e6789-e89b-12d3-a456-426614174002"
+          details:
+            plugin_name: "correlator-dbt"
+            plugin_version: "1.0.0"
+            plugin_operation: "lineage_extraction"
+            tool_context:
+              dbt_version: "1.6.0"
+              invocation_id: "abc123-def456"
+              project_name: "analytics"
+              target: "prod"
+            suggested_actions:
+              - "Verify dbt project is properly configured"
+              - "Check that correlator_lineage package is installed"
+              - "Ensure database connection is working"
+              - "Update to latest correlator-dbt plugin version"
+
+    airflow_plugin_error:
+      summary: Airflow plugin connection error
+      value:
+        error:
+          code: "PLUGIN_ERROR"
+          message: "Airflow plugin connection error"
+          status: 500
+          detail: "Failed to connect to Correlator API from Airflow task"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "456e789a-e89b-12d3-a456-426614174003"
+          details:
+            plugin_name: "correlator-airflow"
+            plugin_version: "1.0.0"
+            plugin_operation: "lineage_emission"
+            tool_context:
+              airflow_version: "2.7.0"
+              dag_id: "user_etl"
+              task_id: "extract_users"
+              run_id: "manual__2024-01-01T12:00:00"
+            suggested_actions:
+              - "Check Correlator API endpoint is reachable from Airflow"
+              - "Verify API authentication configuration"
+              - "Check network connectivity"
+              - "Review Airflow logs for additional details"
+
+    # Correlation Error Examples
+    correlation_failure:
+      summary: Correlation engine failure
+      value:
+        error:
+          code: "CORRELATION_ERROR"
+          message: "Failed to correlate test failure with job run"
+          type: "https://correlator.io/docs/errors#correlation-error"
+          title: "Correlation Error"
+          status: 422
+          detail: "Unable to establish correlation between test failure and producing job run"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "567e89ab-e89b-12d3-a456-426614174004"
+          details:
+            correlation_method: "job_run_id_canonicalization"
+            job_run_id: "unknown-format-12345"
+            canonicalization_attempts:
+              - rule: "dbt_pattern"
+                pattern: "dbt:*"
+                matched: false
+              - rule: "airflow_pattern"
+                pattern: "airflow:*"
+                matched: false
+              - rule: "spark_pattern"
+                pattern: "spark:*"
+                matched: false
+            correlation_confidence: 23.5
+            related_events:
+              - "event_678e9abc"
+              - "event_789eabcd"
+            diagnostic_info:
+              temporal_window: "15m"
+              candidate_job_runs: 3
+              exact_matches: 0
+              fuzzy_matches: 1
+
+    # Rate Limit Error Examples
+    rate_limit_exceeded:
+      summary: Rate limit exceeded
+      value:
+        error:
+          code: "RATE_LIMITED"
+          message: "Rate limit exceeded"
+          type: "https://correlator.io/docs/errors#rate-limit"
+          title: "Rate Limit Exceeded"
+          status: 429
+          detail: "You have exceeded the maximum number of requests per hour"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "678e9abc-e89b-12d3-a456-426614174005"
+          details:
+            limit: 1000
+            window: "1h"
+            current_usage: 1000
+            reset_at: "2024-01-01T13:00:00Z"
+            retry_after: 300
+
+    # Authentication Error Examples
+    invalid_api_key:
+      summary: Invalid API key
+      value:
+        error:
+          code: "AUTHENTICATION_ERROR"
+          message: "Invalid API key"
+          type: "https://correlator.io/docs/errors#authentication-error"
+          title: "Authentication Error"
+          status: 401
+          detail: "The provided API key is invalid or has been revoked"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "789eabcd-e89b-12d3-a456-426614174006"
+          details:
+            auth_method: "api_key"
+            provided_credentials:
+              api_key_provided: true
+              api_key_format_valid: true
+
+    insufficient_permissions:
+      summary: Insufficient permissions
+      value:
+        error:
+          code: "AUTHORIZATION_ERROR"
+          message: "Insufficient permissions"
+          type: "https://correlator.io/docs/errors#authorization-error"
+          title: "Authorization Error"
+          status: 403
+          detail: "You do not have permission to perform this operation"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "89abcdef-e89b-12d3-a456-426614174007"
+          details:
+            auth_method: "api_key"
+            required_permissions:
+              - "lineage:write"
+              - "incidents:read"
+
+    # Not Found Error Examples
+    incident_not_found:
+      summary: Incident not found
+      value:
+        error:
+          code: "NOT_FOUND"
+          message: "Incident not found"
+          type: "https://correlator.io/docs/errors#not-found"
+          title: "Not Found"
+          status: 404
+          detail: "The requested incident does not exist or has been deleted"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "9abcdef0-e89b-12d3-a456-426614174008"
+          details:
+            resource_type: "incident"
+            resource_id: "123e4567-e89b-12d3-a456-426614174000"
+
+    # Internal Error Examples
+    database_error:
+      summary: Database connection error
+      value:
+        error:
+          code: "INTERNAL_ERROR"
+          message: "Database connection error"
+          type: "https://correlator.io/docs/errors#internal-error"
+          title: "Internal Server Error"
+          status: 500
+          detail: "An internal error occurred while processing your request"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "abcdef01-e89b-12d3-a456-426614174009"
+          details:
+            service: "correlation-engine"
+            operation: "database_query"
+            error_category: "database"
+            retry_possible: true
+            support_reference: "CORR-2024-001-12345"
+
+    processing_error:
+      summary: Event processing error
+      value:
+        error:
+          code: "INTERNAL_ERROR"
+          message: "Event processing error"
+          status: 500
+          detail: "Failed to process the OpenLineage event due to internal error"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "bcdef012-e89b-12d3-a456-426614174010"
+          details:
+            service: "ingestion-service"
+            operation: "event_processing"
+            error_category: "processing"
+            retry_possible: true
+            support_reference: "CORR-2024-001-12346"
+
+    # Bad Request Examples
+    invalid_json:
+      summary: Invalid JSON payload
+      value:
+        error:
+          code: "BAD_REQUEST"
+          message: "Invalid JSON payload"
+          type: "https://correlator.io/docs/errors#bad-request"
+          title: "Bad Request"
+          status: 400
+          detail: "The request body contains invalid JSON"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "cdef0123-e89b-12d3-a456-426614174011"
+          details:
+            parse_error: "Unexpected token '}' at position 156"
+            content_type: "application/json"
+
+    invalid_parameters:
+      summary: Invalid query parameters
+      value:
+        error:
+          code: "BAD_REQUEST"
+          message: "Invalid query parameters"
+          status: 400
+          detail: "One or more query parameters have invalid values"
+          timestamp: "2024-01-01T12:05:30Z"
+          correlation_id: "def01234-e89b-12d3-a456-426614174012"
+          details:
+            parameter_errors:
+              - parameter: "limit"
+                issue: "Value must be between 1 and 100"
+                received_value: 500
+              - parameter: "time_range"
+                issue: "Invalid enum value"
+                received_value: "invalid"
+                expected_values: ["1h", "6h", "24h", "7d", "30d"]
