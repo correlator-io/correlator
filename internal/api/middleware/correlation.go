@@ -62,7 +62,7 @@ func generateCorrelationID() string {
 		timestamp := time.Now().UnixNano()
 		// Add process-based entropy using timestamp address (safer than unsafe)
 		ptr := &timestamp
-		//nolint:gosec // G103: Using pointer address for entropy in fallback case only
+		//nolint:gosec // G103: Safe use of unsafe.Pointer for entropy generation in error fallback only
 		entropy := uintptr(unsafe.Pointer(ptr))
 
 		// Combine timestamp and memory address for better uniqueness

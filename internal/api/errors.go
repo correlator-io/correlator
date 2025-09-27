@@ -10,6 +10,16 @@ import (
 	"github.com/correlator-io/correlator/internal/api/middleware"
 )
 
+// commonProblemTypes pre-computes type URIs for frequently used HTTP status codes
+// to avoid repeated string formatting allocations.
+//nolint:gochecknoglobals // Global map is justified for memory optimization
+var commonProblemTypes = map[int]string{
+	http.StatusBadRequest:           "https://correlator.io/problems/400",
+	http.StatusNotFound:             "https://correlator.io/problems/404",
+	http.StatusMethodNotAllowed:     "https://correlator.io/problems/405",
+	http.StatusInternalServerError:  "https://correlator.io/problems/500",
+}
+
 // ProblemDetail represents an RFC 7807 Problem Details structure.
 // See https://tools.ietf.org/html/rfc7807 for specification.
 type ProblemDetail struct {
@@ -23,8 +33,14 @@ type ProblemDetail struct {
 
 // NewProblemDetail creates a new RFC 7807 Problem Detail.
 func NewProblemDetail(status int, title, detail string) *ProblemDetail {
+	// Use pre-computed type URI for common status codes to avoid allocation
+	problemType, exists := commonProblemTypes[status]
+	if !exists {
+		problemType = fmt.Sprintf("https://correlator.io/problems/%d", status)
+	}
+
 	return &ProblemDetail{
-		Type:   fmt.Sprintf("https://correlator.io/problems/%d", status),
+		Type:   problemType,
 		Title:  title,
 		Status: status,
 		Detail: detail,
