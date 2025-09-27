@@ -3,6 +3,8 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -24,16 +26,29 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 						slog.String("stack_trace", string(debug.Stack())),
 					)
 
-					// Return 500 Internal Server Error
-					w.Header().Set("Content-Type", "application/json")
+					// Return RFC 7807 compliant error response
+					problemDetail := struct {
+						Type          string `json:"type"`
+						Title         string `json:"title"`
+						Status        int    `json:"status"`
+						Detail        string `json:"detail"`
+						Instance      string `json:"instance"`
+						CorrelationID string `json:"correlationId"`
+					}{
+						Type:          fmt.Sprintf("https://correlator.io/problems/%d", http.StatusInternalServerError),
+						Title:         "Internal Server Error",
+						Status:        http.StatusInternalServerError,
+						Detail:        "An unexpected error occurred while processing the request",
+						Instance:      r.URL.Path,
+						CorrelationID: correlationID,
+					}
+
+					w.Header().Set("Content-Type", "application/problem+json")
 					w.WriteHeader(http.StatusInternalServerError)
 
-					_, err = w.Write(
-						[]byte(`{"error": "Internal server error", "correlation_id": "` + correlationID + `"}`),
-					)
-					if err != nil {
+					if err := json.NewEncoder(w).Encode(problemDetail); err != nil {
 						logger.Error(
-							"Failed to write response",
+							"Failed to encode error response",
 							slog.Any("error", err),
 							slog.String("correlation_id", correlationID),
 						)
