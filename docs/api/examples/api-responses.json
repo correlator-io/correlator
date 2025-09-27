@@ -1,0 +1,967 @@
+{
+  "_description": "Sample API responses for Correlator Plugin-Ready API endpoints",
+  "_usage": "These examples demonstrate successful and error responses for all major API endpoints",
+
+  "ingestion_responses": {
+    "_description": "Responses from OpenLineage and test result ingestion endpoints",
+
+    "lineage_event_success": {
+      "_endpoint": "POST /api/v1/lineage/events",
+      "_status": 200,
+      "response": {
+        "message": "OpenLineage event processed successfully",
+        "events_processed": 1,
+        "correlation_id": "123e4567-e89b-12d3-a456-426614174000",
+        "processing_time_ms": 45.7,
+        "correlation_status": "correlated",
+        "canonical_job_run_id": "dbt:abc123-def456-789ghi"
+      }
+    },
+
+    "bulk_lineage_events_success": {
+      "_endpoint": "POST /api/v1/lineage/events (NDJSON)",
+      "_status": 202,
+      "response": {
+        "message": "Bulk events accepted for processing",
+        "events_processed": 4,
+        "correlation_id": "234e5678-e89b-12d3-a456-426614174001",
+        "processing_time_ms": 127.3,
+        "processing_mode": "async",
+        "estimated_completion": "2024-01-01T12:05:45Z"
+      }
+    },
+
+    "test_results_success": {
+      "_endpoint": "POST /api/v1/test-results",
+      "_status": 200,
+      "response": {
+        "message": "Test results processed successfully",
+        "events_processed": 3,
+        "correlation_id": "345e6789-e89b-12d3-a456-426614174002",
+        "processing_time_ms": 78.2,
+        "correlations_created": 2,
+        "incidents_triggered": 1,
+        "incident_ids": ["456e789a-e89b-12d3-a456-426614174003"]
+      }
+    },
+
+    "lineage_validation_error": {
+      "_endpoint": "POST /api/v1/lineage/events",
+      "_status": 422,
+      "response": {
+        "error": {
+          "code": "VALIDATION_ERROR",
+          "message": "OpenLineage event validation failed",
+          "type": "https://correlator.io/docs/errors#validation-error",
+          "title": "Validation Error",
+          "status": 422,
+          "detail": "The RunEvent is missing required fields",
+          "instance": "/api/v1/lineage/events",
+          "timestamp": "2024-01-01T12:05:30Z",
+          "correlation_id": "567e89ab-e89b-12d3-a456-426614174004",
+          "details": {
+            "field_errors": [
+              {
+                "field": "run.runId",
+                "issue": "Required field missing",
+                "received_value": null,
+                "expected_type": "string"
+              },
+              {
+                "field": "job.namespace",
+                "issue": "Must not be empty",
+                "received_value": "",
+                "expected_type": "string",
+                "constraint": "minLength: 1"
+              }
+            ],
+            "schema_url": "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+          }
+        }
+      }
+    }
+  },
+
+  "plugin_management_responses": {
+    "_description": "Responses from plugin management endpoints",
+
+    "plugin_health_success": {
+      "_endpoint": "GET /api/v1/plugins/health",
+      "_status": 200,
+      "response": {
+        "overall_status": "healthy",
+        "plugins": {
+          "correlator-dbt": {
+            "status": "connected",
+            "last_event": "2024-01-01T12:00:00Z",
+            "version": "1.0.0",
+            "events_processed": 147,
+            "correlation_rate": 96.8
+          },
+          "correlator-airflow": {
+            "status": "connected",
+            "last_event": "2024-01-01T11:58:30Z",
+            "version": "1.0.0",
+            "events_processed": 89,
+            "correlation_rate": 91.3
+          },
+          "correlator-ge": {
+            "status": "error",
+            "error_message": "Connection timeout to Correlator API",
+            "last_successful_event": "2024-01-01T11:45:00Z",
+            "retry_count": 3
+          }
+        },
+        "summary": {
+          "total_plugins": 3,
+          "healthy_plugins": 2,
+          "error_plugins": 1,
+          "overall_correlation_rate": 94.2
+        }
+      }
+    },
+
+    "plugin_discovery_success": {
+      "_endpoint": "GET /api/v1/plugins/discovery",
+      "_status": 200,
+      "response": {
+        "available_plugins": [
+          {
+            "name": "correlator-dbt",
+            "version": "1.0.0",
+            "status": "installed",
+            "description": "dbt integration for OpenLineage event emission",
+            "setup_url": "https://docs.correlator.io/plugins/dbt",
+            "compatibility": {
+              "dbt_versions": [">=1.5.0", "<2.0.0"],
+              "python_versions": [">=3.8", "<4.0"]
+            }
+          },
+          {
+            "name": "correlator-airflow",
+            "version": "1.0.0",
+            "status": "installed",
+            "description": "Airflow integration for lineage tracking",
+            "setup_url": "https://docs.correlator.io/plugins/airflow",
+            "compatibility": {
+              "airflow_versions": [">=2.6.0", "<3.0.0"],
+              "python_versions": [">=3.8", "<4.0"]
+            }
+          },
+          {
+            "name": "correlator-ge",
+            "version": "1.0.0",
+            "status": "available",
+            "description": "Great Expectations integration for data quality correlation",
+            "setup_url": "https://docs.correlator.io/plugins/great-expectations",
+            "compatibility": {
+              "ge_versions": [">=0.17.0", "<1.0.0"],
+              "python_versions": [">=3.8", "<4.0"]
+            }
+          },
+          {
+            "name": "correlator-spark",
+            "version": "0.9.0",
+            "status": "available",
+            "description": "Apache Spark integration (beta)",
+            "setup_url": "https://docs.correlator.io/plugins/spark",
+            "compatibility": {
+              "spark_versions": [">=3.3.0", "<4.0.0"]
+            }
+          }
+        ],
+        "installation_guide": "https://docs.correlator.io/installation",
+        "support_contact": "support@correlator.io"
+      }
+    }
+  },
+
+  "correlation_query_responses": {
+    "_description": "Responses from correlation query endpoints for 2-click navigation",
+
+    "incidents_list_success": {
+      "_endpoint": "GET /api/v1/incidents?limit=5&time_range=24h",
+      "_status": 200,
+      "response": {
+        "incidents": [
+          {
+            "incident_id": "123e4567-e89b-12d3-a456-426614174000",
+            "title": "Data quality test failed: unique_email",
+            "status": "active",
+            "severity": "high",
+            "created_at": "2024-01-01T12:05:30Z",
+            "updated_at": "2024-01-01T12:05:30Z",
+            "correlation_status": "correlated",
+            "affected_datasets": ["postgres://prod.db/marts.users"],
+            "job_run_id": "dbt:abc123-def456-789ghi",
+            "correlation_confidence": 96.8,
+            "estimated_impact": {
+              "affected_datasets": 3,
+              "affected_jobs": 2,
+              "business_impact": "high",
+              "estimated_users_affected": 1500
+            }
+          },
+          {
+            "incident_id": "234e5678-e89b-12d3-a456-426614174001",
+            "title": "Freshness check failed: user_events table",
+            "status": "investigating",
+            "severity": "critical",
+            "created_at": "2024-01-01T11:30:00Z",
+            "updated_at": "2024-01-01T12:00:00Z",
+            "correlation_status": "partial",
+            "affected_datasets": ["s3://data-lake/events/user_events", "postgres://prod.db/analytics.daily_user_metrics"],
+            "correlation_confidence": 67.8,
+            "estimated_impact": {
+              "affected_datasets": 8,
+              "affected_jobs": 5,
+              "business_impact": "critical",
+              "estimated_revenue_impact": 50000.0
+            }
+          },
+          {
+            "incident_id": "345e6789-e89b-12d3-a456-426614174002",
+            "title": "Great Expectations validation suite failed",
+            "status": "resolved",
+            "severity": "medium",
+            "created_at": "2024-01-01T10:15:00Z",
+            "updated_at": "2024-01-01T10:45:00Z",
+            "correlation_status": "correlated",
+            "affected_datasets": ["postgres://prod.db/marts.users"],
+            "job_run_id": "ge:user_validation_suite.validation_run_xyz789",
+            "correlation_confidence": 94.5,
+            "estimated_impact": {
+              "affected_datasets": 1,
+              "affected_jobs": 0,
+              "business_impact": "low"
+            }
+          }
+        ],
+        "pagination": {
+          "total_count": 18,
+          "page_size": 5,
+          "current_page": 0,
+          "has_next": true,
+          "has_previous": false
+        },
+        "summary": {
+          "total_incidents": 18,
+          "by_status": {
+            "active": 12,
+            "investigating": 3,
+            "resolved": 3
+          },
+          "by_severity": {
+            "critical": 2,
+            "high": 6,
+            "medium": 8,
+            "low": 2
+          },
+          "correlation_stats": {
+            "correlated": 16,
+            "uncorrelated": 2,
+            "correlation_rate": 88.9
+          }
+        },
+        "filters_applied": {
+          "time_range": "24h",
+          "limit": 5
+        }
+      }
+    },
+
+    "incident_detail_success": {
+      "_endpoint": "GET /api/v1/incidents/123e4567-e89b-12d3-a456-426614174000?include_lineage=true",
+      "_status": 200,
+      "response": {
+        "incident": {
+          "incident_id": "123e4567-e89b-12d3-a456-426614174000",
+          "title": "Data quality test failed: unique_email",
+          "status": "active",
+          "severity": "high",
+          "created_at": "2024-01-01T12:05:30Z",
+          "updated_at": "2024-01-01T12:05:30Z",
+          "description": "The unique constraint on email column failed during dbt model execution",
+          "test_failure_details": {
+            "test_name": "unique_email",
+            "test_type": "unique",
+            "dataset_urn": "postgres://prod.db/marts.users",
+            "column_name": "email",
+            "failure_message": "Found 2 duplicate email addresses",
+            "failure_details": {
+              "failed_rows": 2,
+              "total_rows": 15743,
+              "failure_rate": 0.013,
+              "sample_failed_values": ["user123@example.com", "user456@example.com"]
+            },
+            "executed_at": "2024-01-01T12:05:26Z",
+            "job_run_context": {
+              "job_run_id": "dbt:abc123-def456-789ghi",
+              "job_name": "models.marts.users",
+              "started_at": "2024-01-01T12:00:00Z",
+              "completed_at": "2024-01-01T12:05:23Z"
+            }
+          },
+          "affected_downstream": [
+            {
+              "type": "dataset",
+              "identifier": "postgres://prod.db/analytics.user_metrics",
+              "name": "User Metrics Table",
+              "impact_level": "direct",
+              "distance": 1,
+              "business_impact": "high",
+              "owner": "analytics-team@company.com"
+            },
+            {
+              "type": "dashboard",
+              "identifier": "dashboard://looker/user_engagement",
+              "name": "User Engagement Dashboard",
+              "impact_level": "indirect",
+              "distance": 2,
+              "business_impact": "medium",
+              "owner": "product-team@company.com"
+            }
+          ],
+          "external_links": {
+            "dbt_docs": "https://docs.company.com/models/marts/users",
+            "dbt_run": "https://cloud.getdbt.com/runs/abc123-def456-789ghi",
+            "monitoring": "https://datadog.company.com/dashboard/user-pipeline"
+          }
+        },
+        "correlation": {
+          "method": "job_run_id",
+          "confidence_score": 96.8,
+          "correlation_keys": {
+            "job_run_id": "dbt:abc123-def456-789ghi",
+            "dataset_urns": ["postgres://prod.db/marts.users"],
+            "temporal_window": "5m"
+          },
+          "producing_job": {
+            "job_run_id": "dbt:abc123-def456-789ghi",
+            "job_name": "models.marts.users",
+            "job_namespace": "dbt",
+            "started_at": "2024-01-01T12:00:00Z",
+            "completed_at": "2024-01-01T12:05:23Z",
+            "status": "success",
+            "tool_metadata": {
+              "dbt_version": "1.6.0",
+              "target": "prod",
+              "invocation_id": "abc123-def456-789ghi",
+              "project_name": "analytics"
+            },
+            "external_url": "https://cloud.getdbt.com/runs/abc123-def456-789ghi"
+          },
+          "correlation_path": [
+            {
+              "step_number": 1,
+              "description": "Extracted canonical job_run_id from test result",
+              "method": "test_metadata_extraction",
+              "confidence": 100.0,
+              "evidence": {
+                "test_job_run_id": "dbt:abc123-def456-789ghi",
+                "extraction_method": "direct_field_match"
+              }
+            },
+            {
+              "step_number": 2,
+              "description": "Matched test failure job_run_id with producing job run",
+              "method": "canonical_id_match",
+              "confidence": 98.5,
+              "evidence": {
+                "test_job_run_id": "dbt:abc123-def456-789ghi",
+                "producer_job_run_id": "dbt:abc123-def456-789ghi",
+                "match_type": "exact"
+              }
+            },
+            {
+              "step_number": 3,
+              "description": "Verified dataset lineage connection",
+              "method": "lineage_validation",
+              "confidence": 95.0,
+              "evidence": {
+                "job_output_dataset": "postgres://prod.db/marts.users",
+                "test_target_dataset": "postgres://prod.db/marts.users",
+                "lineage_confirmed": true
+              }
+            }
+          ]
+        },
+        "timeline": [
+          {
+            "timestamp": "2024-01-01T12:00:00Z",
+            "event_type": "job_started",
+            "description": "dbt model 'marts.users' started execution",
+            "source": "correlator-dbt",
+            "metadata": {
+              "job_run_id": "dbt:abc123-def456-789ghi",
+              "invocation_id": "abc123-def456-789ghi"
+            }
+          },
+          {
+            "timestamp": "2024-01-01T12:05:23Z",
+            "event_type": "job_completed",
+            "description": "dbt model 'marts.users' completed successfully",
+            "source": "correlator-dbt",
+            "metadata": {
+              "rows_processed": 15743,
+              "execution_time_ms": 323000
+            }
+          },
+          {
+            "timestamp": "2024-01-01T12:05:25Z",
+            "event_type": "test_executed",
+            "description": "Data quality test 'not_null_user_id' passed",
+            "source": "correlator-dbt"
+          },
+          {
+            "timestamp": "2024-01-01T12:05:26Z",
+            "event_type": "test_failed",
+            "description": "Data quality test 'unique_email' failed",
+            "source": "correlator-dbt",
+            "metadata": {
+              "failed_rows": 2,
+              "failure_rate": 0.013
+            }
+          },
+          {
+            "timestamp": "2024-01-01T12:05:30Z",
+            "event_type": "incident_created",
+            "description": "Incident created for test failure",
+            "source": "correlator-engine",
+            "metadata": {
+              "correlation_confidence": 96.8,
+              "processing_time_ms": 4200
+            }
+          }
+        ],
+        "lineage": {
+          "nodes": [
+            {
+              "id": "postgres://prod.staging.staging_users",
+              "type": "dataset",
+              "name": "staging_users",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T11:35:42Z",
+                "owner": "data-engineering@company.com",
+                "business_criticality": "high"
+              }
+            },
+            {
+              "id": "dbt://models.marts.users",
+              "type": "job",
+              "name": "models.marts.users",
+              "namespace": "dbt",
+              "recent_runs": [
+                {
+                  "job_run_id": "dbt:abc123-def456-789ghi",
+                  "status": "success",
+                  "started_at": "2024-01-01T12:00:00Z",
+                  "completed_at": "2024-01-01T12:05:23Z"
+                }
+              ]
+            },
+            {
+              "id": "postgres://prod.marts.users",
+              "type": "dataset",
+              "name": "users",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T12:05:23Z",
+                "owner": "analytics-team@company.com",
+                "business_criticality": "critical"
+              },
+              "incidents": [
+                {
+                  "incident_id": "123e4567-e89b-12d3-a456-426614174000",
+                  "severity": "high",
+                  "created_at": "2024-01-01T12:05:30Z"
+                }
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "source_id": "postgres://prod.staging.staging_users",
+              "target_id": "dbt://models.marts.users",
+              "relationship_type": "consumes",
+              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "metadata": {
+                "last_updated": "2024-01-01T12:00:00Z",
+                "confidence": 100.0
+              }
+            },
+            {
+              "source_id": "dbt://models.marts.users",
+              "target_id": "postgres://prod.marts.users",
+              "relationship_type": "produces",
+              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "metadata": {
+                "last_updated": "2024-01-01T12:05:23Z",
+                "confidence": 100.0
+              }
+            }
+          ],
+          "metadata": {
+            "generated_at": "2024-01-01T12:05:35Z",
+            "includes_recent_runs": true,
+            "traversal_depth": 3
+          }
+        },
+        "related_incidents": [
+          {
+            "incident_id": "234e5678-e89b-12d3-a456-426614174001",
+            "title": "Freshness check failed: user_events table",
+            "relationship_type": "downstream_impact",
+            "confidence": 78.5,
+            "created_at": "2024-01-01T11:30:00Z"
+          }
+        ],
+        "resolution_suggestions": [
+          {
+            "suggestion_id": "sug_001",
+            "title": "Check for duplicate data in upstream sources",
+            "description": "The duplicate email addresses suggest data quality issues in upstream staging tables",
+            "confidence": 87.3,
+            "category": "data_source",
+            "actions": [
+              {
+                "action": "Review staging.staging_users for duplicates",
+                "url": "https://docs.company.com/models/staging/staging_users",
+                "description": "Check source data for duplicate email addresses"
+              },
+              {
+                "action": "Add deduplication logic to staging model",
+                "description": "Implement ROW_NUMBER() or similar deduplication in staging layer"
+              }
+            ]
+          },
+          {
+            "suggestion_id": "sug_002",
+            "title": "Add upstream data validation",
+            "description": "Implement email uniqueness validation earlier in the pipeline",
+            "confidence": 92.1,
+            "category": "process",
+            "actions": [
+              {
+                "action": "Add unique constraint to staging table",
+                "description": "Prevent duplicate emails from entering the staging layer"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+
+  "system_health_responses": {
+    "_description": "Responses from system health and metrics endpoints",
+
+    "system_health_success": {
+      "_endpoint": "GET /api/v1/health",
+      "_status": 200,
+      "response": {
+        "status": "healthy",
+        "version": "1.0.0",
+        "timestamp": "2024-01-01T12:10:00Z",
+        "setup_time": "23s",
+        "database": {
+          "status": "connected",
+          "latency_ms": 12.3,
+          "connection_pool": {
+            "active": 5,
+            "idle": 15,
+            "max": 20
+          }
+        },
+        "integrations": {
+          "dbt": "ready",
+          "airflow": "ready",
+          "great_expectations": "ready",
+          "spark": "not_configured"
+        },
+        "correlation_accuracy": "94.2%",
+        "performance_metrics": {
+          "events_per_second": 847,
+          "correlation_latency_p95_ms": 234.5,
+          "incidents_last_24h": 18,
+          "correlation_rate": 88.9
+        }
+      }
+    },
+
+    "system_health_degraded": {
+      "_endpoint": "GET /api/v1/health",
+      "_status": 200,
+      "response": {
+        "status": "degraded",
+        "version": "1.0.0",
+        "timestamp": "2024-01-01T12:10:00Z",
+        "setup_time": "23s",
+        "database": {
+          "status": "connected",
+          "latency_ms": 156.7,
+          "warning": "High latency detected"
+        },
+        "integrations": {
+          "dbt": "ready",
+          "airflow": "error",
+          "great_expectations": "ready"
+        },
+        "correlation_accuracy": "82.1%",
+        "warnings": [
+          "Airflow plugin connectivity issues",
+          "Database latency above normal",
+          "Correlation accuracy below 90% target"
+        ],
+        "recommended_actions": [
+          "Check Airflow plugin configuration",
+          "Review database performance",
+          "Investigate correlation accuracy degradation"
+        ]
+      }
+    },
+
+    "system_metrics_success": {
+      "_endpoint": "GET /api/v1/metrics?time_range=1h",
+      "_status": 200,
+      "response": {
+        "timestamp": "2024-01-01T12:10:00Z",
+        "time_range": "1h",
+        "metrics": {
+          "events_processed_total": {
+            "openlineage": 1247,
+            "test_results": 342,
+            "total": 1589
+          },
+          "correlation_latency_seconds": {
+            "p50": 0.234,
+            "p95": 1.2,
+            "p99": 2.8,
+            "max": 4.5
+          },
+          "incidents_created_total": {
+            "critical": 2,
+            "high": 8,
+            "medium": 15,
+            "low": 3,
+            "total": 28
+          },
+          "database_query_duration_seconds": {
+            "incident": 0.089,
+            "lineage": 0.156,
+            "health": 0.012
+          },
+          "api_requests_total": {
+            "lineage_events": 1247,
+            "test_results": 342,
+            "incidents": 156,
+            "health": 89
+          },
+          "api_response_times": {
+            "lineage_events_p95": 0.245,
+            "incidents_list_p95": 0.134,
+            "incident_detail_p95": 0.567,
+            "health_p95": 0.023
+          }
+        },
+        "resource_usage": {
+          "cpu_percent": 23.4,
+          "memory_percent": 67.8,
+          "disk_usage_percent": 34.2
+        }
+      }
+    },
+
+    "correlation_accuracy_success": {
+      "_endpoint": "GET /api/v1/metrics/correlation-accuracy?time_window=24h&breakdown_by=plugin",
+      "_status": 200,
+      "response": {
+        "overall_accuracy": 94.2,
+        "time_window": "24h",
+        "total_incidents": 156,
+        "successfully_correlated": 147,
+        "correlation_methods": {
+          "job_run_id": {
+            "incidents": 134,
+            "accuracy": 97.8
+          },
+          "dataset_lineage": {
+            "incidents": 13,
+            "accuracy": 76.9
+          },
+          "temporal": {
+            "incidents": 9,
+            "accuracy": 55.6
+          }
+        },
+        "breakdown": {
+          "correlator-dbt": {
+            "accuracy": 96.8,
+            "incident_count": 89,
+            "correlation_method_distribution": {
+              "job_run_id": 87,
+              "dataset_lineage": 2
+            }
+          },
+          "correlator-airflow": {
+            "accuracy": 91.3,
+            "incident_count": 43,
+            "correlation_method_distribution": {
+              "job_run_id": 38,
+              "dataset_lineage": 5
+            }
+          },
+          "correlator-ge": {
+            "accuracy": 89.5,
+            "incident_count": 19,
+            "correlation_method_distribution": {
+              "job_run_id": 16,
+              "temporal": 3
+            }
+          },
+          "unknown": {
+            "accuracy": 20.0,
+            "incident_count": 5,
+            "correlation_method_distribution": {
+              "temporal": 4,
+              "dataset_lineage": 1
+            }
+          }
+        },
+        "trends": {
+          "last_1h": 96.4,
+          "last_6h": 94.8,
+          "last_24h": 94.2,
+          "improvement_over_week": 2.3
+        },
+        "quality_indicators": {
+          "canonical_id_extraction_success": 98.7,
+          "lineage_resolution_success": 91.2,
+          "temporal_correlation_success": 62.5
+        }
+      }
+    }
+  },
+
+  "error_responses": {
+    "_description": "Standard error responses across all endpoints",
+
+    "rate_limit_exceeded": {
+      "_endpoint": "Any endpoint with high traffic",
+      "_status": 429,
+      "response": {
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded",
+          "type": "https://correlator.io/docs/errors#rate-limit",
+          "title": "Rate Limit Exceeded",
+          "status": 429,
+          "detail": "You have exceeded the maximum number of requests per hour",
+          "timestamp": "2024-01-01T12:05:30Z",
+          "correlation_id": "678e9abc-e89b-12d3-a456-426614174005",
+          "details": {
+            "limit": 1000,
+            "window": "1h",
+            "current_usage": 1000,
+            "reset_at": "2024-01-01T13:00:00Z",
+            "retry_after": 300
+          }
+        }
+      }
+    },
+
+    "internal_server_error": {
+      "_endpoint": "Any endpoint experiencing internal issues",
+      "_status": 500,
+      "response": {
+        "error": {
+          "code": "INTERNAL_ERROR",
+          "message": "An unexpected error occurred",
+          "type": "https://correlator.io/docs/errors#internal-error",
+          "title": "Internal Server Error",
+          "status": 500,
+          "detail": "An internal error occurred while processing your request",
+          "timestamp": "2024-01-01T12:05:30Z",
+          "correlation_id": "789eabcd-e89b-12d3-a456-426614174006",
+          "details": {
+            "service": "correlation-engine",
+            "operation": "database_query",
+            "error_category": "database",
+            "retry_possible": true,
+            "support_reference": "CORR-2024-001-12345"
+          }
+        }
+      }
+    },
+
+    "not_found": {
+      "_endpoint": "GET /api/v1/incidents/{invalid-id}",
+      "_status": 404,
+      "response": {
+        "error": {
+          "code": "NOT_FOUND",
+          "message": "Incident not found",
+          "type": "https://correlator.io/docs/errors#not-found",
+          "title": "Not Found",
+          "status": 404,
+          "detail": "The requested incident does not exist or has been deleted",
+          "timestamp": "2024-01-01T12:05:30Z",
+          "correlation_id": "89abcdef-e89b-12d3-a456-426614174007",
+          "details": {
+            "resource_type": "incident",
+            "resource_id": "invalid-id"
+          }
+        }
+      }
+    }
+  },
+
+  "lineage_traversal_responses": {
+    "_description": "Responses from lineage traversal endpoints",
+
+    "lineage_traversal_success": {
+      "_endpoint": "GET /api/v1/lineage/traverse?dataset_urn=postgres://prod.db/marts.users&direction=both&depth=2",
+      "_status": 200,
+      "response": {
+        "dataset_urn": "postgres://prod.db/marts.users",
+        "direction": "both",
+        "depth": 2,
+        "traversal_result": {
+          "nodes": [
+            {
+              "id": "postgres://prod.raw.users",
+              "type": "dataset",
+              "name": "users",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T11:35:00Z",
+                "owner": "data-engineering@company.com",
+                "business_criticality": "medium"
+              }
+            },
+            {
+              "id": "airflow://user_etl.extract_users",
+              "type": "job",
+              "name": "user_etl.extract_users",
+              "namespace": "airflow",
+              "recent_runs": [
+                {
+                  "job_run_id": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+                  "status": "success",
+                  "started_at": "2024-01-01T11:30:00Z",
+                  "completed_at": "2024-01-01T11:35:42Z"
+                }
+              ]
+            },
+            {
+              "id": "postgres://prod.staging.staging_users",
+              "type": "dataset",
+              "name": "staging_users",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T11:35:42Z",
+                "owner": "data-engineering@company.com",
+                "business_criticality": "high"
+              }
+            },
+            {
+              "id": "dbt://models.marts.users",
+              "type": "job",
+              "name": "models.marts.users",
+              "namespace": "dbt",
+              "recent_runs": [
+                {
+                  "job_run_id": "dbt:abc123-def456-789ghi",
+                  "status": "success",
+                  "started_at": "2024-01-01T12:00:00Z",
+                  "completed_at": "2024-01-01T12:05:23Z"
+                }
+              ]
+            },
+            {
+              "id": "postgres://prod.marts.users",
+              "type": "dataset",
+              "name": "users",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T12:05:23Z",
+                "owner": "analytics-team@company.com",
+                "business_criticality": "critical"
+              },
+              "incidents": [
+                {
+                  "incident_id": "123e4567-e89b-12d3-a456-426614174000",
+                  "severity": "high",
+                  "created_at": "2024-01-01T12:05:30Z"
+                }
+              ]
+            },
+            {
+              "id": "postgres://prod.analytics.user_metrics",
+              "type": "dataset",
+              "name": "user_metrics",
+              "namespace": "postgres",
+              "metadata": {
+                "last_updated": "2024-01-01T12:10:00Z",
+                "owner": "analytics-team@company.com",
+                "business_criticality": "high"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source_id": "airflow://user_etl.extract_users",
+              "target_id": "postgres://prod.staging.staging_users",
+              "relationship_type": "produces",
+              "job_run_ids": ["airflow:user_etl.extract_users.manual__2024-01-01T11:30:00"],
+              "metadata": {
+                "last_updated": "2024-01-01T11:35:42Z",
+                "confidence": 100.0
+              }
+            },
+            {
+              "source_id": "postgres://prod.staging.staging_users",
+              "target_id": "dbt://models.marts.users",
+              "relationship_type": "consumes",
+              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "metadata": {
+                "last_updated": "2024-01-01T12:00:00Z",
+                "confidence": 100.0
+              }
+            },
+            {
+              "source_id": "dbt://models.marts.users",
+              "target_id": "postgres://prod.marts.users",
+              "relationship_type": "produces",
+              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "metadata": {
+                "last_updated": "2024-01-01T12:05:23Z",
+                "confidence": 100.0
+              }
+            },
+            {
+              "source_id": "postgres://prod.marts.users",
+              "target_id": "postgres://prod.analytics.user_metrics",
+              "relationship_type": "transforms",
+              "metadata": {
+                "last_updated": "2024-01-01T12:10:00Z",
+                "confidence": 85.7
+              }
+            }
+          ],
+          "metadata": {
+            "generated_at": "2024-01-01T12:15:00Z",
+            "includes_recent_runs": true
+          }
+        },
+        "stats": {
+          "total_datasets": 4,
+          "total_jobs": 2,
+          "max_depth_reached": 2,
+          "traversal_time_ms": 456.7
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,564 @@
+openapi: 3.0.3
+info:
+  title: OpenLineage Event Schemas
+  version: 1.0.0
+  description: |
+    OpenLineage v1.0 compliant event schemas for Correlator Plugin-Ready API.
+
+    Based on OpenLineage specification 2.0.2 with Correlator-specific extensions
+    for incident correlation and canonical ID extraction.
+
+components:
+  schemas:
+    # Base OpenLineage Event - Union of RunEvent, DatasetEvent, JobEvent
+    OpenLineageEvent:
+      oneOf:
+        - $ref: '#/components/schemas/RunEvent'
+        - $ref: '#/components/schemas/DatasetEvent'
+        - $ref: '#/components/schemas/JobEvent'
+      discriminator:
+        propertyName: eventType
+        mapping:
+          START: '#/components/schemas/RunEvent'
+          RUNNING: '#/components/schemas/RunEvent'
+          COMPLETE: '#/components/schemas/RunEvent'
+          ABORT: '#/components/schemas/RunEvent'
+          FAIL: '#/components/schemas/RunEvent'
+          OTHER: '#/components/schemas/RunEvent'
+
+    # Base Event Schema
+    BaseEvent:
+      type: object
+      required:
+        - eventTime
+        - producer
+        - schemaURL
+      properties:
+        eventTime:
+          type: string
+          format: date-time
+          description: The time the event occurred at
+          example: "2024-01-01T12:00:00Z"
+        producer:
+          type: string
+          format: uri
+          description: |
+            URI identifying the producer of this metadata. For Correlator plugins,
+            this should include the plugin name and version.
+          example: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        schemaURL:
+          type: string
+          format: uri
+          description: |
+            The JSON Pointer URL to the corresponding version of the schema
+            definition for this event
+          example: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+
+    # Run Event - Primary event type for correlation
+    RunEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required:
+            - eventType
+            - run
+            - job
+          properties:
+            eventType:
+              type: string
+              enum: [START, RUNNING, COMPLETE, ABORT, FAIL, OTHER]
+              description: |
+                The current transition of the run state. Required to issue:
+                - 1 START event per run
+                - 1 of [COMPLETE, ABORT, FAIL] event per run
+                Additional OTHER events can be added for metadata updates.
+              example: "START"
+            run:
+              $ref: '#/components/schemas/Run'
+            job:
+              $ref: '#/components/schemas/Job'
+            inputs:
+              type: array
+              items:
+                $ref: '#/components/schemas/InputDataset'
+              description: The set of input datasets
+            outputs:
+              type: array
+              items:
+                $ref: '#/components/schemas/OutputDataset'
+              description: The set of output datasets
+
+    # Dataset Event
+    DatasetEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required:
+            - dataset
+          properties:
+            dataset:
+              $ref: '#/components/schemas/StaticDataset'
+
+    # Job Event
+    JobEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseEvent'
+        - type: object
+          required:
+            - job
+          properties:
+            job:
+              $ref: '#/components/schemas/StaticJob'
+            inputs:
+              type: array
+              items:
+                $ref: '#/components/schemas/StaticDataset'
+            outputs:
+              type: array
+              items:
+                $ref: '#/components/schemas/StaticDataset'
+
+    # Run Schema - Critical for correlation via runId
+    Run:
+      type: object
+      required:
+        - runId
+      properties:
+        runId:
+          type: string
+          description: |
+            **CRITICAL FOR CORRELATION**: The globally unique ID of the run.
+
+            Correlator extracts canonical jobRunId from this field using
+            tool-specific canonicalization rules:
+            - dbt: Uses invocation_id → "dbt:{invocation_id}"
+            - airflow: Uses run_id → "airflow:{run_id}"
+            - spark: Uses application_id → "spark:{application_id}"
+          example: "dbt:abc123-def456"
+        facets:
+          type: object
+          description: Run facets for additional metadata
+          additionalProperties:
+            $ref: '#/components/schemas/RunFacet'
+          example:
+            nominalTime:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
+              nominalStartTime: "2024-01-01T12:00:00Z"
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "1.6.0"
+              name: "dbt"
+
+    # Job Schema
+    Job:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+          description: The namespace containing that job
+          example: "dbt"
+        name:
+          type: string
+          description: The unique name for that job within that namespace
+          example: "models.users"
+        facets:
+          type: object
+          description: Job facets for additional metadata
+          additionalProperties:
+            $ref: '#/components/schemas/JobFacet'
+          example:
+            sql:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
+              query: "SELECT * FROM raw.users WHERE created_at > CURRENT_DATE - 7"
+
+    # Static Job (for JobEvent)
+    StaticJob:
+      allOf:
+        - $ref: '#/components/schemas/Job'
+
+    # Dataset Schema
+    Dataset:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+          description: The namespace containing that dataset
+          example: "postgres"
+        name:
+          type: string
+          description: |
+            The unique name for that dataset within that namespace.
+            **Used for dataset URN construction**: {namespace}://{name}
+          example: "prod.clean.users"
+        facets:
+          type: object
+          description: Dataset facets for additional metadata
+          additionalProperties:
+            $ref: '#/components/schemas/DatasetFacet'
+
+    # Input Dataset
+    InputDataset:
+      allOf:
+        - $ref: '#/components/schemas/Dataset'
+        - type: object
+          properties:
+            inputFacets:
+              type: object
+              description: Input-specific dataset facets
+              additionalProperties:
+                $ref: '#/components/schemas/InputDatasetFacet'
+
+    # Output Dataset
+    OutputDataset:
+      allOf:
+        - $ref: '#/components/schemas/Dataset'
+        - type: object
+          properties:
+            outputFacets:
+              type: object
+              description: Output-specific dataset facets
+              additionalProperties:
+                $ref: '#/components/schemas/OutputDatasetFacet'
+
+    # Static Dataset (for DatasetEvent/JobEvent)
+    StaticDataset:
+      allOf:
+        - $ref: '#/components/schemas/Dataset'
+
+    # Base Facet Schema
+    BaseFacet:
+      type: object
+      required:
+        - _producer
+        - _schemaURL
+      properties:
+        _producer:
+          type: string
+          format: uri
+          description: URI identifying the producer of this facet metadata
+          example: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        _schemaURL:
+          type: string
+          format: uri
+          description: JSON Pointer URL to the facet schema definition
+          example: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
+        _deleted:
+          type: boolean
+          description: Set to true to delete a facet
+          default: false
+      additionalProperties: true
+
+    # Run Facet
+    RunFacet:
+      allOf:
+        - $ref: '#/components/schemas/BaseFacet'
+      description: A run facet containing run-specific metadata
+
+    # Job Facet
+    JobFacet:
+      allOf:
+        - $ref: '#/components/schemas/BaseFacet'
+      description: A job facet containing job-specific metadata
+
+    # Dataset Facet
+    DatasetFacet:
+      allOf:
+        - $ref: '#/components/schemas/BaseFacet'
+      description: A dataset facet containing dataset-specific metadata
+
+    # Input Dataset Facet
+    InputDatasetFacet:
+      allOf:
+        - $ref: '#/components/schemas/BaseFacet'
+      description: An input dataset facet
+
+    # Output Dataset Facet
+    OutputDatasetFacet:
+      allOf:
+        - $ref: '#/components/schemas/BaseFacet'
+      description: An output dataset facet
+
+    # Common Facet Implementations for Correlator
+    NominalTimeRunFacet:
+      allOf:
+        - $ref: '#/components/schemas/RunFacet'
+        - type: object
+          properties:
+            nominalStartTime:
+              type: string
+              format: date-time
+              description: The nominal start time of the run
+            nominalEndTime:
+              type: string
+              format: date-time
+              description: The nominal end time of the run
+
+    ProcessingEngineRunFacet:
+      allOf:
+        - $ref: '#/components/schemas/RunFacet'
+        - type: object
+          properties:
+            version:
+              type: string
+              description: Version of the processing engine
+              example: "1.6.0"
+            name:
+              type: string
+              description: Name of the processing engine
+              example: "dbt"
+            openlineageAdapterVersion:
+              type: string
+              description: Version of the OpenLineage adapter
+              example: "1.0.0"
+
+    SQLJobFacet:
+      allOf:
+        - $ref: '#/components/schemas/JobFacet'
+        - type: object
+          properties:
+            query:
+              type: string
+              description: The SQL query executed by this job
+              example: "SELECT * FROM raw.users WHERE created_at > CURRENT_DATE - 7"
+
+    SchemaDatasetFacet:
+      allOf:
+        - $ref: '#/components/schemas/DatasetFacet'
+        - type: object
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: Field name
+                  type:
+                    type: string
+                    description: Field data type
+                  description:
+                    type: string
+                    description: Field description
+              example:
+                - name: "user_id"
+                  type: "INTEGER"
+                  description: "Unique user identifier"
+                - name: "email"
+                  type: "VARCHAR"
+                  description: "User email address"
+
+    # Correlator-Specific Extensions
+    CorrelatorJobFacet:
+      allOf:
+        - $ref: '#/components/schemas/JobFacet'
+        - type: object
+          description: |
+            Correlator-specific job facet for enhanced correlation metadata.
+            Used by plugins to provide additional context for incident correlation.
+          properties:
+            canonicalJobRunId:
+              type: string
+              description: |
+                Pre-canonicalized job run ID. If provided, Correlator will use this
+                instead of applying canonicalization rules to run.runId.
+              example: "dbt:abc123-def456"
+            toolMetadata:
+              type: object
+              description: Tool-specific metadata for correlation enhancement
+              additionalProperties: true
+              example:
+                dbt_version: "1.6.0"
+                project_name: "analytics"
+                target: "prod"
+            correlationTags:
+              type: array
+              items:
+                type: string
+              description: Tags for improved correlation matching
+              example: ["data-quality", "user-pipeline", "critical"]
+
+    CorrelatorDatasetFacet:
+      allOf:
+        - $ref: '#/components/schemas/DatasetFacet'
+        - type: object
+          description: |
+            Correlator-specific dataset facet for enhanced dataset correlation.
+            Provides additional context for dataset impact analysis.
+          properties:
+            businessCriticality:
+              type: string
+              enum: [critical, high, medium, low]
+              description: Business criticality level for incident prioritization
+              example: "critical"
+            dataOwner:
+              type: string
+              description: Data owner for incident escalation
+              example: "data-team@company.com"
+            slaMinutes:
+              type: integer
+              description: SLA for data freshness in minutes
+              example: 60
+            upstreamDependencies:
+              type: array
+              items:
+                type: string
+              description: Known upstream dataset dependencies
+              example: ["postgres://prod.raw.users", "s3://data-lake/events/"]
+
+  examples:
+    # dbt Run Event Examples
+    dbt_model_start:
+      summary: dbt model run start
+      value:
+        eventTime: "2024-01-01T12:00:00Z"
+        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "START"
+        run:
+          runId: "dbt:abc123-def456"
+          facets:
+            nominalTime:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
+              nominalStartTime: "2024-01-01T12:00:00Z"
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "1.6.0"
+              name: "dbt"
+            correlator:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json"
+              toolMetadata:
+                dbt_version: "1.6.0"
+                project_name: "analytics"
+                target: "prod"
+              correlationTags: ["data-quality", "user-pipeline"]
+        job:
+          namespace: "dbt"
+          name: "models.users"
+          facets:
+            sql:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
+              query: "SELECT * FROM {{ ref('raw_users') }} WHERE created_at > CURRENT_DATE - 7"
+        inputs:
+          - namespace: "postgres"
+            name: "prod.raw.users"
+            facets:
+              schema:
+                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json"
+                fields:
+                  - name: "user_id"
+                    type: "INTEGER"
+                  - name: "email"
+                    type: "VARCHAR"
+                  - name: "created_at"
+                    type: "TIMESTAMP"
+        outputs:
+          - namespace: "postgres"
+            name: "prod.clean.users"
+            facets:
+              correlator:
+                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json"
+                businessCriticality: "critical"
+                dataOwner: "data-team@company.com"
+                slaMinutes: 60
+
+    dbt_model_complete:
+      summary: dbt model run completion
+      value:
+        eventTime: "2024-01-01T12:05:00Z"
+        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "COMPLETE"
+        run:
+          runId: "dbt:abc123-def456"
+          facets:
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "1.6.0"
+              name: "dbt"
+        job:
+          namespace: "dbt"
+          name: "models.users"
+        outputs:
+          - namespace: "postgres"
+            name: "prod.clean.users"
+
+    # Airflow Run Event Examples
+    airflow_task_start:
+      summary: Airflow task start
+      value:
+        eventTime: "2024-01-01T12:00:00Z"
+        producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "START"
+        run:
+          runId: "airflow:manual__2024-01-01T12:00:00"
+          facets:
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "2.7.0"
+              name: "airflow"
+            correlator:
+              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+              _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json"
+              toolMetadata:
+                dag_id: "user_etl"
+                task_id: "extract_users"
+                execution_date: "2024-01-01T12:00:00Z"
+        job:
+          namespace: "data_pipeline"
+          name: "user_etl.extract_users"
+        outputs:
+          - namespace: "postgres"
+            name: "prod.raw.users"
+
+    # Great Expectations Event Example
+    ge_validation_complete:
+      summary: Great Expectations validation complete
+      value:
+        eventTime: "2024-01-01T12:10:00Z"
+        producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+        eventType: "COMPLETE"
+        run:
+          runId: "ge:validation-abc123"
+          facets:
+            processing_engine:
+              _producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
+              version: "0.18.0"
+              name: "great_expectations"
+        job:
+          namespace: "data_quality"
+          name: "user_validation_suite"
+        inputs:
+          - namespace: "postgres"
+            name: "prod.clean.users"
+            inputFacets:
+              dataQuality:
+                _producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+                _schemaURL: "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json"
+                rowCount: 10000
+                columnMetrics:
+                  user_id:
+                    nullCount: 0
+                    distinctCount: 10000
+                  email:
+                    nullCount: 5
