@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
 )
@@ -27,14 +28,14 @@ type (
 
 // Routes sets up all HTTP routes for the API server.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
-	// Health check endpoint
+	// Health check endpoint (no versioning for basic ping)
 	mux.HandleFunc("/ping", s.handlePing)
 
-	// API version endpoint for client compatibility checking
-	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/v1/version", s.handleVersion)
+	mux.HandleFunc("/api/v1/health", s.handleHealth)
 
-	// Health endpoint with more detailed status (future expansion)
-	mux.HandleFunc("/api/health", s.handleHealth)
+	// Catch-all handler for 404 responses
+	mux.HandleFunc("/", s.handleNotFound)
 }
 
 // handlePing responds to ping requests for basic server validation.
@@ -71,7 +72,8 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+
+		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode version response"))
 	}
 }
 
@@ -79,10 +81,19 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
+	// Calculate uptime if server has started
+	var uptime string
+
+	if !s.startTime.IsZero() {
+		duration := time.Since(s.startTime)
+		uptime = duration.Round(time.Second).String()
+	}
+
 	health := HealthStatus{
 		Status:      "healthy",
 		ServiceName: "correlator",
 		Version:     "v1.0.0",
+		Uptime:      uptime,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -93,6 +104,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+
+		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode health response"))
 	}
+}
+
+// handleNotFound returns RFC 7807 compliant 404 responses for unknown endpoints.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	WriteErrorResponse(w, r, s.logger, NotFound("The requested resource was not found"))
 }

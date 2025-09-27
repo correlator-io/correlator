@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
 )
@@ -19,6 +20,7 @@ type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 	config     ServerConfig
+	startTime  time.Time
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
@@ -68,6 +70,9 @@ func (s *Server) Start() error {
 	if err := s.config.Validate(); err != nil {
 		return fmt.Errorf("invalid server configuration: %w", err)
 	}
+
+	// Record server start time for uptime calculation
+	s.startTime = time.Now()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
