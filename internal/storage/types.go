@@ -1,5 +1,5 @@
-// Package api provides HTTP API components including authentication and key management.
-package api
+// Package storage provides data storage interfaces and domain types for the Correlator API.
+package storage
 
 import (
 	"crypto/rand"
@@ -12,11 +12,20 @@ import (
 )
 
 const (
+	// API key format constants.
 	randomBytesSize = 32
 	apiKeyLength    = 78
+	prefixLen       = 18 // Show "correlator_ak_1234"
+	suffixLen       = 4  // Show last 4 chars
 )
 
 var (
+	// ErrKeyAlreadyExists is returned when attempting to add a key that already exists.
+	ErrKeyAlreadyExists = errors.New("API key already exists")
+	// ErrKeyNotFound is returned when attempting to operate on a non-existent key.
+	ErrKeyNotFound = errors.New("API key not found")
+	// ErrKeyNil is returned when a nil API key is provided.
+	ErrKeyNil = errors.New("API key cannot be nil")
 	// ErrPluginIDEmpty is returned when plugin ID is empty during key generation.
 	ErrPluginIDEmpty = errors.New("plugin ID cannot be empty")
 	// ErrKeyStringEmpty is returned when key string is empty during parsing.
@@ -85,6 +94,43 @@ func (ak *Key) HasPermission(permission string) bool {
 	return false
 }
 
+// SecureCompare performs constant-time comparison of two strings to prevent timing attacks.
+func SecureCompare(a, b string) bool {
+	// If lengths differ, still perform comparison to prevent timing attacks
+	// but ensure we return false
+	if len(a) != len(b) {
+		// Compare against a dummy string of the same length as 'a' to maintain constant time
+		dummy := make([]byte, len(a))
+		subtle.ConstantTimeCompare([]byte(a), dummy)
+
+		return false
+	}
+
+	// Perform constant-time comparison
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// MaskKey masks an API key for secure logging by showing only the prefix and suffix.
+// Designed specifically for 78-character correlator API keys in format:
+// "correlator_ak_" + 64 hex chars = 78 total chars.
+func MaskKey(key string) string {
+	if key == "" {
+		return ""
+	}
+
+	keyLen := len(key)
+
+	// For our standard 78-character API keys, show meaningful prefix and suffix
+	if keyLen == apiKeyLength {
+		maskedLen := keyLen - prefixLen - suffixLen // 78 - 18 - 4 = 56
+
+		return key[:prefixLen] + strings.Repeat("*", maskedLen) + key[keyLen-suffixLen:]
+	}
+
+	// For any other key length (testing, development, etc.), mask completely
+	return strings.Repeat("*", keyLen)
+}
+
 // GenerateAPIKey creates a new secure API key for a plugin.
 func GenerateAPIKey(pluginID string) (string, error) {
 	if pluginID == "" {
@@ -126,20 +172,4 @@ func ParseAPIKey(keyString string) (string, error) {
 	}
 
 	return keyString, nil
-}
-
-// SecureCompare performs constant-time comparison of two strings to prevent timing attacks.
-func SecureCompare(a, b string) bool {
-	// If lengths differ, still perform comparison to prevent timing attacks
-	// but ensure we return false
-	if len(a) != len(b) {
-		// Compare against a dummy string of the same length as 'a' to maintain constant time
-		dummy := make([]byte, len(a))
-		subtle.ConstantTimeCompare([]byte(a), dummy)
-
-		return false
-	}
-
-	// Perform constant-time comparison
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

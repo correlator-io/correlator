@@ -1,24 +1,8 @@
-// Package api provides HTTP API components including authentication and key management.
-package api
+// Package storage provides data storage implementations for the Correlator API.
+package storage
 
 import (
-	"errors"
-	"strings"
 	"sync"
-)
-
-const (
-	prefixLen = 18 // Show "correlator_ak_1234"
-	suffixLen = 4  // Show last 4 chars
-)
-
-var (
-	// ErrKeyAlreadyExists is returned when attempting to add a key that already exists.
-	ErrKeyAlreadyExists = errors.New("API key already exists")
-	// ErrKeyNotFound is returned when attempting to operate on a non-existent key.
-	ErrKeyNotFound = errors.New("API key not found")
-	// ErrKeyNil is returned when a nil API key is provided.
-	ErrKeyNil = errors.New("API key cannot be nil")
 )
 
 // InMemoryKeyStore provides thread-safe in-memory storage for API keys.
@@ -183,25 +167,4 @@ func (s *InMemoryKeyStore) removeFromPluginMap(pluginID, keyID string) {
 	if len(s.keysByPlugin[pluginID]) == 0 {
 		delete(s.keysByPlugin, pluginID)
 	}
-}
-
-// MaskKey masks an API key for secure logging by showing only the prefix and suffix.
-// Designed specifically for 78-character correlator API keys in format:
-// "correlator_ak_" + 64 hex chars = 78 total chars.
-func MaskKey(key string) string {
-	if key == "" {
-		return ""
-	}
-
-	keyLen := len(key)
-
-	// For our standard 78-character API keys, show meaningful prefix and suffix
-	if keyLen == apiKeyLength {
-		maskedLen := keyLen - prefixLen - suffixLen // 78 - 18 - 4 = 56
-
-		return key[:prefixLen] + strings.Repeat("*", maskedLen) + key[keyLen-suffixLen:]
-	}
-
-	// For any other key length (testing, development, etc.), mask completely
-	return strings.Repeat("*", keyLen)
 }
