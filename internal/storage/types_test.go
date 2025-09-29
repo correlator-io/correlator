@@ -1,11 +1,11 @@
-package api
+package storage
 
 import (
 	"testing"
 	"time"
 )
 
-func TestAPIKeyValidation(t *testing.T) {
+func TestKeyValidation(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -85,7 +85,7 @@ func TestAPIKeyValidation(t *testing.T) {
 	})
 }
 
-func TestAPIKeyPermissions(t *testing.T) {
+func TestKeyPermissions(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -136,131 +136,6 @@ func TestAPIKeyPermissions(t *testing.T) {
 	}
 }
 
-func TestAPIKeyStore(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	// Skip this test for now - KeyStore interface will be tested in Task 2.2 with actual implementation
-	t.Skip("KeyStore interface tests will be implemented in Task 2.2 with InMemoryAPIKeyStore")
-}
-
-func TestAPIKeyGeneration(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	tests := []struct {
-		name     string
-		pluginID string
-		wantErr  bool
-	}{
-		{
-			name:     "valid plugin ID generates key",
-			pluginID: "dbt-plugin",
-			wantErr:  false,
-		},
-		{
-			name:     "empty plugin ID fails",
-			pluginID: "",
-			wantErr:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This will fail - GenerateAPIKey function doesn't exist yet
-			key, err := GenerateAPIKey(tt.pluginID)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.pluginID)
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.pluginID, err)
-
-				return
-			}
-
-			if key == "" {
-				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.pluginID)
-			}
-
-			// Key should be at least 32 characters for security
-			if len(key) < 32 {
-				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.pluginID, len(key))
-			}
-		})
-	}
-}
-
-func TestAPIKeyParsing(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	tests := []struct {
-		name      string
-		keyString string
-		expected  string
-		wantErr   bool
-	}{
-		{
-			name:      "valid API key format",
-			keyString: "Bearer correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			expected:  "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			wantErr:   false,
-		},
-		{
-			name:      "API key without Bearer prefix",
-			keyString: "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			expected:  "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			wantErr:   false,
-		},
-		{
-			name:      "invalid key format",
-			keyString: "invalid-key-format",
-			expected:  "",
-			wantErr:   true,
-		},
-		{
-			name:      "empty key string",
-			keyString: "",
-			expected:  "",
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This will fail - ParseAPIKey function doesn't exist yet
-			key, err := ParseAPIKey(tt.keyString)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("ParseAPIKey(%q) expected error, got nil", tt.keyString)
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Errorf("ParseAPIKey(%q) unexpected error: %v", tt.keyString, err)
-
-				return
-			}
-
-			if key != tt.expected {
-				t.Errorf("ParseAPIKey(%q) = %q, want %q", tt.keyString, key, tt.expected)
-			}
-		})
-	}
-}
-
 func TestSecureCompare(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -300,10 +175,170 @@ func TestSecureCompare(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// This will fail - SecureCompare function doesn't exist yet
 			result := SecureCompare(tt.key1, tt.key2)
 			if result != tt.expected {
 				t.Errorf("SecureCompare(%q, %q) = %v, want %v", tt.key1, tt.key2, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestKeyMasking(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+	}{
+		{
+			name:     "standard 78-char correlator API key",
+			key:      "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			expected: "correlator_ak_1234********************************************************cdef",
+		},
+		{
+			name:     "non-standard key (testing/dev)",
+			key:      "test-key-123",
+			expected: "************",
+		},
+		{
+			name:     "empty key",
+			key:      "",
+			expected: "",
+		},
+		{
+			name:     "very short key",
+			key:      "ab",
+			expected: "**",
+		},
+		{
+			name:     "short key",
+			key:      "short",
+			expected: "*****",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := MaskKey(tt.key)
+			if result != tt.expected {
+				t.Errorf("MaskKey(%q) = %q, want %q", tt.key, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGenerateAPIKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name     string
+		pluginID string
+		wantErr  bool
+	}{
+		{
+			name:     "valid plugin ID generates key",
+			pluginID: "dbt-plugin",
+			wantErr:  false,
+		},
+		{
+			name:     "empty plugin ID fails",
+			pluginID: "",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, err := GenerateAPIKey(tt.pluginID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.pluginID)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.pluginID, err)
+
+				return
+			}
+
+			if key == "" {
+				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.pluginID)
+			}
+
+			// Key should be at least 32 characters for security
+			if len(key) < 32 {
+				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.pluginID, len(key))
+			}
+		})
+	}
+}
+
+func TestParseAPIKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name      string
+		keyString string
+		expected  string
+		wantErr   bool
+	}{
+		{
+			name:      "valid API key format",
+			keyString: "Bearer correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			expected:  "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			wantErr:   false,
+		},
+		{
+			name:      "API key without Bearer prefix",
+			keyString: "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			expected:  "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			wantErr:   false,
+		},
+		{
+			name:      "invalid key format",
+			keyString: "invalid-key-format",
+			expected:  "",
+			wantErr:   true,
+		},
+		{
+			name:      "empty key string",
+			keyString: "",
+			expected:  "",
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, err := ParseAPIKey(tt.keyString)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ParseAPIKey(%q) expected error, got nil", tt.keyString)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Errorf("ParseAPIKey(%q) unexpected error: %v", tt.keyString, err)
+
+				return
+			}
+
+			if key != tt.expected {
+				t.Errorf("ParseAPIKey(%q) = %q, want %q", tt.keyString, key, tt.expected)
 			}
 		})
 	}

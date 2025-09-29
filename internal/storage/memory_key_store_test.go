@@ -1,4 +1,4 @@
-package api
+package storage
 
 import (
 	"errors"
@@ -25,13 +25,12 @@ func TestInMemoryKeyStore(t *testing.T) {
 
 	t.Run("add and find key", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
-		// This will fail - Add method doesn't exist yet
+
 		err := store.Add(testKey)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		// This will fail - FindByKey method doesn't exist yet
 		found, exists := store.FindByKey(testKey.Key)
 		if !exists {
 			t.Errorf("FindByKey() key not found")
@@ -78,7 +77,6 @@ func TestInMemoryKeyStore(t *testing.T) {
 			Active:      false, // Deactivate
 		}
 
-		// This will fail - Update method doesn't exist yet
 		err = store.Update(updatedKey)
 		if err != nil {
 			t.Errorf("Update() unexpected error: %v", err)
@@ -111,7 +109,6 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		// This will fail - Delete method doesn't exist yet
 		err = store.Delete(testKey.ID)
 		if err != nil {
 			t.Errorf("Delete() unexpected error: %v", err)
@@ -168,7 +165,6 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		// This will fail - ListByPlugin method doesn't exist yet
 		dbtKeys, err := store.ListByPlugin("dbt-plugin")
 		if err != nil {
 			t.Errorf("ListByPlugin() unexpected error: %v", err)
@@ -301,7 +297,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 
 	t.Run("add nil key", func(t *testing.T) {
 		err := store.Add(nil)
-		if errors.Is(err, ErrKeyNotFound) {
+		if !errors.Is(err, ErrKeyNil) {
 			t.Errorf("Add() nil key should return ErrKeyNil, got %v", err)
 		}
 	})
@@ -312,52 +308,4 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 			t.Errorf("Update() nil key should return ErrKeyNil, got %v", err)
 		}
 	})
-}
-
-func TestKeyMasking(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	tests := []struct {
-		name     string
-		key      string
-		expected string
-	}{
-		{
-			name:     "standard 78-char correlator API key",
-			key:      "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			expected: "correlator_ak_1234********************************************************cdef",
-		},
-		{
-			name:     "non-standard key (testing/dev)",
-			key:      "test-key-123",
-			expected: "************",
-		},
-		{
-			name:     "empty key",
-			key:      "",
-			expected: "",
-		},
-		{
-			name:     "very short key",
-			key:      "ab",
-			expected: "**",
-		},
-		{
-			name:     "short key",
-			key:      "short",
-			expected: "*****",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This will fail - MaskKey function doesn't exist yet
-			result := MaskKey(tt.key)
-			if result != tt.expected {
-				t.Errorf("MaskKey(%q) = %q, want %q", tt.key, result, tt.expected)
-			}
-		})
-	}
 }
