@@ -13,7 +13,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 	}
 
 	// Test data
-	testKey := &Key{
+	testKey := &APIKey{
 		ID:          "key-1",
 		Key:         "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 		PluginID:    "dbt-plugin",
@@ -67,7 +67,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 		}
 
 		// Update key
-		updatedKey := &Key{
+		updatedKey := &APIKey{
 			ID:          testKey.ID,
 			Key:         testKey.Key,
 			PluginID:    testKey.PluginID,
@@ -128,21 +128,21 @@ func TestInMemoryKeyStore(t *testing.T) {
 	t.Run("list by plugin", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
 		// Add multiple keys for different plugins
-		key1 := &Key{
+		key1 := &APIKey{
 			ID:       "key-1",
 			Key:      "correlator_ak_1111111111111111111111111111111111111111111111111111111111111111",
 			PluginID: "dbt-plugin",
 			Name:     "DBT Key 1",
 			Active:   true,
 		}
-		key2 := &Key{
+		key2 := &APIKey{
 			ID:       "key-2",
 			Key:      "correlator_ak_2222222222222222222222222222222222222222222222222222222222222222",
 			PluginID: "dbt-plugin",
 			Name:     "DBT Key 2",
 			Active:   true,
 		}
-		key3 := &Key{
+		key3 := &APIKey{
 			ID:       "key-3",
 			Key:      "correlator_ak_3333333333333333333333333333333333333333333333333333333333333333",
 			PluginID: "airflow-plugin",
@@ -210,7 +210,7 @@ func TestInMemoryKeyStoreConcurrency(t *testing.T) {
 		// Start multiple goroutines that add keys
 		for i := 0; i < 50; i++ {
 			go func(id int) {
-				key := &Key{
+				key := &APIKey{
 					ID:       fmt.Sprintf("key-%d", id),
 					Key:      fmt.Sprintf("correlator_ak_%064d", id), // 64 digit number padded with zeros
 					PluginID: "test-plugin",
@@ -252,7 +252,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 	store := NewInMemoryKeyStore()
 
 	t.Run("add duplicate key", func(t *testing.T) {
-		key := &Key{
+		key := &APIKey{
 			ID:       "key-1",
 			Key:      "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			PluginID: "test-plugin",
@@ -274,7 +274,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 	})
 
 	t.Run("update non-existent key", func(t *testing.T) {
-		key := &Key{
+		key := &APIKey{
 			ID:       "non-existent-key",
 			Key:      "correlator_ak_9999999999999999999999999999999999999999999999999999999999999999",
 			PluginID: "test-plugin",

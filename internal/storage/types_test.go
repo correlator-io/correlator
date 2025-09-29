@@ -10,7 +10,7 @@ func TestKeyValidation(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	apiKey := &Key{
+	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
 		PluginID:    "dbt-plugin",
@@ -54,7 +54,7 @@ func TestKeyValidation(t *testing.T) {
 
 	// Test inactive API key
 	t.Run("inactive API key fails validation", func(t *testing.T) {
-		inactiveKey := &Key{
+		inactiveKey := &APIKey{
 			ID:       "api-key-2",
 			Key:      "inactive-key",
 			PluginID: "test-plugin",
@@ -70,7 +70,7 @@ func TestKeyValidation(t *testing.T) {
 	// Test expired API key
 	t.Run("expired API key fails validation", func(t *testing.T) {
 		pastTime := time.Now().Add(-time.Hour)
-		expiredKey := &Key{
+		expiredKey := &APIKey{
 			ID:        "api-key-3",
 			Key:       "expired-key",
 			PluginID:  "test-plugin",
@@ -90,7 +90,7 @@ func TestKeyPermissions(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	apiKey := &Key{
+	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
 		PluginID:    "dbt-plugin",

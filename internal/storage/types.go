@@ -36,8 +36,8 @@ var (
 	ErrInvalidKeyLength = errors.New("invalid API key length")
 )
 
-// Key represents an API key with plugin identification and permissions.
-type Key struct {
+// APIKey represents an API key with plugin identification and permissions.
+type APIKey struct {
 	ID          string     `json:"id"`
 	Key         string     `json:"key"`
 	PluginID    string     `json:"pluginId"`
@@ -48,22 +48,22 @@ type Key struct {
 	Active      bool       `json:"active"`
 }
 
-// KeyStore defines the interface for API key storage and retrieval.
-type KeyStore interface {
+// APIKeyStore defines the interface for API key storage and retrieval.
+type APIKeyStore interface {
 	// FindByKey retrieves an API key by its key value
-	FindByKey(key string) (*Key, bool)
+	FindByKey(key string) (*APIKey, bool)
 	// Add stores a new API key
-	Add(apiKey *Key) error
+	Add(apiKey *APIKey) error
 	// Update modifies an existing API key
-	Update(apiKey *Key) error
+	Update(apiKey *APIKey) error
 	// Delete removes an API key
 	Delete(keyID string) error
 	// ListByPlugin returns all API keys for a specific plugin
-	ListByPlugin(pluginID string) ([]*Key, error)
+	ListByPlugin(pluginID string) ([]*APIKey, error)
 }
 
 // ValidateKey performs constant-time comparison of the provided key against this API key.
-func (ak *Key) ValidateKey(providedKey string) bool {
+func (ak *APIKey) ValidateKey(providedKey string) bool {
 	// Validate inputs first
 	if providedKey == "" || ak.Key == "" {
 		return false
@@ -84,7 +84,7 @@ func (ak *Key) ValidateKey(providedKey string) bool {
 }
 
 // HasPermission checks if the API key has a specific permission.
-func (ak *Key) HasPermission(permission string) bool {
+func (ak *APIKey) HasPermission(permission string) bool {
 	for _, p := range ak.Permissions {
 		if p == permission {
 			return true
