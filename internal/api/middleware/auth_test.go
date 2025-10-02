@@ -2,10 +2,16 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/correlator-io/correlator/internal/storage"
 )
+
+const testKey = "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
 // TestExtractAPIKey_XAPIKeyHeader verifies that extractAPIKey correctly extracts.
 // API key from the X-Api-Key header (primary header).
@@ -341,5 +347,214 @@ func TestExtractAPIKey_AuthorizationBearerWithWhitespace(t *testing.T) {
 				t.Errorf("Expected API key %q, got %q", tc.expected, apiKey)
 			}
 		})
+	}
+}
+
+// TestAuthenticateRequest_ValidKey verifies successful authentication with a valid API key.
+func TestAuthenticateRequest_ValidKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	ctx := context.Background()
+	validKey := testKey
+
+	expectedAPIKey := &storage.APIKey{
+		ID:          "key-123",
+		Key:         validKey,
+		PluginID:    "dbt-plugin-v1",
+		Name:        "dbt Core Plugin",
+		Permissions: []string{"lineage:write", "metrics:read"},
+		Active:      true,
+		ExpiresAt:   nil,
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, key string) (*storage.APIKey, bool) {
+			if key == validKey {
+				return expectedAPIKey, true
+			}
+
+			return nil, false
+		},
+	}
+
+	apiKey, err := authenticateRequest(ctx, store, validKey)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if apiKey == nil { // pragma: allowlist secret
+		t.Fatal("Expected API key to be returned")
+	}
+
+	if apiKey.ID != expectedAPIKey.ID {
+		t.Errorf("Expected ID %q, got %q", expectedAPIKey.ID, apiKey.ID)
+	}
+
+	if apiKey.PluginID != expectedAPIKey.PluginID {
+		t.Errorf("Expected PluginID %q, got %q", expectedAPIKey.PluginID, apiKey.PluginID)
+	}
+}
+
+// TestAuthenticateRequest_InvalidFormat verifies that authentication fails
+// for API keys with invalid format.
+func TestAuthenticateRequest_InvalidFormat(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	ctx := context.Background()
+	store := &MockAPIKeyStore{}
+
+	testCases := []struct {
+		name   string
+		apiKey string
+	}{
+		{
+			name:   "Missing prefix",
+			apiKey: "invalid_key_format",
+		},
+		{
+			name:   "Wrong prefix",
+			apiKey: "wrong_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		},
+		{
+			name:   "Too short",
+			apiKey: "correlator_ak_short",
+		},
+		{
+			name:   "Too long",
+			apiKey: "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefextra",
+		},
+		{
+			name:   "Empty string",
+			apiKey: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			apiKey, err := authenticateRequest(ctx, store, tc.apiKey)
+			if err == nil {
+				t.Error("Expected error for invalid format, got nil")
+			}
+
+			if !IsAuthError(err, ErrInvalidAPIKey) {
+				t.Errorf("Expected ErrInvalidAPIKey, got %v", err)
+			}
+
+			if apiKey != nil { // pragma: allowlist secret
+				t.Error("Expected nil API key for invalid format")
+			}
+		})
+	}
+}
+
+// TestAuthenticateRequest_KeyNotFound verifies that authentication fails
+// when the API key is not found in the store.
+func TestAuthenticateRequest_KeyNotFound(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	ctx := context.Background()
+	validKey := testKey
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
+			return nil, false // Key not found
+		},
+	}
+
+	apiKey, err := authenticateRequest(ctx, store, validKey)
+	if err == nil {
+		t.Fatal("Expected error for key not found, got nil")
+	}
+
+	if !IsAuthError(err, ErrInvalidAPIKey) {
+		t.Errorf("Expected ErrInvalidAPIKey for not found, got %v", err)
+	}
+
+	if apiKey != nil { // pragma: allowlist secret
+		t.Error("Expected nil API key when not found")
+	}
+}
+
+// TestAuthenticateRequest_InactiveKey verifies that authentication fails
+// for inactive API keys (soft-deleted).
+func TestAuthenticateRequest_InactiveKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	ctx := context.Background()
+	validKey := testKey
+
+	inactiveKey := &storage.APIKey{
+		ID:       "key-456",
+		Key:      validKey,
+		PluginID: "inactive-plugin",
+		Name:     "Inactive Plugin",
+		Active:   false, // Key is inactive
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
+			return inactiveKey, true
+		},
+	}
+
+	apiKey, err := authenticateRequest(ctx, store, validKey)
+	if err == nil {
+		t.Fatal("Expected error for inactive key, got nil")
+	}
+
+	if !IsAuthError(err, ErrAPIKeyInactive) {
+		t.Errorf("Expected ErrAPIKeyInactive, got %v", err)
+	}
+
+	if apiKey != nil { // pragma: allowlist secret
+		t.Error("Expected nil API key for inactive key")
+	}
+}
+
+// TestAuthenticateRequest_ExpiredKey verifies that authentication fails
+// for expired API keys.
+func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	ctx := context.Background()
+	validKey := testKey
+
+	pastTime := time.Now().Add(-24 * time.Hour) // Expired yesterday
+	expiredKey := &storage.APIKey{
+		ID:        "key-789",
+		Key:       validKey,
+		PluginID:  "expired-plugin",
+		Name:      "Expired Plugin",
+		Active:    true,
+		ExpiresAt: &pastTime, // Key has expired
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
+			return expiredKey, true
+		},
+	}
+
+	apiKey, err := authenticateRequest(ctx, store, validKey)
+	if err == nil {
+		t.Fatal("Expected error for expired key, got nil")
+	}
+
+	if !IsAuthError(err, ErrAPIKeyExpired) {
+		t.Errorf("Expected ErrAPIKeyExpired, got %v", err)
+	}
+
+	if apiKey != nil { // pragma: allowlist secret
+		t.Error("Expected nil API key for expired key")
 	}
 }
