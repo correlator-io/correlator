@@ -2,17 +2,18 @@
 package storage
 
 import (
+	"context"
 	"sync"
 )
 
 // InMemoryKeyStore provides thread-safe in-memory storage for API keys.
 type InMemoryKeyStore struct {
 	// keys maps key strings to Key structs for fast lookup
-	keys map[string]*Key
+	keys map[string]*APIKey
 	// keysByID maps key IDs to Key structs for ID-based operations
-	keysByID map[string]*Key
+	keysByID map[string]*APIKey
 	// keysByPlugin maps plugin IDs to slices of Key structs for plugin filtering
-	keysByPlugin map[string][]*Key
+	keysByPlugin map[string][]*APIKey
 	// mutex protects concurrent access to all maps
 	mutex sync.RWMutex
 }
@@ -20,14 +21,14 @@ type InMemoryKeyStore struct {
 // NewInMemoryKeyStore creates a new thread-safe in-memory key store.
 func NewInMemoryKeyStore() *InMemoryKeyStore {
 	return &InMemoryKeyStore{
-		keys:         make(map[string]*Key),
-		keysByID:     make(map[string]*Key),
-		keysByPlugin: make(map[string][]*Key),
+		keys:         make(map[string]*APIKey),
+		keysByID:     make(map[string]*APIKey),
+		keysByPlugin: make(map[string][]*APIKey),
 	}
 }
 
 // FindByKey retrieves an API key by its key value.
-func (s *InMemoryKeyStore) FindByKey(key string) (*Key, bool) {
+func (s *InMemoryKeyStore) FindByKey(_ context.Context, key string) (*APIKey, bool) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -43,7 +44,7 @@ func (s *InMemoryKeyStore) FindByKey(key string) (*Key, bool) {
 }
 
 // Add stores a new API key.
-func (s *InMemoryKeyStore) Add(apiKey *Key) error {
+func (s *InMemoryKeyStore) Add(_ context.Context, apiKey *APIKey) error {
 	if apiKey == nil { // pragma: allowlist secret
 		return ErrKeyNil
 	}
@@ -74,7 +75,7 @@ func (s *InMemoryKeyStore) Add(apiKey *Key) error {
 }
 
 // Update modifies an existing API key.
-func (s *InMemoryKeyStore) Update(apiKey *Key) error {
+func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 	if apiKey == nil { // pragma: allowlist secret
 		return ErrKeyNil
 	}
@@ -110,7 +111,7 @@ func (s *InMemoryKeyStore) Update(apiKey *Key) error {
 }
 
 // Delete removes an API key.
-func (s *InMemoryKeyStore) Delete(keyID string) error {
+func (s *InMemoryKeyStore) Delete(_ context.Context, keyID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -131,17 +132,17 @@ func (s *InMemoryKeyStore) Delete(keyID string) error {
 }
 
 // ListByPlugin returns all API keys for a specific plugin.
-func (s *InMemoryKeyStore) ListByPlugin(pluginID string) ([]*Key, error) {
+func (s *InMemoryKeyStore) ListByPlugin(_ context.Context, pluginID string) ([]*APIKey, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	keys, exists := s.keysByPlugin[pluginID]
 	if !exists {
-		return []*Key{}, nil // Return empty slice for non-existent plugins
+		return []*APIKey{}, nil // Return empty slice for non-existent plugins
 	}
 
 	// Return copies to prevent external modification
-	result := make([]*Key, len(keys))
+	result := make([]*APIKey, len(keys))
 	for i, key := range keys {
 		keyCopy := *key
 		result[i] = &keyCopy

@@ -2,13 +2,17 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 const (
@@ -17,6 +21,8 @@ const (
 	apiKeyLength    = 78
 	prefixLen       = 18 // Show "correlator_ak_1234"
 	suffixLen       = 4  // Show last 4 chars
+	postgresDriver  = "postgres"
+	ctxTimeout      = 5 * time.Second
 )
 
 var (
@@ -36,34 +42,93 @@ var (
 	ErrInvalidKeyLength = errors.New("invalid API key length")
 )
 
-// Key represents an API key with plugin identification and permissions.
-type Key struct {
-	ID          string     `json:"id"`
-	Key         string     `json:"key"`
-	PluginID    string     `json:"pluginId"`
-	Name        string     `json:"name"`
-	Permissions []string   `json:"permissions"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
-	Active      bool       `json:"active"`
+type (
+	// Connection represents a database connection.
+	Connection struct {
+		*sql.DB
+	}
+
+	// APIKey represents an API key with plugin identification and permissions.
+	APIKey struct {
+		ID          string     `json:"id"`
+		Key         string     `json:"key"`
+		PluginID    string     `json:"pluginId"`
+		Name        string     `json:"name"`
+		Permissions []string   `json:"permissions"`
+		CreatedAt   time.Time  `json:"createdAt"`
+		ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+		Active      bool       `json:"active"`
+	}
+
+	// APIKeyStore defines the interface for API key storage and retrieval.
+	APIKeyStore interface {
+		// FindByKey retrieves an API key by its key value
+		FindByKey(ctx context.Context, key string) (*APIKey, bool)
+		// Add stores a new API key
+		Add(ctx context.Context, apiKey *APIKey) error
+		// Update modifies an existing API key
+		Update(ctx context.Context, apiKey *APIKey) error
+		// Delete removes an API key
+		Delete(ctx context.Context, keyID string) error
+		// ListByPlugin returns all API keys for a specific plugin
+		ListByPlugin(ctx context.Context, pluginID string) ([]*APIKey, error)
+	}
+)
+
+// NewConnection returns a new Database Connection.
+func NewConnection(config *Config) (*Connection, error) {
+	db, err := sql.Open(postgresDriver, config.databaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Configure connection pool with production-ready settings
+	db.SetMaxOpenConns(config.MaxOpenConns)
+	db.SetMaxIdleConns(config.MaxIdleConns)
+	db.SetConnMaxLifetime(config.ConnMaxLifetime)
+	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
+
+	// Perform immediate health check with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+
+		return nil, fmt.Errorf("database health check failed: %w", err)
+	}
+
+	return &Connection{db}, nil
 }
 
-// KeyStore defines the interface for API key storage and retrieval.
-type KeyStore interface {
-	// FindByKey retrieves an API key by its key value
-	FindByKey(key string) (*Key, bool)
-	// Add stores a new API key
-	Add(apiKey *Key) error
-	// Update modifies an existing API key
-	Update(apiKey *Key) error
-	// Delete removes an API key
-	Delete(keyID string) error
-	// ListByPlugin returns all API keys for a specific plugin
-	ListByPlugin(pluginID string) ([]*Key, error)
+// HealthCheck checks if the database connection is healthy with timeout.
+// This method is used for health checks and monitoring.
+func (c *Connection) HealthCheck(ctx context.Context) error {
+	if ctx == nil {
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, ctxTimeout)
+
+		defer cancel()
+	}
+
+	return c.PingContext(ctx)
+}
+
+// Close closes the database connection pool gracefully.
+// This method is safe to call multiple times.
+func (c *Connection) Close() error {
+	return c.DB.Close()
+}
+
+// Stats returns database connection pool statistics for monitoring.
+// Useful for observability and debugging connection pool issues.
+func (c *Connection) Stats() sql.DBStats {
+	return c.DB.Stats()
 }
 
 // ValidateKey performs constant-time comparison of the provided key against this API key.
-func (ak *Key) ValidateKey(providedKey string) bool {
+func (ak *APIKey) ValidateKey(providedKey string) bool {
 	// Validate inputs first
 	if providedKey == "" || ak.Key == "" {
 		return false
@@ -84,7 +149,7 @@ func (ak *Key) ValidateKey(providedKey string) bool {
 }
 
 // HasPermission checks if the API key has a specific permission.
-func (ak *Key) HasPermission(permission string) bool {
+func (ak *APIKey) HasPermission(permission string) bool {
 	for _, p := range ak.Permissions {
 		if p == permission {
 			return true
