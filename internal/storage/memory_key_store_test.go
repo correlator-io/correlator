@@ -12,6 +12,8 @@ func TestInMemoryKeyStore(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
+	ctx := t.Context()
+
 	// Test data
 	testKey := &APIKey{
 		ID:          "key-1",
@@ -26,12 +28,12 @@ func TestInMemoryKeyStore(t *testing.T) {
 	t.Run("add and find key", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
 
-		err := store.Add(testKey)
+		err := store.Add(ctx, testKey)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		found, exists := store.FindByKey(testKey.Key)
+		found, exists := store.FindByKey(ctx, testKey.Key)
 		if !exists {
 			t.Errorf("FindByKey() key not found")
 		}
@@ -48,7 +50,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 	t.Run("find non-existent key", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
 
-		found, exists := store.FindByKey("non-existent-key")
+		found, exists := store.FindByKey(ctx, "non-existent-key")
 		if exists {
 			t.Errorf("FindByKey() found non-existent key")
 		}
@@ -61,7 +63,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 	t.Run("update existing key", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
 		// Add initial key
-		err := store.Add(testKey)
+		err := store.Add(ctx, testKey)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
@@ -77,13 +79,13 @@ func TestInMemoryKeyStore(t *testing.T) {
 			Active:      false, // Deactivate
 		}
 
-		err = store.Update(updatedKey)
+		err = store.Update(ctx, updatedKey)
 		if err != nil {
 			t.Errorf("Update() unexpected error: %v", err)
 		}
 
 		// Verify update
-		found, exists := store.FindByKey(testKey.Key)
+		found, exists := store.FindByKey(ctx, testKey.Key)
 		if !exists {
 			t.Errorf("FindByKey() updated key not found")
 		}
@@ -104,18 +106,18 @@ func TestInMemoryKeyStore(t *testing.T) {
 	t.Run("delete key", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
 		// Add key first
-		err := store.Add(testKey)
+		err := store.Add(ctx, testKey)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		err = store.Delete(testKey.ID)
+		err = store.Delete(ctx, testKey.ID)
 		if err != nil {
 			t.Errorf("Delete() unexpected error: %v", err)
 		}
 
 		// Verify deletion
-		found, exists := store.FindByKey(testKey.Key)
+		found, exists := store.FindByKey(ctx, testKey.Key)
 		if exists {
 			t.Errorf("FindByKey() found deleted key")
 		}
@@ -150,22 +152,22 @@ func TestInMemoryKeyStore(t *testing.T) {
 			Active:   true,
 		}
 
-		err := store.Add(key1)
+		err := store.Add(ctx, key1)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		err = store.Add(key2)
+		err = store.Add(ctx, key2)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		err = store.Add(key3)
+		err = store.Add(ctx, key3)
 		if err != nil {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		dbtKeys, err := store.ListByPlugin("dbt-plugin")
+		dbtKeys, err := store.ListByPlugin(ctx, "dbt-plugin")
 		if err != nil {
 			t.Errorf("ListByPlugin() unexpected error: %v", err)
 		}
@@ -174,7 +176,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("ListByPlugin() returned %d keys, want 2", len(dbtKeys))
 		}
 
-		airflowKeys, err := store.ListByPlugin("airflow-plugin")
+		airflowKeys, err := store.ListByPlugin(ctx, "airflow-plugin")
 		if err != nil {
 			t.Errorf("ListByPlugin() unexpected error: %v", err)
 		}
@@ -184,7 +186,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 		}
 
 		// Test non-existent plugin
-		nonKeys, err := store.ListByPlugin("non-existent-plugin")
+		nonKeys, err := store.ListByPlugin(ctx, "non-existent-plugin")
 		if err != nil {
 			t.Errorf("ListByPlugin() unexpected error: %v", err)
 		}
@@ -200,6 +202,7 @@ func TestInMemoryKeyStoreConcurrency(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
+	ctx := t.Context()
 	store := NewInMemoryKeyStore()
 
 	// Test concurrent reads and writes
@@ -218,7 +221,7 @@ func TestInMemoryKeyStoreConcurrency(t *testing.T) {
 					Active:   true,
 				}
 
-				err := store.Add(key)
+				err := store.Add(ctx, key)
 				if err != nil {
 					t.Errorf("Concurrent Add() unexpected error: %v", err)
 				}
@@ -231,7 +234,7 @@ func TestInMemoryKeyStoreConcurrency(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			go func(id int) {
 				keyStr := fmt.Sprintf("correlator_ak_%064d", id)
-				_, _ = store.FindByKey(keyStr) // Don't care about result, just testing concurrency
+				_, _ = store.FindByKey(ctx, keyStr) // Don't care about result, just testing concurrency
 
 				done <- true
 			}(i)
@@ -249,6 +252,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
+	ctx := t.Context()
 	store := NewInMemoryKeyStore()
 
 	t.Run("add duplicate key", func(t *testing.T) {
@@ -261,13 +265,13 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 		}
 
 		// Add key first time - should succeed
-		err := store.Add(key)
+		err := store.Add(ctx, key)
 		if err != nil {
 			t.Errorf("Add() first time unexpected error: %v", err)
 		}
 
 		// Add same key again - should fail
-		err = store.Add(key)
+		err = store.Add(ctx, key)
 		if err == nil {
 			t.Errorf("Add() duplicate key should return error")
 		}
@@ -282,28 +286,28 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 			Active:   true,
 		}
 
-		err := store.Update(key)
+		err := store.Update(ctx, key)
 		if err == nil {
 			t.Errorf("Update() non-existent key should return error")
 		}
 	})
 
 	t.Run("delete non-existent key", func(t *testing.T) {
-		err := store.Delete("non-existent-key")
+		err := store.Delete(ctx, "non-existent-key")
 		if err == nil {
 			t.Errorf("Delete() non-existent key should return error")
 		}
 	})
 
 	t.Run("add nil key", func(t *testing.T) {
-		err := store.Add(nil)
+		err := store.Add(ctx, nil)
 		if !errors.Is(err, ErrKeyNil) {
 			t.Errorf("Add() nil key should return ErrKeyNil, got %v", err)
 		}
 	})
 
 	t.Run("update nil key", func(t *testing.T) {
-		err := store.Update(nil)
+		err := store.Update(ctx, nil)
 		if !errors.Is(err, ErrKeyNil) {
 			t.Errorf("Update() nil key should return ErrKeyNil, got %v", err)
 		}

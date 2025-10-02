@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 )
 
@@ -27,7 +28,7 @@ func NewInMemoryKeyStore() *InMemoryKeyStore {
 }
 
 // FindByKey retrieves an API key by its key value.
-func (s *InMemoryKeyStore) FindByKey(key string) (*APIKey, bool) {
+func (s *InMemoryKeyStore) FindByKey(_ context.Context, key string) (*APIKey, bool) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -43,7 +44,7 @@ func (s *InMemoryKeyStore) FindByKey(key string) (*APIKey, bool) {
 }
 
 // Add stores a new API key.
-func (s *InMemoryKeyStore) Add(apiKey *APIKey) error {
+func (s *InMemoryKeyStore) Add(_ context.Context, apiKey *APIKey) error {
 	if apiKey == nil { // pragma: allowlist secret
 		return ErrKeyNil
 	}
@@ -74,7 +75,7 @@ func (s *InMemoryKeyStore) Add(apiKey *APIKey) error {
 }
 
 // Update modifies an existing API key.
-func (s *InMemoryKeyStore) Update(apiKey *APIKey) error {
+func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 	if apiKey == nil { // pragma: allowlist secret
 		return ErrKeyNil
 	}
@@ -110,7 +111,7 @@ func (s *InMemoryKeyStore) Update(apiKey *APIKey) error {
 }
 
 // Delete removes an API key.
-func (s *InMemoryKeyStore) Delete(keyID string) error {
+func (s *InMemoryKeyStore) Delete(_ context.Context, keyID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -131,7 +132,7 @@ func (s *InMemoryKeyStore) Delete(keyID string) error {
 }
 
 // ListByPlugin returns all API keys for a specific plugin.
-func (s *InMemoryKeyStore) ListByPlugin(pluginID string) ([]*APIKey, error) {
+func (s *InMemoryKeyStore) ListByPlugin(_ context.Context, pluginID string) ([]*APIKey, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
