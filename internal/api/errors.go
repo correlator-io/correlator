@@ -14,10 +14,12 @@ import (
 // to avoid repeated string formatting allocations.
 //nolint:gochecknoglobals // Global map is justified for memory optimization
 var commonProblemTypes = map[int]string{
-	http.StatusBadRequest:           "https://correlator.io/problems/400",
-	http.StatusNotFound:             "https://correlator.io/problems/404",
-	http.StatusMethodNotAllowed:     "https://correlator.io/problems/405",
-	http.StatusInternalServerError:  "https://correlator.io/problems/500",
+	http.StatusBadRequest:          "https://correlator.io/problems/400",
+	http.StatusUnauthorized:        "https://correlator.io/problems/401",
+	http.StatusForbidden:           "https://correlator.io/problems/403",
+	http.StatusNotFound:            "https://correlator.io/problems/404",
+	http.StatusMethodNotAllowed:    "https://correlator.io/problems/405",
+	http.StatusInternalServerError: "https://correlator.io/problems/500",
 }
 
 // ProblemDetail represents an RFC 7807 Problem Details structure.
@@ -127,6 +129,24 @@ func MethodNotAllowed(detail string) *ProblemDetail {
 	return NewProblemDetail(
 		http.StatusMethodNotAllowed,
 		"Method Not Allowed",
+		detail,
+	)
+}
+
+// Unauthorized creates a 401 Unauthorized problem.
+func Unauthorized(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusUnauthorized,
+		"Unauthorized",
+		detail,
+	)
+}
+
+// Forbidden creates a 403 Forbidden problem.
+func Forbidden(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusForbidden,
+		"Forbidden",
 		detail,
 	)
 }

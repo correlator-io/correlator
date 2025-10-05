@@ -3,6 +3,8 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -556,5 +558,240 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 
 	if apiKey != nil { // pragma: allowlist secret
 		t.Error("Expected nil API key for expired key")
+	}
+}
+
+// TestAuthenticate_Success verifies successful authentication flow through middleware.
+func TestAuthenticate_Success(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	validKey := testKey
+	expectedAPIKey := &storage.APIKey{
+		ID:          "key-123",
+		Key:         validKey,
+		PluginID:    "dbt-plugin-v1",
+		Name:        "dbt Core Plugin",
+		Permissions: []string{"lineage:write", "metrics:read"},
+		Active:      true,
+		ExpiresAt:   nil,
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, key string) (*storage.APIKey, bool) {
+			if key == validKey {
+				return expectedAPIKey, true
+			}
+
+			return nil, false
+		},
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	// Handler that checks plugin context
+	var capturedContext PluginContext
+
+	var contextFound bool
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedContext, contextFound = GetPluginContext(r.Context())
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("authenticated"))
+	})
+
+	// Create middleware
+	middleware := Authenticate(store, logger)
+	wrappedHandler := middleware(handler)
+
+	// Create request with valid API key
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("X-Api-Key", validKey)
+
+	rec := httptest.NewRecorder()
+
+	// Execute request
+	wrappedHandler.ServeHTTP(rec, req)
+
+	// Verify response
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	// Verify plugin context was set
+	if !contextFound {
+		t.Fatal("Plugin context was not set in request context")
+	}
+
+	if capturedContext.PluginID != expectedAPIKey.PluginID {
+		t.Errorf("Expected PluginID %q, got %q", expectedAPIKey.PluginID, capturedContext.PluginID)
+	}
+
+	if capturedContext.Name != expectedAPIKey.Name {
+		t.Errorf("Expected Name %q, got %q", expectedAPIKey.Name, capturedContext.Name)
+	}
+
+	if capturedContext.KeyID != expectedAPIKey.ID {
+		t.Errorf("Expected KeyID %q, got %q", expectedAPIKey.ID, capturedContext.KeyID)
+	}
+
+	if len(capturedContext.Permissions) != len(expectedAPIKey.Permissions) {
+		t.Errorf("Expected %d permissions, got %d", len(expectedAPIKey.Permissions), len(capturedContext.Permissions))
+	}
+
+	if capturedContext.AuthTime.IsZero() {
+		t.Error("Expected AuthTime to be set, got zero value")
+	}
+}
+
+// TestAuthenticate_MissingAPIKey verifies 401 response when API key is missing.
+func TestAuthenticate_MissingAPIKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	store := &MockAPIKeyStore{}
+	logger := slog.New(slog.DiscardHandler)
+
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("Handler should not be called when API key is missing")
+	})
+
+	middleware := Authenticate(store, logger)
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rec.Code)
+	}
+
+	// Verify RFC 7807 response
+	var problem map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	if problem["status"] != float64(http.StatusUnauthorized) {
+		t.Errorf("Expected status 401 in problem detail, got %v", problem["status"])
+	}
+
+	if problem["type"] == nil {
+		t.Error("Expected type field in problem detail")
+	}
+}
+
+// TestAuthenticate_InvalidAPIKey verifies 401 response for invalid API key.
+func TestAuthenticate_InvalidAPIKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
+			return nil, false // Key not found
+		},
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("Handler should not be called for invalid API key")
+	})
+
+	middleware := Authenticate(store, logger)
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("X-Api-Key", testKey)
+
+	rec := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rec.Code)
+	}
+}
+
+// TestAuthenticate_InactiveKey verifies 403 response for inactive API key.
+func TestAuthenticate_InactiveKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	inactiveKey := &storage.APIKey{
+		ID:       "key-inactive",
+		Key:      testKey,
+		PluginID: "inactive-plugin",
+		Name:     "Inactive Plugin",
+		Active:   false,
+	}
+
+	store := &MockAPIKeyStore{
+		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
+			return inactiveKey, true
+		},
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("Handler should not be called for inactive API key")
+	})
+
+	middleware := Authenticate(store, logger)
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("X-Api-Key", testKey)
+
+	rec := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403, got %d", rec.Code)
+	}
+}
+
+// TestAuthenticate_CorrelationIDInError verifies correlation ID is included in error responses.
+func TestAuthenticate_CorrelationIDInError(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	store := &MockAPIKeyStore{}
+	logger := slog.New(slog.DiscardHandler)
+
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("Handler should not be called")
+	})
+
+	middleware := Authenticate(store, logger)
+	wrappedHandler := middleware(handler)
+
+	// Add correlation ID middleware first
+	correlationMiddleware := CorrelationID()
+	wrappedHandler = correlationMiddleware(wrappedHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rec, req)
+
+	// Verify correlation ID in response
+	var problem map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	if problem["correlationId"] == nil || problem["correlationId"] == "" {
+		t.Error("Expected correlationId in problem detail")
 	}
 }
