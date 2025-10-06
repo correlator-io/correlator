@@ -44,19 +44,20 @@ func (s *PersistentKeyStore) Close() error {
 }
 
 // FindByKey retrieves an API key by its key value using bcrypt hash comparison.
-// Queries all active keys and compares hashes in-memory (acceptable for MVP with <1000 keys).
+// Queries all API keys (active and inactive) and compares hashes in-memory.
 // Returns (nil, false) if key not found or invalid.
+// Note: Active/inactive status is checked by the authentication layer, not here.
 func (s *PersistentKeyStore) FindByKey(ctx context.Context, key string) (*APIKey, bool) {
 	// Validate input
 	if key == "" {
 		return nil, false
 	}
 
-	// Query all active API keys
+	// Query all API keys (both active and inactive)
+	// Authentication layer will check active status and return appropriate error
 	query := `
 		SELECT id, key_hash, plugin_id, name, permissions, created_at, expires_at, active, updated_at
 		FROM api_keys
-		WHERE active = TRUE
 	`
 
 	rows, err := s.conn.QueryContext(ctx, query)

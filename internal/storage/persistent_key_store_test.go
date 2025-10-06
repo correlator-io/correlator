@@ -445,16 +445,26 @@ func TestPersistentKeyStoreDelete(t *testing.T) {
 				if err == nil {
 					t.Error("Delete() expected error, got nil")
 				}
-			} else {
-				if err != nil {
-					t.Errorf("Delete() unexpected error: %v", err)
-				}
 
-				// Verify key is actually deleted
-				_, found := store.FindByKey(ctx, testKey.Key)
-				if found {
-					t.Error("Delete() key still found after deletion")
-				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Delete() unexpected error: %v", err)
+			}
+
+			// Verify key is soft-deleted (found but inactive)
+			deletedKey, found := store.FindByKey(ctx, testKey.Key)
+			if !found {
+				t.Error("Delete() key not found after soft-delete (expected to find inactive key)")
+			}
+
+			if deletedKey == nil {
+				t.Error("Delete() returned nil key after soft-delete")
+			}
+
+			if deletedKey != nil && deletedKey.Active {
+				t.Error("Delete() key still active after soft-delete (expected active=false)")
 			}
 		})
 	}
