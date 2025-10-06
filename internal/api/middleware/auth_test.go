@@ -4,6 +4,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -381,7 +382,9 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -435,14 +438,16 @@ func TestAuthenticateRequest_InvalidFormat(t *testing.T) {
 		},
 	}
 
+	logger := slog.Default()
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			apiKey, err := authenticateRequest(ctx, store, tc.apiKey)
+			apiKey, err := authenticateRequest(ctx, store, tc.apiKey, logger)
 			if err == nil {
 				t.Error("Expected error for invalid format, got nil")
 			}
 
-			if !IsAuthError(err, ErrInvalidAPIKey) {
+			if !errors.Is(err, ErrInvalidAPIKey) {
 				t.Errorf("Expected ErrInvalidAPIKey, got %v", err)
 			}
 
@@ -469,12 +474,14 @@ func TestAuthenticateRequest_KeyNotFound(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for key not found, got nil")
 	}
 
-	if !IsAuthError(err, ErrInvalidAPIKey) {
+	if !errors.Is(err, ErrInvalidAPIKey) {
 		t.Errorf("Expected ErrInvalidAPIKey for not found, got %v", err)
 	}
 
@@ -507,12 +514,14 @@ func TestAuthenticateRequest_InactiveKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for inactive key, got nil")
 	}
 
-	if !IsAuthError(err, ErrAPIKeyInactive) {
+	if !errors.Is(err, ErrAPIKeyInactive) {
 		t.Errorf("Expected ErrAPIKeyInactive, got %v", err)
 	}
 
@@ -547,12 +556,14 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for expired key, got nil")
 	}
 
-	if !IsAuthError(err, ErrAPIKeyExpired) {
+	if !errors.Is(err, ErrAPIKeyExpired) {
 		t.Errorf("Expected ErrAPIKeyExpired, got %v", err)
 	}
 

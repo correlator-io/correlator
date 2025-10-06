@@ -31,7 +31,7 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
 
       - name: Run code quality checks
-        run: make check
+        run: make run linter
 
   test:
     name: Test
