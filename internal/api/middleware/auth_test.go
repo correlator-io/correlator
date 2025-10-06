@@ -4,6 +4,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -442,7 +443,7 @@ func TestAuthenticateRequest_InvalidFormat(t *testing.T) {
 				t.Error("Expected error for invalid format, got nil")
 			}
 
-			if !IsAuthError(err, ErrInvalidAPIKey) {
+			if !errors.Is(err, ErrInvalidAPIKey) {
 				t.Errorf("Expected ErrInvalidAPIKey, got %v", err)
 			}
 
@@ -474,7 +475,7 @@ func TestAuthenticateRequest_KeyNotFound(t *testing.T) {
 		t.Fatal("Expected error for key not found, got nil")
 	}
 
-	if !IsAuthError(err, ErrInvalidAPIKey) {
+	if !errors.Is(err, ErrInvalidAPIKey) {
 		t.Errorf("Expected ErrInvalidAPIKey for not found, got %v", err)
 	}
 
@@ -512,7 +513,7 @@ func TestAuthenticateRequest_InactiveKey(t *testing.T) {
 		t.Fatal("Expected error for inactive key, got nil")
 	}
 
-	if !IsAuthError(err, ErrAPIKeyInactive) {
+	if !errors.Is(err, ErrAPIKeyInactive) {
 		t.Errorf("Expected ErrAPIKeyInactive, got %v", err)
 	}
 
@@ -552,7 +553,7 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 		t.Fatal("Expected error for expired key, got nil")
 	}
 
-	if !IsAuthError(err, ErrAPIKeyExpired) {
+	if !errors.Is(err, ErrAPIKeyExpired) {
 		t.Errorf("Expected ErrAPIKeyExpired, got %v", err)
 	}
 

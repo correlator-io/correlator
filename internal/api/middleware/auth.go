@@ -97,28 +97,16 @@ func validateAPIKey(key string) (string, bool) {
 
 // Error implements the error interface for AuthError.
 func (e *AuthError) Error() string {
-	return e.Message
-}
-
-// Is implements error unwrapping for errors.Is() compatibility.
-func (e *AuthError) Is(target error) bool {
-	// First check if target is comparing against AuthError itself
-	var authError *AuthError
-	if errors.As(target, &authError) {
-		return false // AuthErrors are unique, not equal to other AuthErrors
+	if e.Message != "" {
+		return fmt.Sprintf("authentication failed: %s: %s", e.Type.Error(), e.Message)
 	}
 
-	return errors.Is(e.Type, target)
+	return "authentication failed: " + e.Type.Error()
 }
 
-// IsAuthError checks if an error is an AuthError of a specific type.
-func IsAuthError(err error, target error) bool {
-	var authErr *AuthError
-	if errors.As(err, &authErr) {
-		return errors.Is(authErr.Type, target)
-	}
-
-	return false
+// Unwrap returns the wrapped error type, enabling standard errors.Is() and errors.As() behavior.
+func (e *AuthError) Unwrap() error {
+	return e.Type
 }
 
 // Timing attack prevention: Perform dummy bcrypt comparison

@@ -105,11 +105,11 @@ func NewConnection(config *Config) (*Connection, error) {
 
 // HealthCheck checks if the database connection is healthy with timeout.
 // This method is used for health checks and monitoring.
-func (c *Connection) HealthCheck(ctx context.Context) error {
+func (c *Connection) HealthCheck(ctx context.Context) error { //nolint: contextcheck
 	if ctx == nil {
 		var cancel context.CancelFunc
 
-		ctx, cancel = context.WithTimeout(ctx, ctxTimeout)
+		ctx, cancel = context.WithTimeout(context.Background(), ctxTimeout)
 
 		defer cancel()
 	}
