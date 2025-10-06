@@ -43,102 +43,93 @@ func (s *PersistentKeyStore) Close() error {
 	return nil
 }
 
-// FindByKey retrieves an API key by its key value using bcrypt hash comparison.
-// Queries all API keys (active and inactive) and compares hashes in-memory.
+// FindByKey retrieves an API key by its key value using O(1) hash lookup.
+// Uses key_lookup_hash (SHA256) for fast database query, then verifies with bcrypt.
 // Returns (nil, false) if key not found or invalid.
 // Note: Active/inactive status is checked by the authentication layer, not here.
 func (s *PersistentKeyStore) FindByKey(ctx context.Context, key string) (*APIKey, bool) {
-	// Validate input
 	if key == "" {
 		return nil, false
 	}
 
-	// Query all API keys (both active and inactive)
+	// Compute lookup hash for O(1) database query
+	lookupHash := ComputeKeyLookupHash(key)
+
+	// Query by lookup_hash for O(1) performance
 	// Authentication layer will check active status and return appropriate error
 	query := `
 		SELECT id, key_hash, plugin_id, name, permissions, created_at, expires_at, active, updated_at
 		FROM api_keys
+		WHERE key_lookup_hash = $1
+		LIMIT 1
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query)
+	var (
+		apiKey          APIKey
+		permissionsJSON []byte
+		updatedAt       interface{} // Not used in APIKey struct yet
+	)
+
+	err := s.conn.QueryRowContext(ctx, query, lookupHash).Scan(
+		&apiKey.ID,
+		&apiKey.Key, // This is actually the hash, we'll use it for comparison
+		&apiKey.PluginID,
+		&apiKey.Name,
+		&permissionsJSON,
+		&apiKey.CreatedAt,
+		&apiKey.ExpiresAt,
+		&apiKey.Active,
+		&updatedAt,
+	)
 	if err != nil {
 		return nil, false
 	}
 
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var keyFound *APIKey
-
-	// Iterate through active keys and compare hashes
-	for rows.Next() {
-		var (
-			apiKey          APIKey
-			permissionsJSON []byte
-			updatedAt       interface{} // Not used in APIKey struct yet
-		)
-
-		err := rows.Scan(
-			&apiKey.ID,
-			&apiKey.Key, // This is actually the hash, we'll use it for comparison
-			&apiKey.PluginID,
-			&apiKey.Name,
-			&permissionsJSON,
-			&apiKey.CreatedAt,
-			&apiKey.ExpiresAt,
-			&apiKey.Active,
-			&updatedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		// Parse permissions from JSONB
-		if err := json.Unmarshal(permissionsJSON, &apiKey.Permissions); err != nil {
-			continue
-		}
-
-		// Compare the provided key with the stored hash using bcrypt
-		if CompareAPIKeyHash(apiKey.Key, key) {
-			// Found a match - Mask the key for security (we don't return the plaintext key or hash)
-			apiKey.Key = MaskKey(apiKey.Key)
-			keyFound = &apiKey
-
-			break
-		}
-	}
-
-	// Check for errors from iterating over rows
-	if err := rows.Err(); err != nil {
-		s.logger.Error("failed to find key", slog.String("key", key), slog.String("error", err.Error()))
+	// Parse permissions from JSONB
+	if err := json.Unmarshal(permissionsJSON, &apiKey.Permissions); err != nil {
+		s.logger.Error("failed to parse permissions", slog.String("error", err.Error()))
 
 		return nil, false
 	}
 
-	// Return the found key if exists, otherwise nil with false
-	return keyFound, keyFound != nil
+	// Verify with bcrypt for security (protects against SHA256 collision attacks)
+	if !CompareAPIKeyHash(apiKey.Key, key) {
+		// Hash collision (extremely unlikely) or tampered lookup_hash
+		s.logger.Warn("key lookup hash matched but bcrypt verification failed",
+			slog.String("key_id", apiKey.ID),
+			slog.String("plugin_id", apiKey.PluginID),
+		)
+
+		return nil, false
+	}
+
+	// Found and verified - Mask the key for security
+	apiKey.Key = MaskKey(apiKey.Key)
+
+	return &apiKey, true
 }
 
-// Add stores a new API key with bcrypt hashing and audit logging.
-// The plaintext key is hashed with bcrypt (cost=10) before storage for security.
+// Add stores a new API key with bcrypt hashing, SHA256 lookup hash, and audit logging.
+// The plaintext key is hashed with:
+//   - bcrypt (cost=10) for security validation
+//   - SHA256 for O(1) database lookup performance
+//
 // Audit logging is performed synchronously to ensure compliance.
 //
-// Duplicate Detection: Queries all active keys and compares hashes using bcrypt.
-// This approach is acceptable for MVP with <1000 keys (~60ms per key with cost=10).
+// Duplicate Detection: Uses key_lookup_hash for O(1) duplicate check via FindByKey.
 func (s *PersistentKeyStore) Add(ctx context.Context, apiKey *APIKey) error {
-	// Validate input
 	if apiKey == nil { // pragma: allowlist secret
 		return ErrKeyNil
 	}
 
-	// Check for duplicate key by comparing with existing active keys
-	// This is necessary because bcrypt generates different hashes for the same input
 	if existing, found := s.FindByKey(ctx, apiKey.Key); found && existing != nil {
 		return ErrKeyAlreadyExists
 	}
 
-	// Hash the API key using bcrypt
+	// Compute lookup hash for O(1) queries (SHA256)
+	lookupHash := ComputeKeyLookupHash(apiKey.Key)
+
+	// Hash the API key using bcrypt for security
 	keyHash, err := HashAPIKey(apiKey.Key)
 	if err != nil {
 		return fmt.Errorf("failed to hash API key: %w", err)
@@ -150,10 +141,10 @@ func (s *PersistentKeyStore) Add(ctx context.Context, apiKey *APIKey) error {
 		return fmt.Errorf("failed to serialize permissions: %w", err)
 	}
 
-	// Insert API key into database
+	// Insert API key into database with both hashes
 	query := `
-		INSERT INTO api_keys (id, key_hash, plugin_id, name, permissions, created_at, expires_at, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO api_keys (id, key_hash, key_lookup_hash, plugin_id, name, permissions, created_at, expires_at, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
 	_, err = s.conn.ExecContext(
@@ -161,6 +152,7 @@ func (s *PersistentKeyStore) Add(ctx context.Context, apiKey *APIKey) error {
 		query,
 		apiKey.ID,
 		keyHash,
+		lookupHash,
 		apiKey.PluginID,
 		apiKey.Name,
 		permissionsJSON,

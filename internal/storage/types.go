@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
@@ -196,6 +197,24 @@ func MaskKey(key string) string {
 
 	// For any other key length (testing, development, etc.), mask completely
 	return strings.Repeat("*", keyLen)
+}
+
+// ComputeKeyLookupHash computes the SHA256 hash of an API key for O(1) lookup.
+// This hash is stored in the key_lookup_hash column and used for fast key retrieval.
+// Note: This is separate from the bcrypt hash used for security validation.
+//
+// The lookup hash enables O(1) database queries:
+//   - Input: plaintext API key (e.g., "correlator_ak_abc123...")
+//   - Output: 64-character hex string (SHA256 hash)
+//
+// Security considerations:
+//   - SHA256 is used for indexing only, NOT for password verification
+//   - The bcrypt key_hash field remains the security boundary
+//   - Rainbow tables are ineffective due to high-entropy API keys (256 bits)
+func ComputeKeyLookupHash(key string) string {
+	hash := sha256.Sum256([]byte(key))
+
+	return hex.EncodeToString(hash[:])
 }
 
 // GenerateAPIKey creates a new secure API key for a plugin.

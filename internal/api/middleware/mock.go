@@ -9,10 +9,10 @@ import (
 
 // MockAPIKeyStore is a mock implementation of storage.APIKeyStore for testing.
 type MockAPIKeyStore struct {
-	FindByKeyFunc   func(ctx context.Context, key string) (*storage.APIKey, bool)
-	AddFunc         func(ctx context.Context, apiKey *storage.APIKey) error
-	UpdateFunc      func(ctx context.Context, apiKey *storage.APIKey) error
-	DeleteFunc      func(ctx context.Context, keyID string) error
+	FindByKeyFunc    func(ctx context.Context, key string) (*storage.APIKey, bool)
+	AddFunc          func(ctx context.Context, apiKey *storage.APIKey) error
+	UpdateFunc       func(ctx context.Context, apiKey *storage.APIKey) error
+	DeleteFunc       func(ctx context.Context, keyID string) error
 	ListByPluginFunc func(ctx context.Context, pluginID string) ([]*storage.APIKey, error)
 }
 
