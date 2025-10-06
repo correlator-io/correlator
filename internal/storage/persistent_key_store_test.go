@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -585,4 +587,211 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPersistentKeyStoreFindByKey_Performance validates O(1) lookup performance at scale.
+// This test ensures authentication latency remains <100ms even with 1000 API keys.
+// Performance regression guard: If this test fails, the O(n) scanning bug may have returned.
+func TestPersistentKeyStoreFindByKey_Performance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping performance test in short mode")
+	}
+
+	const (
+		iterations = 100
+		totalKeys  = 1000
+	)
+
+	ctx := context.Background()
+	container, conn := setupTestDatabase(ctx, t)
+
+	defer func() {
+		_ = conn.Close()
+		_ = container.Terminate(ctx)
+	}()
+
+	store, err := NewPersistentKeyStore(conn)
+	if err != nil {
+		t.Fatalf("NewPersistentKeyStore() error = %v", err)
+	}
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Add 1000 keys to simulate production load (MVP target scale)
+	t.Log("Adding 1000 API keys to test O(1) lookup performance...")
+
+	for i := 0; i < totalKeys; i++ {
+		// Generate valid 78-character API key
+		key := generateTestKey(i)
+
+		apiKey := &APIKey{
+			ID:          generateTestKeyID(i),
+			Key:         key,
+			PluginID:    "perf-plugin",
+			Name:        generateTestKeyName(i),
+			Permissions: []string{"lineage:read"},
+			CreatedAt:   time.Now(),
+			Active:      true,
+		}
+
+		if err := store.Add(ctx, apiKey); err != nil {
+			t.Fatalf("failed to add key %d: %v", i, err)
+		}
+	}
+
+	t.Log("✅ Successfully added 1000 keys")
+
+	// Test 1: Single key lookup (worst case: last key)
+	t.Run("single key lookup latency", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			keyIndex int
+		}{
+			{"first key (index 0)", 0},
+			{"middle key (index 500)", 500},
+			{"last key (index 999)", 999},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				testKey := generateTestKey(tc.keyIndex)
+				startTime := time.Now()
+				apiKey, found := store.FindByKey(ctx, testKey)
+				latency := time.Since(startTime)
+
+				if !found {
+					t.Fatalf("FindByKey() should find key at index %d", tc.keyIndex)
+				}
+
+				if apiKey == nil { // pragma: allowlist secret
+					t.Fatal("FindByKey() returned nil API key when found=true")
+				}
+
+				// Assert latency < 100ms (bcrypt cost=10 typically takes ~50-70ms)
+				if latency > 100*time.Millisecond {
+					t.Errorf("Authentication latency %v exceeds 100ms threshold (1000 keys total)", latency)
+				}
+
+				t.Logf("✅ Authentication latency for %s with 1000 keys: %v", tc.name, latency)
+			})
+		}
+	})
+
+	// Test 2: Average latency over multiple iterations (statistical reliability)
+	t.Run("average latency over 100 authentications", func(t *testing.T) {
+		var totalLatency time.Duration
+
+		for i := 0; i < iterations; i++ {
+			// Random key selection to avoid cache effects
+			keyIndex := (i * 13) % 1000 // Pseudo-random distribution
+			testKey := generateTestKey(keyIndex)
+
+			startTime := time.Now()
+			_, found := store.FindByKey(ctx, testKey)
+			latency := time.Since(startTime)
+
+			if !found {
+				t.Fatalf("FindByKey() should find key at index %d", keyIndex)
+			}
+
+			totalLatency += latency
+		}
+
+		avgLatency := totalLatency / iterations
+
+		if avgLatency > 100*time.Millisecond {
+			t.Errorf("Average authentication latency %v exceeds 100ms threshold", avgLatency)
+		}
+
+		t.Logf("✅ Average authentication latency over %d iterations (1000 keys): %v", iterations, avgLatency)
+	})
+
+	// Test 3: Non-existent key lookup (should be faster - no bcrypt verification)
+	t.Run("non-existent key lookup", func(t *testing.T) {
+		// Generate a key that doesn't exist in the database
+		nonExistentKey := "correlator_ak_" + strings.Repeat("f", 64) // 78 chars, all 'f's
+
+		startTime := time.Now()
+		_, found := store.FindByKey(ctx, nonExistentKey)
+		latency := time.Since(startTime)
+
+		if found {
+			t.Error("FindByKey() should not find non-existent key")
+		}
+
+		// Non-existent key should be FASTER (no bcrypt verification needed)
+		// Just database query + SHA256 computation
+		if latency > 50*time.Millisecond {
+			t.Errorf("Non-existent key lookup latency %v exceeds 50ms threshold", latency)
+		}
+
+		t.Logf("✅ Non-existent key lookup latency (1000 keys in DB): %v", latency)
+	})
+
+	// Test 4: Verify O(1) behavior (constant time regardless of database size)
+	t.Run("lookup time independent of key position", func(t *testing.T) {
+		// Measure latency for keys at different positions
+		positions := []int{0, 250, 500, 750, 999}
+		latencies := make([]time.Duration, len(positions))
+
+		for i, pos := range positions {
+			testKey := generateTestKey(pos)
+			startTime := time.Now()
+			_, found := store.FindByKey(ctx, testKey)
+			latencies[i] = time.Since(startTime)
+
+			if !found {
+				t.Fatalf("FindByKey() should find key at position %d", pos)
+			}
+		}
+
+		// Calculate variance - O(1) should have low variance
+		// If we had O(n) scanning, later keys would take longer
+		maxLatency := latencies[0]
+		minLatency := latencies[0]
+
+		for _, lat := range latencies {
+			if lat > maxLatency {
+				maxLatency = lat
+			}
+
+			if lat < minLatency {
+				minLatency = lat
+			}
+		}
+
+		variance := maxLatency - minLatency
+
+		// Variance should be < 20ms for O(1) lookup
+		// (bcrypt timing variation is typically 10-20ms)
+		if variance > 30*time.Millisecond {
+			t.Errorf("Latency variance %v exceeds 30ms (suggests O(n) behavior)", variance)
+			t.Logf("Latencies: %v", latencies)
+		}
+
+		t.Logf("✅ Latency variance across key positions: %v (max: %v, min: %v)", variance, maxLatency, minLatency)
+	})
+}
+
+// generateTestKey generates a valid 78-character correlator API key for testing.
+func generateTestKey(index int) string {
+	// Format: "correlator_ak_" + 64 hex chars = 78 total
+	return generateTestKeyWithFormat("correlator_ak_%064x", index)
+}
+
+// generateTestKeyWithFormat generates a test key with custom format.
+func generateTestKeyWithFormat(format string, value int) string {
+	return fmt.Sprintf(format, value)
+}
+
+// generateTestKeyID generates a unique key ID for testing.
+func generateTestKeyID(index int) string {
+	return fmt.Sprintf("perf-test-%d", index)
+}
+
+// generateTestKeyName generates a descriptive key name for testing.
+func generateTestKeyName(index int) string {
+	return fmt.Sprintf("Performance Test Key %d", index)
 }
