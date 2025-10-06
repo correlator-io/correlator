@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -122,16 +123,6 @@ func (s *Server) Start() error {
 	}
 }
 
-// Shutdown provides external access to graceful shutdown (useful for testing).
-func (s *Server) Shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
-}
-
-// Address returns the server's listening address.
-func (s *Server) Address() string {
-	return s.config.Address()
-}
-
 // shutdown gracefully shuts down the server.
 func (s *Server) shutdown() error {
 	// Create context with timeout for shutdown
@@ -142,7 +133,7 @@ func (s *Server) shutdown() error {
 		slog.Duration("shutdown_timeout", s.config.ShutdownTimeout),
 	)
 
-	// Attempt graceful shutdown
+	// Attempt graceful shutdown of HTTP server
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("Server shutdown failed",
 			slog.String("error", err.Error()),
@@ -150,6 +141,19 @@ func (s *Server) shutdown() error {
 		)
 
 		return fmt.Errorf("server shutdown failed: %w", err)
+	}
+
+	// Close API key store to release database connections
+	if s.config.APIKeyStore != nil { // pragma: allowlist secret
+		s.logger.Info("Closing API key store")
+
+		if store, ok := s.config.APIKeyStore.(io.Closer); ok {
+			if err := store.Close(); err != nil {
+				s.logger.Error("Failed to close API key store", slog.String("error", err.Error()))
+			} else {
+				s.logger.Info("API key store closed successfully")
+			}
+		}
 	}
 
 	s.logger.Info("Server shutdown completed successfully")

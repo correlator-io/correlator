@@ -49,15 +49,17 @@ type (
 	}
 
 	// APIKey represents an API key with plugin identification and permissions.
+	// This is a storage domain model - not serialized to JSON directly.
+	// For API responses, create a separate response type in the api package.
 	APIKey struct {
-		ID          string     `json:"id"`
-		Key         string     `json:"key"`
-		PluginID    string     `json:"pluginId"`
-		Name        string     `json:"name"`
-		Permissions []string   `json:"permissions"`
-		CreatedAt   time.Time  `json:"createdAt"`
-		ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
-		Active      bool       `json:"active"`
+		ID          string
+		Key         string // bcrypt hash - never expose in API responses
+		PluginID    string
+		Name        string
+		Permissions []string
+		CreatedAt   time.Time
+		ExpiresAt   *time.Time
+		Active      bool
 	}
 
 	// APIKeyStore defines the interface for API key storage and retrieval.
