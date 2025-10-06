@@ -382,7 +382,9 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -436,9 +438,11 @@ func TestAuthenticateRequest_InvalidFormat(t *testing.T) {
 		},
 	}
 
+	logger := slog.Default()
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			apiKey, err := authenticateRequest(ctx, store, tc.apiKey)
+			apiKey, err := authenticateRequest(ctx, store, tc.apiKey, logger)
 			if err == nil {
 				t.Error("Expected error for invalid format, got nil")
 			}
@@ -470,7 +474,9 @@ func TestAuthenticateRequest_KeyNotFound(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for key not found, got nil")
 	}
@@ -508,7 +514,9 @@ func TestAuthenticateRequest_InactiveKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for inactive key, got nil")
 	}
@@ -548,7 +556,9 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 		},
 	}
 
-	apiKey, err := authenticateRequest(ctx, store, validKey)
+	logger := slog.Default()
+
+	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for expired key, got nil")
 	}

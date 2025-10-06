@@ -127,44 +127,71 @@ func performDummyBcryptComparison() {
 // - Invalid format → ErrInvalidAPIKey (generic)
 // - Key not found → ErrInvalidAPIKey (generic)
 // - Inactive key → ErrAPIKeyInactive (specific)
-// - Expired key → ErrAPIKeyExpired (specific).
+// - Expired key → ErrAPIKeyExpired (specific)
+//
+// Logging:
+// - All authentication failures logged at ERROR level for operational monitoring
+// - Includes correlation_id and failure_type for filtering/aggregation.
 func authenticateRequest(
 	ctx context.Context,
 	store storage.APIKeyStore,
 	apiKey string,
+	logger *slog.Logger,
 ) (*storage.APIKey, error) {
-	// Validate API key format
 	parsedKey, err := storage.ParseAPIKey(apiKey)
 	if err != nil {
 		performDummyBcryptComparison()
 
+		logger.Error("authentication failed: invalid key format",
+			slog.String("error", err.Error()),
+			slog.String("correlation_id", GetCorrelationID(ctx)),
+			slog.String("failure_type", "format_validation"),
+		)
+
 		return nil, &AuthError{
 			Type:    ErrInvalidAPIKey,
 			Message: "Invalid or missing API key",
 		}
 	}
 
-	// Lookup Parsed API key in store
 	foundKey, exists := store.FindByKey(ctx, parsedKey)
 	if !exists {
 		performDummyBcryptComparison()
 
+		logger.Error("authentication failed: key not found",
+			slog.String("correlation_id", GetCorrelationID(ctx)),
+			slog.String("failure_type", "key_not_found"),
+		)
+
 		return nil, &AuthError{
 			Type:    ErrInvalidAPIKey,
 			Message: "Invalid or missing API key",
 		}
 	}
 
-	// Check if key is active
 	if !foundKey.Active {
+		logger.Error("authentication failed: key inactive",
+			slog.String("key_id", foundKey.ID),
+			slog.String("plugin_id", foundKey.PluginID),
+			slog.String("correlation_id", GetCorrelationID(ctx)),
+			slog.String("failure_type", "key_inactive"),
+		)
+
 		return nil, &AuthError{
 			Type:    ErrAPIKeyInactive,
 			Message: "API key is inactive",
 		}
 	}
 
-	// Check if key has expired
 	if foundKey.ExpiresAt != nil && time.Now().After(*foundKey.ExpiresAt) {
+		logger.Error("authentication failed: key expired",
+			slog.String("key_id", foundKey.ID),
+			slog.String("plugin_id", foundKey.PluginID),
+			slog.Time("expired_at", *foundKey.ExpiresAt),
+			slog.String("correlation_id", GetCorrelationID(ctx)),
+			slog.String("failure_type", "key_expired"),
+		)
+
 		return nil, &AuthError{
 			Type:    ErrAPIKeyExpired,
 			Message: "API key has expired",
@@ -207,7 +234,7 @@ func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(htt
 			}
 
 			// Authenticate request
-			authenticated, err := authenticateRequest(r.Context(), store, apiKey)
+			authenticated, err := authenticateRequest(r.Context(), store, apiKey, logger)
 			if err != nil {
 				writeAuthError(w, r, logger, err)
 
