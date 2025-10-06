@@ -266,6 +266,8 @@ run:
 		$(MAKE) run-test-race; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "benchmark" ]; then \
 		$(MAKE) run-benchmark; \
+	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "linter" ]; then \
+		$(MAKE) run-linter; \
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "migrate" ]; then \
 		$(MAKE) run-migrate-$(wordlist 3,3,$(MAKECMDGOALS)); \
 	else \
@@ -277,6 +279,7 @@ run:
 		echo "  make run test integration   # Run integration tests"; \
 		echo "  make run test race          # Run tests with race detection"; \
 		echo "  make run benchmark          # Run benchmark tests"; \
+		echo "  make run linter             # Run linter"; \
 		echo "  make run migrate up         # Apply migrations"; \
 		echo "  make run migrate down       # Rollback migrations"; \
 		echo "  make run migrate status     # Check migration status"; \
@@ -305,6 +308,10 @@ run-test-race:
 run-benchmark:
 	@echo "⚡ Running benchmark tests..."
 	go test -v -bench=. -benchmem ./...
+
+run-linter:
+	@echo "📝 Running linter..."
+	golangci-lint run
 
 run-migrate-up:
 	@echo "🔄 Applying database migrations..."
@@ -603,6 +610,7 @@ help:
 	@echo "        make run                      # Start development server"
 	@echo "        make run test                 # Run all tests"
 	@echo "        make run benchmark            # Run benchmark tests"
+	@echo "        make run linter               # Run benchmark tests"
 	@echo "        make check                    # Check code quality before commit"
 	@echo ""
 	@echo "    🐳 Environment:"
