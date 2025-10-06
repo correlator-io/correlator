@@ -562,7 +562,7 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 }
 
 // TestAuthenticate_Success verifies successful authentication flow through middleware.
-func TestAuthenticate_Success(t *testing.T) {
+func TestAuthenticatePlugin_Success(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -603,7 +603,7 @@ func TestAuthenticate_Success(t *testing.T) {
 	})
 
 	// Create middleware
-	middleware := Authenticate(store, logger)
+	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
 	// Create request with valid API key
@@ -647,7 +647,7 @@ func TestAuthenticate_Success(t *testing.T) {
 }
 
 // TestAuthenticate_MissingAPIKey verifies 401 response when API key is missing.
-func TestAuthenticate_MissingAPIKey(t *testing.T) {
+func TestAuthenticatePlugin_MissingAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -659,7 +659,7 @@ func TestAuthenticate_MissingAPIKey(t *testing.T) {
 		t.Error("Handler should not be called when API key is missing")
 	})
 
-	middleware := Authenticate(store, logger)
+	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -687,7 +687,7 @@ func TestAuthenticate_MissingAPIKey(t *testing.T) {
 }
 
 // TestAuthenticate_InvalidAPIKey verifies 401 response for invalid API key.
-func TestAuthenticate_InvalidAPIKey(t *testing.T) {
+func TestAuthenticatePlugin_InvalidAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -704,7 +704,7 @@ func TestAuthenticate_InvalidAPIKey(t *testing.T) {
 		t.Error("Handler should not be called for invalid API key")
 	})
 
-	middleware := Authenticate(store, logger)
+	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -720,7 +720,7 @@ func TestAuthenticate_InvalidAPIKey(t *testing.T) {
 }
 
 // TestAuthenticate_InactiveKey verifies 403 response for inactive API key.
-func TestAuthenticate_InactiveKey(t *testing.T) {
+func TestAuthenticatePlugin_InactiveKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -745,7 +745,7 @@ func TestAuthenticate_InactiveKey(t *testing.T) {
 		t.Error("Handler should not be called for inactive API key")
 	})
 
-	middleware := Authenticate(store, logger)
+	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -761,7 +761,7 @@ func TestAuthenticate_InactiveKey(t *testing.T) {
 }
 
 // TestAuthenticate_CorrelationIDInError verifies correlation ID is included in error responses.
-func TestAuthenticate_CorrelationIDInError(t *testing.T) {
+func TestAuthenticatePlugin_CorrelationIDInError(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -773,7 +773,7 @@ func TestAuthenticate_CorrelationIDInError(t *testing.T) {
 		t.Error("Handler should not be called")
 	})
 
-	middleware := Authenticate(store, logger)
+	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
 	// Add correlation ID middleware first

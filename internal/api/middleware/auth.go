@@ -186,7 +186,7 @@ func authenticateRequest(
 	return foundKey, nil
 }
 
-// Authenticate creates an authentication middleware that validates API keys
+// AuthenticatePlugin creates an authentication middleware that validates API keys
 // and enriches request context with plugin information.
 //
 // The middleware:
@@ -200,9 +200,9 @@ func authenticateRequest(
 //
 //	store := storage.NewPersistentKeyStore(db)
 //	logger := slog.Default()
-//	authMiddleware := middleware.Authenticate(store, logger)
+//	authMiddleware := middleware.AuthenticatePlugin(store, logger)
 //	handler = authMiddleware(handler)
-func Authenticate(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
+func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authStart := time.Now()

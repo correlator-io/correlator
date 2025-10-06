@@ -9,29 +9,31 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/correlator-io/correlator/internal/storage"
 )
 
 const (
 	// DefaultPort is the default HTTP server port.
-	DefaultPort            = 8080
+	DefaultPort = 8080
 	// MaxPort is the maximum valid port number.
-	MaxPort                = 65535
+	MaxPort = 65535
 	// DefaultHost is the default server host.
-	DefaultHost            = "0.0.0.0"
+	DefaultHost = "0.0.0.0"
 	// DefaultTimeout is the default timeout for HTTP operations.
-	DefaultTimeout         = 30 * time.Second
+	DefaultTimeout = 30 * time.Second
 	// DefaultLogLevel is the default log level.
-	DefaultLogLevel        = slog.LevelInfo
+	DefaultLogLevel = slog.LevelInfo
 	// DefaultCORSMaxAge is the default CORS max age (24 hours).
-	DefaultCORSMaxAge      = 86400
+	DefaultCORSMaxAge = 86400
 )
 
 // Static validation errors.
 var (
-	ErrInvalidPort        = errors.New("invalid port")
-	ErrEmptyHost          = errors.New("host cannot be empty")
-	ErrInvalidReadTimeout = errors.New("read timeout must be positive")
-	ErrInvalidWriteTimeout = errors.New("write timeout must be positive")
+	ErrInvalidPort            = errors.New("invalid port")
+	ErrEmptyHost              = errors.New("host cannot be empty")
+	ErrInvalidReadTimeout     = errors.New("read timeout must be positive")
+	ErrInvalidWriteTimeout    = errors.New("write timeout must be positive")
 	ErrInvalidShutdownTimeout = errors.New("shutdown timeout must be positive")
 )
 
@@ -47,6 +49,7 @@ type ServerConfig struct {
 	CORSAllowedMethods []string
 	CORSAllowedHeaders []string
 	CORSMaxAge         int
+	APIKeyStore        storage.APIKeyStore
 }
 
 // LoadServerConfig loads server configuration from environment variables with sensible defaults.
