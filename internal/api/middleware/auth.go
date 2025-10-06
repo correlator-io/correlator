@@ -240,7 +240,7 @@ func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(htt
 			logger.Info("API key authenticated",
 				slog.String("plugin_id", pluginCtx.PluginID),
 				slog.String("key_id", pluginCtx.KeyID),
-				slog.String("masked_key", storage.MaskKey(authenticated.Key)),
+				slog.String("key", storage.MaskKey(authenticated.Key)),
 				slog.Duration("auth_latency", time.Since(authStart)),
 				slog.String("correlation_id", GetCorrelationID(r.Context())),
 				slog.String("endpoint", r.URL.Path),
