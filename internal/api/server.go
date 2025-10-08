@@ -43,25 +43,35 @@ func NewServer(cfg ServerConfig) *Server {
 	// Set up all API routes
 	server.setupRoutes(mux)
 
-	// Create middleware stack (applied in reverse order)
-	var handler http.Handler = mux
-
-	// Apply middleware stack (innermost to outermost)
-	// 1. Request logger - logs all requests with context information
-	handler = middleware.RequestLogger(logger)(handler)
-	// 2. Recovery - catches panics and returns 500 errors
-	handler = middleware.Recovery(logger)(handler)
-	// 3. Plugin Authentication - validates API keys and enriches context (if configured)
+	// Log middleware configuration
 	if cfg.APIKeyStore != nil { // pragma: allowlist secret
-		handler = middleware.AuthenticatePlugin(cfg.APIKeyStore, logger)(handler)
 		logger.Info("Plugin authentication middleware enabled")
 	} else {
 		logger.Warn("APIKeyStore not configured - plugin authentication middleware disabled")
 	}
-	// 4. CORS - handles cross-origin requests
-	handler = middleware.CORS(cfg.ToCORSConfig())(handler)
-	// 5. CorrelationID - adds correlation ID to requests (outermost)
-	handler = middleware.CorrelationID()(handler)
+
+	if cfg.RateLimiter != nil {
+		logger.Info("Rate limiting middleware enabled")
+	} else {
+		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
+	}
+
+	// Apply middleware chain using functional options pattern.
+	// Middleware executes in the order listed (top-to-bottom):
+	//   1. CorrelationID - generate correlation ID for all responses
+	//   2. Recovery - catch panics in all downstream middleware
+	//   3. Auth - identify plugin and set PluginContext (optional)
+	//   4. RateLimit - block requests before expensive operations (optional)
+	//   5. RequestLogger - log only legitimate requests (not rate-limited spam)
+	//   6. CORS - lightweight header manipulation
+	handler := middleware.Apply(mux,
+		middleware.WithCorrelationID(),
+		middleware.WithRecovery(logger),
+		middleware.WithAuth(cfg.APIKeyStore, logger),
+		middleware.WithRateLimit(cfg.RateLimiter, logger),
+		middleware.WithRequestLogger(logger),
+		middleware.WithCORS(cfg.ToCORSConfig()),
+	)
 
 	httpServer := &http.Server{
 		Addr:         cfg.Address(),

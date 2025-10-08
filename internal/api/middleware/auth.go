@@ -303,13 +303,18 @@ func writeAuthError(w http.ResponseWriter, r *http.Request, logger *slog.Logger,
 		slog.String("user_agent", r.UserAgent()),
 	)
 
+	detail := err.Error()
 	// Write RFC 7807 compliant error response
-	if err := writeRFC7807Error(w, r, statusCode, err.Error(), correlationID); err != nil {
-		logger.Error("Failed to encode authentication error response",
+	if err := writeRFC7807Error(w, r, statusCode, detail, correlationID); err != nil {
+		logger.Error("failed to write response with RFC 7807 error format",
 			slog.String("correlation_id", correlationID),
 			slog.String("path", r.URL.Path),
-			slog.Any("encode_error", err),
+			slog.String("detail", detail),
+			slog.Any("error", err),
 		)
+
+		// Fallback to plain text if writeRFC7807Error fails
+		http.Error(w, detail, statusCode)
 	}
 }
 
@@ -329,6 +334,8 @@ func writeRFC7807Error(
 		title = "Unauthorized"
 	case http.StatusForbidden:
 		title = "Forbidden"
+	case http.StatusTooManyRequests:
+		title = "Too Many Requests"
 	default:
 		title = "Authentication Failed"
 	}
