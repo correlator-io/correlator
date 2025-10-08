@@ -2,6 +2,8 @@
 package middleware
 
 import (
+	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -259,5 +261,70 @@ func (rl *InMemoryRateLimiter) cleanup() {
 		if now.Sub(lastAccess) > idleTimeout {
 			delete(rl.perPlugin, pluginID)
 		}
+	}
+}
+
+// RateLimit returns a middleware that enforces rate limits on incoming requests.
+//
+// Rate limiting is applied in three tiers:
+//  1. Global limit (all requests)
+//  2. Per-plugin limit (authenticated requests with PluginContext)
+//  3. Unauthenticated limit (requests without PluginContext)
+//
+// When a request exceeds the rate limit, the middleware returns a 429 (Too Many Requests)
+// response with RFC 7807 error format.
+//
+// The middleware must be placed after authentication middleware in the chain to access
+// PluginContext for per-plugin rate limiting.
+//
+// Parameters:
+//   - limiter: RateLimiter implementation (InMemoryRateLimiter or DistributedRateLimiter)
+//
+// Example:
+//
+//	rateLimiter := NewInMemoryRateLimiter(&Config{
+//	    GlobalRPS: 100,
+//	    PluginRPS: 50,
+//	    UnAuthRPS: 10,
+//	})
+//	defer rateLimiter.Close()
+//
+//	mux.Use(RateLimit(rateLimiter))
+func RateLimit(limiter RateLimiter, logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Extract plugin ID from context (set by authentication middleware)
+			// If PluginContext exists, use plugin ID for per-plugin rate limiting
+			// If PluginContext is nil, use empty string for unauthenticated rate limiting
+			pluginID := ""
+			if pluginCtx, ok := GetPluginContext(r.Context()); ok {
+				pluginID = pluginCtx.PluginID
+			}
+
+			// Check rate limit
+			if !limiter.Allow(pluginID) {
+				// Get correlation ID for error response
+				correlationID := GetCorrelationID(r.Context())
+
+				// Write RFC 7807 compliant error response
+				detail := "Rate limit exceeded. Please retry after some time."
+				if err := writeRFC7807Error(w, r, http.StatusTooManyRequests, detail, correlationID); err != nil {
+					logger.Error("failed to write response with RFC 7807 error format",
+						slog.String("correlation_id", correlationID),
+						slog.String("path", r.URL.Path),
+						slog.String("detail", detail),
+						slog.String("error", err.Error()),
+					)
+
+					// Fallback to plain text if writeRFC7807Error fails
+					http.Error(w, detail, http.StatusTooManyRequests)
+				}
+
+				return
+			}
+
+			// Rate limit not exceeded, continue to next handler
+			next.ServeHTTP(w, r)
+		})
 	}
 }

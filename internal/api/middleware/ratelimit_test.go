@@ -2,7 +2,11 @@
 package middleware
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -318,5 +322,248 @@ func TestRateLimiter_CleanupPreservesActivePlugins(t *testing.T) {
 
 	if !activeExists {
 		t.Error("active plugin should have been preserved")
+	}
+}
+
+// TestRateLimitMiddleware_RequestAllowed verifies that requests under
+// the rate limit are allowed to proceed to the next handler.
+func TestRateLimitMiddleware_RequestAllowed(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Create limiter with high limits (request will not be blocked)
+	rl := NewInMemoryRateLimiter(&Config{
+		GlobalRPS: 100,
+		PluginRPS: 50,
+		UnAuthRPS: 10,
+	})
+	defer rl.Close()
+
+	logger := slog.New(slog.DiscardHandler)
+
+	// Create test handler that tracks if it was called
+	nextCalled := false
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with rate limit middleware
+	handler := RateLimit(rl, logger)(nextHandler)
+
+	// Create test request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute request
+	handler.ServeHTTP(rec, req)
+
+	// Verify next handler was called
+	if !nextCalled {
+		t.Error("expected next handler to be called when rate limit not exceeded")
+	}
+
+	// Verify response status
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+}
+
+// TestRateLimitMiddleware_RequestBlocked verifies that requests exceeding
+// the rate limit are rejected with 429 status.
+func TestRateLimitMiddleware_RequestBlocked(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Create limiter with very low limits (requests will be blocked)
+	rl := NewInMemoryRateLimiter(&Config{
+		GlobalRPS:   1,
+		GlobalBurst: 1,
+		PluginRPS:   1,
+		UnAuthRPS:   1,
+	})
+	defer rl.Close()
+
+	logger := slog.New(slog.DiscardHandler)
+
+	// Create test handler that should NOT be called
+	nextCalled := false
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with rate limit middleware
+	handler := RateLimit(rl, logger)(nextHandler)
+
+	// Make first request (should succeed)
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusOK {
+		t.Errorf("first request should succeed, got status %d", rec1.Code)
+	}
+
+	// Make second request immediately (should be rate limited)
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec2 := httptest.NewRecorder()
+	nextCalled = false // Reset flag
+
+	handler.ServeHTTP(rec2, req2)
+
+	// Verify next handler was NOT called
+	if nextCalled {
+		t.Error("expected next handler NOT to be called when rate limit exceeded")
+	}
+
+	// Verify 429 status
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", rec2.Code)
+	}
+}
+
+// TestRateLimitMiddleware_RFC7807ErrorFormat verifies that rate limit
+// errors return RFC 7807 compliant responses.
+func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Create limiter with very low limits
+	rl := NewInMemoryRateLimiter(&Config{
+		GlobalRPS:   1,
+		GlobalBurst: 1,
+		PluginRPS:   1,
+		UnAuthRPS:   1,
+	})
+	defer rl.Close()
+
+	logger := slog.New(slog.DiscardHandler)
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := RateLimit(rl, logger)(nextHandler)
+
+	// Exhaust rate limit
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	// Make rate-limited request
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/events", nil)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	// Verify Content-Type header
+	contentType := rec2.Header().Get("Content-Type")
+	if contentType != "application/problem+json" {
+		t.Errorf("expected Content-Type application/problem+json, got %s", contentType)
+	}
+
+	// Parse response body
+	var problem map[string]interface{}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+
+	// Verify RFC 7807 fields
+	if problem["type"] != "https://correlator.io/problems/429" {
+		t.Errorf("expected type https://correlator.io/problems/429, got %v", problem["type"])
+	}
+
+	if problem["title"] != "Too Many Requests" {
+		t.Errorf("expected title 'Too Many Requests', got %v", problem["title"])
+	}
+
+	if problem["status"] != float64(429) {
+		t.Errorf("expected status 429, got %v", problem["status"])
+	}
+
+	if problem["instance"] != "/api/v1/lineage/events" {
+		t.Errorf("expected instance /api/v1/lineage/events, got %v", problem["instance"])
+	}
+}
+
+// TestRateLimitMiddleware_AuthenticatedVsUnauthenticated verifies that
+// authenticated and unauthenticated requests use different rate limits.
+func TestRateLimitMiddleware_AuthenticatedVsUnauthenticated(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Create limiter: high global, low unauth, medium plugin
+	rl := NewInMemoryRateLimiter(&Config{
+		GlobalRPS:   100,
+		PluginRPS:   10,
+		PluginBurst: 10,
+		UnAuthRPS:   2,
+		UnAuthBurst: 2,
+	})
+	defer rl.Close()
+
+	logger := slog.New(slog.DiscardHandler)
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := RateLimit(rl, logger)(nextHandler)
+
+	// Test unauthenticated requests (limit: 2)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("unauthenticated request %d should succeed, got status %d", i+1, rec.Code)
+		}
+	}
+
+	// 3rd unauthenticated request should fail
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("3rd unauthenticated request should be rate limited, got status %d", rec.Code)
+	}
+
+	// Test authenticated requests (limit: 10, separate from unauth)
+	pluginCtx := PluginContext{
+		PluginID: "test-plugin",
+		Name:     "Test Plugin",
+	}
+
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		ctx := SetPluginContext(req.Context(), pluginCtx)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("authenticated request %d should succeed, got status %d", i+1, rec.Code)
+		}
+	}
+
+	// 11th authenticated request should fail
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := SetPluginContext(req.Context(), pluginCtx)
+	req = req.WithContext(ctx)
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("11th authenticated request should be rate limited, got status %d", rec.Code)
 	}
 }
