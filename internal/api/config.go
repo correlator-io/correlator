@@ -83,7 +83,7 @@ func (c ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// ToCORSConfig converts ServerConfig CORS fields to middleware.CORSConfig.
+// ToCORSConfig converts ServerConfig CORS fields to middleware.CORSConfigProvider.
 func (c ServerConfig) ToCORSConfig() CORSConfig {
 	return CORSConfig{
 		AllowedOrigins: c.CORSAllowedOrigins,

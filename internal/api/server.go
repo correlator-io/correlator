@@ -43,39 +43,35 @@ func NewServer(cfg ServerConfig) *Server {
 	// Set up all API routes
 	server.setupRoutes(mux)
 
-	// Create middleware stack (applied in reverse order)
-	var handler http.Handler = mux
-
-	// Apply middleware stack (innermost to outermost)
-	// Execution order: CorrelationID → Recovery → Auth → RateLimit → Logger → CORS → Handler
-
-	// 1. CORS - lightweight header manipulation (innermost)
-	handler = middleware.CORS(cfg.ToCORSConfig())(handler)
-
-	// 2. Request logger - logs only legitimate requests (not rate-limited spam)
-	handler = middleware.RequestLogger(logger)(handler)
-
-	// 3. Rate limiting - block before expensive operations (if configured)
-	if cfg.RateLimiter != nil {
-		handler = middleware.RateLimit(cfg.RateLimiter, logger)(handler)
-		logger.Info("Rate limiting middleware enabled")
-	} else {
-		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
-	}
-
-	// 4. Plugin Authentication - identifies plugin and sets PluginContext (if configured)
+	// Log middleware configuration
 	if cfg.APIKeyStore != nil { // pragma: allowlist secret
-		handler = middleware.AuthenticatePlugin(cfg.APIKeyStore, logger)(handler)
 		logger.Info("Plugin authentication middleware enabled")
 	} else {
 		logger.Warn("APIKeyStore not configured - plugin authentication middleware disabled")
 	}
 
-	// 5. Recovery - catches panics in ALL downstream middleware
-	handler = middleware.Recovery(logger)(handler)
+	if cfg.RateLimiter != nil {
+		logger.Info("Rate limiting middleware enabled")
+	} else {
+		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
+	}
 
-	// 6. CorrelationID - generate correlation ID for all responses (outermost)
-	handler = middleware.CorrelationID()(handler)
+	// Apply middleware chain using functional options pattern.
+	// Middleware executes in the order listed (top-to-bottom):
+	//   1. CorrelationID - generate correlation ID for all responses
+	//   2. Recovery - catch panics in all downstream middleware
+	//   3. Auth - identify plugin and set PluginContext (optional)
+	//   4. RateLimit - block requests before expensive operations (optional)
+	//   5. RequestLogger - log only legitimate requests (not rate-limited spam)
+	//   6. CORS - lightweight header manipulation
+	handler := middleware.Apply(mux,
+		middleware.WithCorrelationID(),
+		middleware.WithRecovery(logger),
+		middleware.WithAuth(cfg.APIKeyStore, logger),
+		middleware.WithRateLimit(cfg.RateLimiter, logger),
+		middleware.WithRequestLogger(logger),
+		middleware.WithCORS(cfg.ToCORSConfig()),
+	)
 
 	httpServer := &http.Server{
 		Addr:         cfg.Address(),

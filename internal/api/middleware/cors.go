@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// CORSConfig is imported from the api package to avoid duplication.
-// This type is defined in internal/api/config.go.
-type CORSConfig interface {
+// CORSConfigProvider defines the interface for CORS configuration.
+// This allows us to avoid importing the api package and prevent import cycles.
+type CORSConfigProvider interface {
 	GetAllowedOrigins() []string
 	GetAllowedMethods() []string
 	GetAllowedHeaders() []string
@@ -17,7 +17,7 @@ type CORSConfig interface {
 }
 
 // CORS creates a middleware that handles Cross-Origin Resource Sharing (CORS).
-func CORS(config CORSConfig) func(http.Handler) http.Handler {
+func CORS(config CORSConfigProvider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set all CORS headers
