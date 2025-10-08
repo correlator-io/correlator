@@ -2,11 +2,10 @@ package storage
 
 import (
 	"errors"
-	"log/slog"
-	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/correlator-io/correlator/internal/config"
 )
 
 const (
@@ -32,15 +31,13 @@ type Config struct {
 
 // LoadConfig loads PostgreSQL configuration from environment variables with fallback to defaults.
 func LoadConfig() *Config {
-	config := &Config{
-		databaseURL:     getEnvStr("DATABASE_URL", ""), // DatabaseURL is private for obvious reasons.
-		MaxOpenConns:    getEnvInt("DATABASE_MAX_OPEN_CONNS", defaultMaxOpenConns),
-		MaxIdleConns:    getEnvInt("DATABASE_MAX_IDLE_CONNS", defaultMaxIdleConns),
-		ConnMaxLifetime: getEnvDuration("DATABASE_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
-		ConnMaxIdleTime: getEnvDuration("DATABASE_CONN_MAX_IDLE_TIME", defaultConnMaxIdleTime),
+	return &Config{
+		databaseURL:     config.GetEnvStr("DATABASE_URL", ""), // DatabaseURL is private for obvious reasons.
+		MaxOpenConns:    config.GetEnvInt("DATABASE_MAX_OPEN_CONNS", defaultMaxOpenConns),
+		MaxIdleConns:    config.GetEnvInt("DATABASE_MAX_IDLE_CONNS", defaultMaxIdleConns),
+		ConnMaxLifetime: config.GetEnvDuration("DATABASE_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
+		ConnMaxIdleTime: config.GetEnvDuration("DATABASE_CONN_MAX_IDLE_TIME", defaultConnMaxIdleTime),
 	}
-
-	return config
 }
 
 // Validate checks if the PostgreSQL configuration is valid.
@@ -96,53 +93,4 @@ func (c *Config) MaskDatabaseURL() string {
 	hostAndRest := afterScheme[lastAtIndex:]
 
 	return scheme + "://" + username + ":***" + hostAndRest
-}
-
-// getEnvStr returns the environment variable value or a default if not set.
-func getEnvStr(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-
-	return defaultValue
-}
-
-// getEnvInt returns the environment variable value or a default if not set.
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-
-	return defaultValue
-}
-
-// getEnvInt returns the environment variable value or a default if not set.
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if duration, err := time.ParseDuration(value); err == nil {
-			return duration
-		}
-	}
-
-	return defaultValue
-}
-
-// getEnvLogLevel returns the environment variable value or a default if not set.
-func getEnvLogLevel(key string, defaultValue slog.Level) slog.Level {
-	if value := os.Getenv(key); value != "" {
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "debug":
-			return slog.LevelDebug
-		case "info":
-			return slog.LevelInfo
-		case "warn", "warning":
-			return slog.LevelWarn
-		case "error":
-			return slog.LevelError
-		}
-	}
-
-	return defaultValue
 }
