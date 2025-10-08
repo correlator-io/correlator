@@ -38,25 +38,36 @@ var (
 	ErrInvalidShutdownTimeout = errors.New("shutdown timeout must be positive")
 )
 
-// ServerConfig holds HTTP server configuration.
-type ServerConfig struct {
-	Port               int
-	Host               string
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	ShutdownTimeout    time.Duration
-	LogLevel           slog.Level
-	CORSAllowedOrigins []string
-	CORSAllowedMethods []string
-	CORSAllowedHeaders []string
-	CORSMaxAge         int
-	APIKeyStore        storage.APIKeyStore
-	RateLimiter        middleware.RateLimiter
-}
+type (
+	// ServerConfig holds HTTP server configuration.
+	ServerConfig struct {
+		Port               int
+		Host               string
+		ReadTimeout        time.Duration
+		WriteTimeout       time.Duration
+		ShutdownTimeout    time.Duration
+		LogLevel           slog.Level
+		CORSAllowedOrigins []string
+		CORSAllowedMethods []string
+		CORSAllowedHeaders []string
+		CORSMaxAge         int
+		APIKeyStore        storage.APIKeyStore
+		RateLimiter        middleware.RateLimiter
+	}
+
+	// CORSConfig holds CORS configuration options.
+	// This is defined here to keep CORS configuration centralized.
+	CORSConfig struct {
+		AllowedOrigins []string
+		AllowedMethods []string
+		AllowedHeaders []string
+		MaxAge         int
+	}
+)
 
 // LoadServerConfig loads server configuration from environment variables with sensible defaults.
-func LoadServerConfig() ServerConfig {
-	config := ServerConfig{
+func LoadServerConfig() *ServerConfig {
+	config := &ServerConfig{
 		Port:               DefaultPort,
 		Host:               DefaultHost,
 		ReadTimeout:        DefaultTimeout,
@@ -70,22 +81,22 @@ func LoadServerConfig() ServerConfig {
 	}
 
 	// Load configuration from environment variables
-	loadServerAddress(&config)
-	loadTimeouts(&config)
-	loadLogLevel(&config)
-	loadCORSConfig(&config)
+	loadServerAddress(config)
+	loadTimeouts(config)
+	loadLogLevel(config)
+	loadCORSConfig(config)
 
 	return config
 }
 
 // Address returns the server address in host:port format.
-func (c ServerConfig) Address() string {
+func (c *ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
 // ToCORSConfig converts ServerConfig CORS fields to middleware.CORSConfigProvider.
-func (c ServerConfig) ToCORSConfig() CORSConfig {
-	return CORSConfig{
+func (c *ServerConfig) ToCORSConfig() *CORSConfig {
+	return &CORSConfig{
 		AllowedOrigins: c.CORSAllowedOrigins,
 		AllowedMethods: c.CORSAllowedMethods,
 		AllowedHeaders: c.CORSAllowedHeaders,
@@ -93,37 +104,28 @@ func (c ServerConfig) ToCORSConfig() CORSConfig {
 	}
 }
 
-// CORSConfig holds CORS configuration options.
-// This is defined here to keep CORS configuration centralized.
-type CORSConfig struct {
-	AllowedOrigins []string
-	AllowedMethods []string
-	AllowedHeaders []string
-	MaxAge         int
-}
-
 // GetAllowedOrigins returns the allowed origins for CORS.
-func (c CORSConfig) GetAllowedOrigins() []string {
+func (c *CORSConfig) GetAllowedOrigins() []string {
 	return c.AllowedOrigins
 }
 
 // GetAllowedMethods returns the allowed methods for CORS.
-func (c CORSConfig) GetAllowedMethods() []string {
+func (c *CORSConfig) GetAllowedMethods() []string {
 	return c.AllowedMethods
 }
 
 // GetAllowedHeaders returns the allowed headers for CORS.
-func (c CORSConfig) GetAllowedHeaders() []string {
+func (c *CORSConfig) GetAllowedHeaders() []string {
 	return c.AllowedHeaders
 }
 
 // GetMaxAge returns the max age for CORS preflight cache.
-func (c CORSConfig) GetMaxAge() int {
+func (c *CORSConfig) GetMaxAge() int {
 	return c.MaxAge
 }
 
 // Validate validates the server configuration.
-func (c ServerConfig) Validate() error {
+func (c *ServerConfig) Validate() error {
 	if c.Port <= 0 || c.Port > MaxPort {
 		return fmt.Errorf("%w: %d, must be between 1 and %d", ErrInvalidPort, c.Port, MaxPort)
 	}
