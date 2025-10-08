@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/correlator-io/correlator/internal/config"
 )
 
 const (
@@ -28,7 +30,7 @@ func NewPersistentKeyStore(conn *Connection) (*PersistentKeyStore, error) {
 	return &PersistentKeyStore{
 		conn: conn,
 		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: getEnvLogLevel("LOG_LEVEL", slog.LevelDebug),
+			Level: config.GetEnvLogLevel("LOG_LEVEL", slog.LevelDebug),
 		})),
 	}, nil
 }
