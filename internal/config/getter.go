@@ -89,3 +89,23 @@ func GetEnvLogLevel(key string, defaultValue slog.Level) slog.Level {
 
 	return defaultValue
 }
+
+// ParseCommaSeparatedList parses a comma-separated string into a slice of trimmed strings.
+// Empty values are filtered out.
+func ParseCommaSeparatedList(input string) []string {
+	if input == "" {
+		return []string{}
+	}
+
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+
+	return result
+}
