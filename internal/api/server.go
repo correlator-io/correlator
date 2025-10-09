@@ -14,18 +14,30 @@ import (
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/storage"
 )
 
 // Server represents the HTTP API server.
 type Server struct {
-	httpServer *http.Server
-	logger     *slog.Logger
-	config     *ServerConfig
-	startTime  time.Time
+	httpServer  *http.Server
+	logger      *slog.Logger
+	config      *ServerConfig
+	startTime   time.Time
+	apiKeyStore storage.APIKeyStore
+	rateLimiter middleware.RateLimiter
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
-func NewServer(cfg *ServerConfig) *Server {
+//
+// Dependencies are injected explicitly rather than being part of ServerConfig.
+// This follows the dependency injection pattern where configuration (what) is
+// separated from dependencies (how).
+//
+// Parameters:
+//   - cfg: Pure server configuration (ports, timeouts, CORS settings)
+//   - apiKeyStore: API key storage implementation (nil disables authentication)
+//   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
+func NewServer(cfg *ServerConfig, apiKeyStore storage.APIKeyStore, rateLimiter middleware.RateLimiter) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
@@ -36,21 +48,23 @@ func NewServer(cfg *ServerConfig) *Server {
 
 	// Create server instance for route setup
 	server := &Server{
-		logger: logger,
-		config: cfg,
+		logger:      logger,
+		config:      cfg,
+		apiKeyStore: apiKeyStore,
+		rateLimiter: rateLimiter,
 	}
 
 	// Set up all API routes
 	server.setupRoutes(mux)
 
 	// Log middleware configuration
-	if cfg.APIKeyStore != nil { // pragma: allowlist secret
+	if apiKeyStore != nil { // pragma: allowlist secret
 		logger.Info("Plugin authentication middleware enabled")
 	} else {
 		logger.Warn("APIKeyStore not configured - plugin authentication middleware disabled")
 	}
 
-	if cfg.RateLimiter != nil {
+	if rateLimiter != nil {
 		logger.Info("Rate limiting middleware enabled")
 	} else {
 		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
@@ -67,8 +81,8 @@ func NewServer(cfg *ServerConfig) *Server {
 	handler := middleware.Apply(mux,
 		middleware.WithCorrelationID(),
 		middleware.WithRecovery(logger),
-		middleware.WithAuth(cfg.APIKeyStore, logger),
-		middleware.WithRateLimit(cfg.RateLimiter, logger),
+		middleware.WithAuth(apiKeyStore, logger),
+		middleware.WithRateLimit(rateLimiter, logger),
 		middleware.WithRequestLogger(logger),
 		middleware.WithCORS(cfg.ToCORSConfig()),
 	)
@@ -154,14 +168,27 @@ func (s *Server) shutdown() error {
 	}
 
 	// Close API key store to release database connections
-	if s.config.APIKeyStore != nil { // pragma: allowlist secret
+	if s.apiKeyStore != nil { // pragma: allowlist secret
 		s.logger.Info("Closing API key store")
 
-		if store, ok := s.config.APIKeyStore.(io.Closer); ok {
+		if store, ok := s.apiKeyStore.(io.Closer); ok {
 			if err := store.Close(); err != nil {
 				s.logger.Error("Failed to close API key store", slog.String("error", err.Error()))
 			} else {
 				s.logger.Info("API key store closed successfully")
+			}
+		}
+	}
+
+	// Close rate limiter to stop (InMemoryRateLimiter) background cleanup goroutines
+	if s.rateLimiter != nil {
+		s.logger.Info("Closing rate limiter")
+
+		if limiter, ok := s.rateLimiter.(io.Closer); ok {
+			if err := limiter.Close(); err != nil {
+				s.logger.Error("Failed to close rate limiter", slog.String("error", err.Error()))
+			} else {
+				s.logger.Info("Rate limiter closed successfully")
 			}
 		}
 	}

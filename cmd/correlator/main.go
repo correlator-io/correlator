@@ -49,7 +49,8 @@ func main() {
 	)
 
 	// Create and start HTTP server
-	server := api.NewServer(serverConfig)
+	// TODO (Task 3.3.3): Wire API key store and rate limiter dependencies
+	server := api.NewServer(serverConfig, nil, nil)
 
 	if err := server.Start(); err != nil {
 		logger.Error("Server failed to start",
