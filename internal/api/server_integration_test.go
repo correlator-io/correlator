@@ -117,7 +117,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		t.Fatalf("Failed to add API key: %v", err)
 	}
 
-	// Create server config with authentication
+	// Create server config (pure configuration only)
 	config := &ServerConfig{
 		Port:               8080,
 		Host:               "localhost",
@@ -129,11 +129,10 @@ func TestAuthenticationIntegration(t *testing.T) {
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
-		APIKeyStore:        keyStore,
 	}
 
-	// Create server
-	server := NewServer(config)
+	// Create server with dependency injection
+	server := NewServer(config, keyStore, nil)
 
 	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)

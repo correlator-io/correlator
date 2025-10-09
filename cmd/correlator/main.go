@@ -10,7 +10,11 @@ import (
 	"log/slog"
 	"os"
 
+	_ "github.com/lib/pq" // PostgreSQL driver
+
 	"github.com/correlator-io/correlator/internal/api"
+	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/storage"
 )
 
 // Version information.
@@ -48,8 +52,43 @@ func main() {
 		slog.String("log_level", serverConfig.LogLevel.String()),
 	)
 
-	// Create and start HTTP server
-	server := api.NewServer(serverConfig)
+	// Load rate limiter configuration
+	middlewareConfig := middleware.LoadConfig()
+
+	// Create rate limiter instance (graceful shutdown handled by server.shutdown())
+	rateLimiter := middleware.NewInMemoryRateLimiter(middlewareConfig)
+
+	logger.Info("Rate limiter initialized",
+		slog.Int("global_rps", middlewareConfig.GlobalRPS),
+		slog.Int("global_burst", middlewareConfig.GlobalBurst),
+		slog.Int("plugin_rps", middlewareConfig.PluginRPS),
+		slog.Int("plugin_burst", middlewareConfig.PluginBurst),
+		slog.Int("unauth_rps", middlewareConfig.UnAuthRPS),
+		slog.Int("unauth_burst", middlewareConfig.UnAuthBurst),
+	)
+
+	// Load storage configuration
+	storageConfig := storage.LoadConfig()
+
+	dbConn, err := storage.NewConnection(storageConfig)
+	if err != nil {
+		logger.Error("Failed to connect to database", slog.String("error", err.Error()))
+	}
+
+	apiKeyStore, err := storage.NewPersistentKeyStore(dbConn)
+	if err != nil {
+		logger.Error("Failed to connect to persistent key store", slog.String("error", err.Error()))
+	}
+
+	logger.Info("Persistent key store initialized",
+		slog.String("database_url", storageConfig.MaskDatabaseURL()),
+		slog.Int("database_max_open_conns", storageConfig.MaxOpenConns),
+		slog.Int("database_max_idle_conns", storageConfig.MaxIdleConns),
+		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),
+		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
+	)
+
+	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter)
 
 	if err := server.Start(); err != nil {
 		logger.Error("Server failed to start",

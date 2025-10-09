@@ -7,9 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/correlator-io/correlator/internal/api/middleware"
 	"github.com/correlator-io/correlator/internal/config"
-	"github.com/correlator-io/correlator/internal/storage"
 )
 
 const (
@@ -40,6 +38,7 @@ var (
 
 type (
 	// ServerConfig holds HTTP server configuration.
+	// Pure configuration only - no runtime dependencies.
 	ServerConfig struct {
 		Port               int
 		Host               string
@@ -51,8 +50,6 @@ type (
 		CORSAllowedMethods []string
 		CORSAllowedHeaders []string
 		CORSMaxAge         int
-		APIKeyStore        storage.APIKeyStore
-		RateLimiter        middleware.RateLimiter
 	}
 
 	// CORSConfig holds CORS configuration options.
