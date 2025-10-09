@@ -20,12 +20,12 @@ import (
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
-	config     ServerConfig
+	config     *ServerConfig
 	startTime  time.Time
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
-func NewServer(cfg ServerConfig) *Server {
+func NewServer(cfg *ServerConfig) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,

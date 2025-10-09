@@ -118,7 +118,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	}
 
 	// Create server config with authentication
-	config := ServerConfig{
+	config := &ServerConfig{
 		Port:               8080,
 		Host:               "localhost",
 		ReadTimeout:        30 * time.Second,
