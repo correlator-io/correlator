@@ -985,4 +985,22 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		// This validates that CorrelationID and CORS middleware executed
 		verifyCommonHeaders(t, rr)
 	})
+
+	// Test Case 2: Authentication Failure Has Correlation ID And CORS
+	t.Run("Authentication Failure Has Correlation ID And CORS", func(t *testing.T) {
+		// Make request with missing API key
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		// No X-Api-Key header set
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Verify: 401 Unauthorized (authentication failed)
+		if status := rr.Code; status != http.StatusUnauthorized {
+			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
+		}
+
+		// Verify: RFC 7807 error response format
+		verifyRFC7807Error(t, rr, http.StatusUnauthorized)
+	})
 }
