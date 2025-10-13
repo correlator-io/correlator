@@ -448,8 +448,11 @@ func TestRateLimitingIntegration(t *testing.T) {
 	t.Run("Global Rate Limit Enforcement", func(t *testing.T) {
 		// Create limiter: 5 RPS global, 50 RPS plugin (global is bottleneck)
 		// Use 5 RPS to make limit easier to hit despite bcrypt latency (~50ms/request)
-		rateLimiter := createTestRateLimiter(5, 50, 2)
-		defer rateLimiter.Close()
+		rateLimiter := createTestRateLimiter(2, 50, 2)
+
+		t.Cleanup(func() {
+			rateLimiter.Close()
+		})
 
 		// Create server with rate limiter
 		server := NewServer(serverConfig, keyStore, rateLimiter)
