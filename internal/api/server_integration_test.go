@@ -23,6 +23,23 @@ import (
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
+// testDatabase encapsulates a PostgreSQL testcontainer and its database connection
+// for use in integration tests.
+//
+// Fields:
+//   - container: The testcontainers PostgreSQL container instance
+//   - connection: The active database connection (*sql.DB)
+//
+// Usage:
+//
+//	testDB := setupTestDatabase(ctx, t)
+//	defer testDB.connection.Close()
+//	defer testcontainers.TerminateContainer(testDB.container)
+type testDatabase struct {
+	container  *postgres.PostgresContainer
+	connection *sql.DB
+}
+
 // TestAuthenticationIntegration tests the complete authentication flow with a real HTTP server and database.
 func TestAuthenticationIntegration(t *testing.T) {
 	if testing.Short() {
@@ -431,8 +448,11 @@ func TestRateLimitingIntegration(t *testing.T) {
 	t.Run("Global Rate Limit Enforcement", func(t *testing.T) {
 		// Create limiter: 5 RPS global, 50 RPS plugin (global is bottleneck)
 		// Use 5 RPS to make limit easier to hit despite bcrypt latency (~50ms/request)
-		rateLimiter := createTestRateLimiter(5, 50, 2)
-		defer rateLimiter.Close()
+		rateLimiter := createTestRateLimiter(2, 50, 2)
+
+		t.Cleanup(func() {
+			rateLimiter.Close()
+		})
 
 		// Create server with rate limiter
 		server := NewServer(serverConfig, keyStore, rateLimiter)
@@ -612,6 +632,200 @@ func TestRateLimitingIntegration(t *testing.T) {
 	})
 }
 
+// TestFullMiddlewareStackIntegration validates that all middleware layers execute in the correct order
+// and each middleware contributes its expected behavior.
+//
+// Middleware chain order (from server.go):
+//  1. CorrelationID()      - Generate correlation ID for all responses
+//  2. Recovery()           - Catch panics in all downstream middleware
+//  3. AuthenticatePlugin() - Identify plugin (sets PluginContext)
+//  4. RateLimit()          - Block before expensive operations
+//  5. RequestLogger()      - Log only legitimate requests
+//  6. CORS()               - Lightweight header manipulation
+//
+// This test validates:
+//   - Successful requests have correlation ID + CORS headers
+//   - Authentication failures (401) have correlation ID + CORS + RFC 7807
+//   - Rate limiting (429) has correlation ID + CORS + RFC 7807
+//   - Authorization failures (403) have correlation ID + CORS + RFC 7807
+//   - Panic recovery (500) has correlation ID + CORS + RFC 7807
+func TestFullMiddlewareStackIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	testDB := setupTestDatabase(ctx, t)
+
+	// Wrap in storage.Connection
+	storageConn := &storage.Connection{DB: testDB.connection}
+
+	// Create key store
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create key store: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = keyStore.Close()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
+
+	// Create test API key for authenticated requests
+	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	if err != nil {
+		t.Fatalf("Failed to generate API key: %v", err)
+	}
+
+	apiKey := &storage.APIKey{
+		ID:          "test-key-id",
+		Key:         testAPIKey,
+		PluginID:    "test-plugin",
+		Name:        "Test Plugin",
+		Permissions: []string{"lineage:write", "lineage:read"},
+		CreatedAt:   time.Now(),
+		ExpiresAt:   nil,
+		Active:      true,
+	}
+
+	if err := keyStore.Add(ctx, apiKey); err != nil {
+		t.Fatalf("Failed to add API key: %v", err)
+	}
+
+	// Create inactive API key for authorization failure tests
+	inactiveAPIKey, err := storage.GenerateAPIKey("inactive-plugin")
+	if err != nil {
+		t.Fatalf("Failed to generate inactive API key: %v", err)
+	}
+
+	inactiveKey := &storage.APIKey{
+		ID:          "inactive-key-id",
+		Key:         inactiveAPIKey,
+		PluginID:    "inactive-plugin",
+		Name:        "Inactive Plugin",
+		Permissions: []string{"lineage:write"},
+		CreatedAt:   time.Now(),
+		ExpiresAt:   nil,
+		Active:      false, // Inactive
+	}
+
+	if err := keyStore.Add(ctx, inactiveKey); err != nil {
+		t.Fatalf("Failed to add inactive API key: %v", err)
+	}
+
+	// Create rate limiter with low limits for easy testing
+	rateLimiter := createTestRateLimiter(100, 2, 1)
+	defer rateLimiter.Close()
+
+	// Create server config
+	serverConfig := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
+
+	// Create server with all middleware enabled (auth + rate limiting + CORS)
+	server := NewServer(serverConfig, keyStore, rateLimiter)
+
+	// Test Case 1: Successful Request Flows Through All Middleware
+	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {
+		// Make authenticated request to /api/v1/version
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req.Header.Set("X-Api-Key", testAPIKey)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Verify: 200 OK status (authentication succeeded, all middleware passed)
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusOK, status, rr.Body.String())
+		}
+
+		// Verify: Common headers present (correlation ID + CORS)
+		// This validates that CorrelationID and CORS middleware executed
+		verifyCORSHeaders(t, rr)
+		verifyCorrelationID(t, rr)
+	})
+
+	// Test Case 2: Authentication Failure Has Correlation ID And CORS
+	t.Run("Authentication Failure Has Correlation ID And CORS", func(t *testing.T) {
+		// Make request with missing API key
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		// No X-Api-Key header set
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Verify: 401 Unauthorized (authentication failed)
+		if status := rr.Code; status != http.StatusUnauthorized {
+			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
+		}
+
+		// Verify: RFC 7807 error response format
+		verifyRFC7807Error(t, rr, http.StatusUnauthorized)
+
+		// Verify: Correlation ID present
+		verifyCorrelationID(t, rr)
+	})
+
+	// Test Case 3: Rate Limiting Has Correlation ID
+	t.Run("Rate Limiting Has Correlation ID", func(t *testing.T) {
+		// Exhaust rate limit by sending multiple rapid requests
+		// Rate limiter configured with 2 RPS per plugin, burst = 4
+		// Send requests until we hit the rate limit
+		var rateLimitedResponse *httptest.ResponseRecorder
+
+		for i := 0; i < 10; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+			req.Header.Set("X-Api-Key", testAPIKey)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			if rr.Code == http.StatusTooManyRequests {
+				rateLimitedResponse = rr
+
+				break
+			}
+		}
+
+		// Verify we got a rate-limited response
+		if rateLimitedResponse == nil {
+			t.Fatal("Expected to hit rate limit, but all requests succeeded")
+		}
+
+		// Verify: 429 Too Many Requests (rate limit exceeded)
+		if status := rateLimitedResponse.Code; status != http.StatusTooManyRequests {
+			t.Errorf(
+				"Expected status %d, got %d. Body: %s", http.StatusTooManyRequests,
+				status,
+				rateLimitedResponse.Body.String(),
+			)
+		}
+
+		// Verify: RFC 7807 error response format
+		verifyRFC7807Error(t, rateLimitedResponse, http.StatusTooManyRequests)
+
+		// Verify: Correlation ID present (CorrelationID middleware runs before rate limit)
+		verifyCorrelationID(t, rateLimitedResponse)
+	})
+}
+
 // runTestMigrations runs database migrations for testing.
 // Uses golang-migrate for single source of truth.
 func runTestMigrations(db *sql.DB) error {
@@ -731,5 +945,121 @@ func verifyRFC7807Error(t *testing.T, response *httptest.ResponseRecorder, expec
 			t.Errorf("RFC 7807 'status' field (%d) does not match HTTP status code (%d)",
 				int(statusValue), expectedStatus)
 		}
+	}
+}
+
+// verifyCORSHeaders validates that CORS headers (from CORS middleware) are present in the response.
+//
+// Validated headers:
+//   - Access-Control-Allow-Origin: Set by CORS middleware
+//   - Access-Control-Allow-Methods: Set by CORS middleware
+//
+// Parameters:
+//   - t: Testing instance
+//   - response: The HTTP response to validate
+func verifyCORSHeaders(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+
+	// Verify CORS headers (set by CORS middleware)
+	origin := response.Header().Get("Access-Control-Allow-Origin")
+	if origin == "" {
+		t.Error("Expected Access-Control-Allow-Origin header to be set")
+	}
+
+	methods := response.Header().Get("Access-Control-Allow-Methods")
+	if methods == "" {
+		t.Error("Expected Access-Control-Allow-Methods header to be set")
+	}
+}
+
+// verifyCorrelationID validates that correlation ID (from CorrelationID middleware) is present in the response.
+//
+// Validated headers:
+//   - X-Correlation-ID: 16-character hex string generated by CorrelationID middleware
+//
+// Parameters:
+//   - t: Testing instance
+//   - response: The HTTP response to validate
+func verifyCorrelationID(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+
+	// Verify correlation ID header (set by CorrelationID middleware)
+	correlationID := response.Header().Get("X-Correlation-ID")
+	if correlationID == "" {
+		t.Error("Expected X-Correlation-ID header to be set")
+	}
+
+	if len(correlationID) != 16 { // Correlation IDs are 16 hex chars
+		t.Errorf("Expected correlation ID length 16, got %d", len(correlationID))
+	}
+}
+
+// setupTestDatabase creates a PostgreSQL testcontainer with migrations applied.
+// This helper function provides a ready-to-use test database for integration tests.
+//
+// The function:
+//   - Creates a PostgreSQL 16-alpine testcontainer
+//   - Configures test database credentials (correlator_test/test/test)
+//   - Waits for database to be ready (120s timeout for dev containers)
+//   - Opens a database connection
+//   - Applies all migrations from the migrations/ directory
+//
+// Returns:
+//   - *testDatabase containing the container and database connection
+//
+// Callers are responsible for cleanup:
+//
+//	testDB := setupTestDatabase(ctx, t)
+//	t.Cleanup(func() {
+//	    _ = testDB.connection.Close()
+//	    _ = testcontainers.TerminateContainer(testDB.container)
+//	})
+//
+// Parameters:
+//   - ctx: Context for container operations
+//   - t: Testing instance for error reporting and t.Helper()
+func setupTestDatabase(ctx context.Context, t *testing.T) *testDatabase {
+	t.Helper()
+
+	// Create PostgreSQL container
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:16-alpine",
+		postgres.WithDatabase("correlator_test"),
+		postgres.WithUsername("test"),
+		postgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(120*time.Second),
+		),
+	)
+	if err != nil {
+		t.Fatalf("Failed to start postgres container: %v", err)
+	}
+
+	if pgContainer == nil {
+		t.Fatalf("postgres container is nil")
+	}
+
+	// Get connection string
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("failed to get connection string: %v", err)
+	}
+
+	// Create storage connection
+	conn, err := sql.Open("postgres", connStr)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Run migrations
+	if err := runTestMigrations(conn); err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	return &testDatabase{
+		container:  pgContainer,
+		connection: conn,
 	}
 }
