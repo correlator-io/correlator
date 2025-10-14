@@ -81,7 +81,7 @@ func NewServer(cfg *ServerConfig, apiKeyStore storage.APIKeyStore, rateLimiter m
 	handler := middleware.Apply(mux,
 		middleware.WithCorrelationID(),
 		middleware.WithRecovery(logger),
-		middleware.WithPluginAuth(apiKeyStore, logger),
+		middleware.WithAuthPlugin(apiKeyStore, logger),
 		middleware.WithRateLimit(rateLimiter, logger),
 		middleware.WithRequestLogger(logger),
 		middleware.WithCORS(cfg.ToCORSConfig()),
