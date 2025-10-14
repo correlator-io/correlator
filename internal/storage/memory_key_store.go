@@ -110,7 +110,8 @@ func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 	return nil
 }
 
-// Delete removes an API key.
+// Delete soft-deletes an API key by setting active=false.
+// This matches PostgreSQL behavior for consistency.
 func (s *InMemoryKeyStore) Delete(_ context.Context, keyID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -121,13 +122,11 @@ func (s *InMemoryKeyStore) Delete(_ context.Context, keyID string) error {
 		return ErrKeyNotFound
 	}
 
-	// Remove from all maps
-	delete(s.keys, existingKey.Key)
-	delete(s.keysByID, keyID)
+	// Soft delete: set active=false (matches PostgreSQL behavior)
+	existingKey.Active = false
 
-	// Remove from plugin map
-	s.removeFromPluginMap(existingKey.PluginID, keyID)
-
+	// Update all references to point to the same modified key
+	// (all maps point to the same instance, so modifying one updates all)
 	return nil
 }
 

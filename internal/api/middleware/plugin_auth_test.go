@@ -360,11 +360,18 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	validKey := testKey
 
-	expectedAPIKey := &storage.APIKey{
-		ID:          "key-123",
-		Key:         validKey,
+	store := storage.NewInMemoryKeyStore()
+
+	// Parse the key to get the correct format
+	parsedKey, err := storage.ParseAPIKey(testKey)
+	if err != nil {
+		t.Fatalf("Failed to parse test key: %v", err)
+	}
+
+	testAPIKey := &storage.APIKey{
+		ID:          "test-key-123",
+		Key:         parsedKey,
 		PluginID:    "dbt-plugin-v1",
 		Name:        "dbt Core Plugin",
 		Permissions: []string{"lineage:write", "metrics:read"},
@@ -372,19 +379,14 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 		ExpiresAt:   nil,
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, key string) (*storage.APIKey, bool) {
-			if key == validKey {
-				return expectedAPIKey, true
-			}
-
-			return nil, false
-		},
+	err = store.Add(ctx, testAPIKey)
+	if err != nil {
+		t.Fatalf("Failed to create test API key: %v", err)
 	}
 
 	logger := slog.Default()
 
-	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
+	apiKey, err := authenticateRequest(ctx, store, testKey, logger)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -393,12 +395,12 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 		t.Fatal("Expected API key to be returned")
 	}
 
-	if apiKey.ID != expectedAPIKey.ID {
-		t.Errorf("Expected ID %q, got %q", expectedAPIKey.ID, apiKey.ID)
+	if apiKey.ID != testAPIKey.ID {
+		t.Errorf("Expected ID %q, got %q", testAPIKey.ID, apiKey.ID)
 	}
 
-	if apiKey.PluginID != expectedAPIKey.PluginID {
-		t.Errorf("Expected PluginID %q, got %q", expectedAPIKey.PluginID, apiKey.PluginID)
+	if apiKey.PluginID != testAPIKey.PluginID {
+		t.Errorf("Expected PluginID %q, got %q", testAPIKey.PluginID, apiKey.PluginID)
 	}
 }
 
@@ -410,7 +412,7 @@ func TestAuthenticateRequest_InvalidFormat(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store := &MockAPIKeyStore{}
+	store := storage.NewInMemoryKeyStore()
 
 	testCases := []struct {
 		name   string
@@ -468,11 +470,8 @@ func TestAuthenticateRequest_KeyNotFound(t *testing.T) {
 	ctx := context.Background()
 	validKey := testKey
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
-			return nil, false // Key not found
-		},
-	}
+	// Use real in-memory store (empty, so key won't be found)
+	store := storage.NewInMemoryKeyStore()
 
 	logger := slog.Default()
 
@@ -498,25 +497,34 @@ func TestAuthenticateRequest_InactiveKey(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	validKey := testKey
 
-	inactiveKey := &storage.APIKey{
-		ID:       "key-456",
-		Key:      validKey,
-		PluginID: "inactive-plugin",
-		Name:     "Inactive Plugin",
-		Active:   false, // Key is inactive
+	store := storage.NewInMemoryKeyStore()
+
+	inactiveKeyID := "inactive-key-456"
+	inactiveTestKey := "correlator_ak_inact67890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	testAPIKey := &storage.APIKey{
+		ID:          inactiveKeyID,
+		Key:         inactiveTestKey,
+		PluginID:    "inactive-plugin",
+		Name:        "Inactive Plugin",
+		Active:      true,
+		Permissions: []string{},
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
-			return inactiveKey, true
-		},
+	err := store.Add(ctx, testAPIKey)
+	if err != nil {
+		t.Fatalf("Failed to create test API key: %v", err)
+	}
+
+	// Delete the key (soft delete - sets active=false)
+	if err := store.Delete(ctx, inactiveKeyID); err != nil {
+		t.Fatalf("Failed to delete API key: %v", err)
 	}
 
 	logger := slog.Default()
 
-	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
+	// Try to authenticate with the inactive key
+	apiKey, err := authenticateRequest(ctx, store, inactiveTestKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for inactive key, got nil")
 	}
@@ -538,27 +546,32 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	validKey := testKey
 
+	store := storage.NewInMemoryKeyStore()
+
+	// Create a key with expiration in the past (must be 78 chars total including prefix)
 	pastTime := time.Now().Add(-24 * time.Hour) // Expired yesterday
-	expiredKey := &storage.APIKey{
-		ID:        "key-789",
-		Key:       validKey,
-		PluginID:  "expired-plugin",
-		Name:      "Expired Plugin",
-		Active:    true,
-		ExpiresAt: &pastTime, // Key has expired
+	expiredKeyID := "expired-key-789"
+	expiredTestKey := "correlator_ak_expire7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	testAPIKey := &storage.APIKey{
+		ID:          expiredKeyID,
+		Key:         expiredTestKey,
+		PluginID:    "expired-plugin",
+		Name:        "Expired Plugin",
+		Active:      true,
+		Permissions: []string{},
+		ExpiresAt:   &pastTime, // Key has expired
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
-			return expiredKey, true
-		},
+	err := store.Add(ctx, testAPIKey)
+	if err != nil {
+		t.Fatalf("Failed to create test API key: %v", err)
 	}
 
 	logger := slog.Default()
 
-	apiKey, err := authenticateRequest(ctx, store, validKey, logger)
+	// Try to authenticate with the expired key
+	apiKey, err := authenticateRequest(ctx, store, expiredTestKey, logger)
 	if err == nil {
 		t.Fatal("Expected error for expired key, got nil")
 	}
@@ -572,16 +585,25 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_Success verifies successful authentication flow through middleware.
-func TestAuthenticatePlugin_Success(t *testing.T) {
+// TestPluginAuthenticationMiddleware_HappyPath verifies successful authentication flow through middleware.
+func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
+	ctx := context.Background()
+
 	validKey := testKey
+
+	// Parse the key to get the correct format
+	parsedKey, err := storage.ParseAPIKey(validKey)
+	if err != nil {
+		t.Fatalf("Failed to parse test key: %v", err)
+	}
+
 	expectedAPIKey := &storage.APIKey{
 		ID:          "key-123",
-		Key:         validKey,
+		Key:         parsedKey,
 		PluginID:    "dbt-plugin-v1",
 		Name:        "dbt Core Plugin",
 		Permissions: []string{"lineage:write", "metrics:read"},
@@ -589,14 +611,12 @@ func TestAuthenticatePlugin_Success(t *testing.T) {
 		ExpiresAt:   nil,
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, key string) (*storage.APIKey, bool) {
-			if key == validKey {
-				return expectedAPIKey, true
-			}
+	store := storage.NewInMemoryKeyStore()
 
-			return nil, false
-		},
+	// Add the key to the store
+	err = store.Add(ctx, expectedAPIKey)
+	if err != nil {
+		t.Fatalf("Failed to add API key: %v", err)
 	}
 
 	logger := slog.New(slog.DiscardHandler)
@@ -657,13 +677,13 @@ func TestAuthenticatePlugin_Success(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_MissingAPIKey verifies 401 response when API key is missing.
-func TestAuthenticatePlugin_MissingAPIKey(t *testing.T) {
+// TestPluginAuthenticationMiddleware_MissingAPIKey verifies 401 response when API key is missing.
+func TestPluginAuthenticationMiddleware_MissingAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	store := &MockAPIKeyStore{}
+	store := storage.NewInMemoryKeyStore()
 	logger := slog.New(slog.DiscardHandler)
 
 	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
@@ -673,6 +693,7 @@ func TestAuthenticatePlugin_MissingAPIKey(t *testing.T) {
 	middleware := AuthenticatePlugin(store, logger)
 	wrappedHandler := middleware(handler)
 
+	// testKey is not added to the request headers
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
@@ -697,17 +718,14 @@ func TestAuthenticatePlugin_MissingAPIKey(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_InvalidAPIKey verifies 401 response for invalid API key.
-func TestAuthenticatePlugin_InvalidAPIKey(t *testing.T) {
+// TestPluginAuthenticationMiddleware_InvalidAPIKey verifies 401 response for invalid API key.
+func TestPluginAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
-			return nil, false // Key not found
-		},
-	}
+	// testKey is not added to the store
+	store := storage.NewInMemoryKeyStore()
 
 	logger := slog.New(slog.DiscardHandler)
 
@@ -719,6 +737,7 @@ func TestAuthenticatePlugin_InvalidAPIKey(t *testing.T) {
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// testKey is added to the request headers, but does not exist in the store
 	req.Header.Set("X-Api-Key", testKey)
 
 	rec := httptest.NewRecorder()
@@ -730,24 +749,35 @@ func TestAuthenticatePlugin_InvalidAPIKey(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_InactiveKey verifies 403 response for inactive API key.
-func TestAuthenticatePlugin_InactiveKey(t *testing.T) {
+// TestPluginAuthenticationMiddleware_InactiveKey verifies 403 response for inactive API key.
+func TestPluginAuthenticationMiddleware_InactiveKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
+	ctx := context.Background()
+
+	store := storage.NewInMemoryKeyStore()
+
 	inactiveKey := &storage.APIKey{
-		ID:       "key-inactive",
-		Key:      testKey,
-		PluginID: "inactive-plugin",
-		Name:     "Inactive Plugin",
-		Active:   false,
+		ID:          "key-inactive",
+		Key:         testKey,
+		PluginID:    "inactive-plugin",
+		Name:        "Inactive Plugin",
+		Active:      true,
+		Permissions: []string{},
 	}
 
-	store := &MockAPIKeyStore{
-		FindByKeyFunc: func(_ context.Context, _ string) (*storage.APIKey, bool) {
-			return inactiveKey, true
-		},
+	// Add the key to the store
+	err := store.Add(ctx, inactiveKey)
+	if err != nil {
+		t.Fatalf("Failed to add inactive key: %v", err)
+	}
+
+	// Mark it as inactive by deleting it (soft delete)
+	err = store.Delete(ctx, inactiveKey.ID)
+	if err != nil {
+		t.Fatalf("Failed to delete key: %v", err)
 	}
 
 	logger := slog.New(slog.DiscardHandler)
@@ -771,13 +801,13 @@ func TestAuthenticatePlugin_InactiveKey(t *testing.T) {
 	}
 }
 
-// TestAuthenticate_CorrelationIDInError verifies correlation ID is included in error responses.
-func TestAuthenticatePlugin_CorrelationIDInError(t *testing.T) {
+// TestPluginAuthenticationMiddleware_CorrelationIDInError verifies correlation ID is included in error responses.
+func TestPluginAuthenticationMiddleware_CorrelationIDInError(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	store := &MockAPIKeyStore{}
+	store := storage.NewInMemoryKeyStore()
 	logger := slog.New(slog.DiscardHandler)
 
 	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {

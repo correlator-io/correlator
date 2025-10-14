@@ -21,7 +21,7 @@ type (
 //	handler := middleware.Apply(mux,
 //	    middleware.WithCorrelationID(),
 //	    middleware.WithRecovery(logger),
-//	    middleware.WithAuth(store, logger),
+//	    middleware.WithPluginAuth(store, logger),
 //	    middleware.WithRateLimit(limiter, logger),
 //	    middleware.WithRequestLogger(logger),
 //	    middleware.WithCORS(corsConfig),
@@ -50,9 +50,9 @@ func WithRecovery(logger *slog.Logger) Option {
 	}
 }
 
-// WithAuth returns an option that adds authentication middleware.
+// WithPluginAuth returns an option that adds plugin authentication middleware.
 // If store is nil, this option is skipped (no middleware applied).
-func WithAuth(store storage.APIKeyStore, logger *slog.Logger) Option {
+func WithPluginAuth(store storage.APIKeyStore, logger *slog.Logger) Option {
 	if store == nil {
 		return func(next http.Handler) http.Handler {
 			return next // No-op if store not configured
