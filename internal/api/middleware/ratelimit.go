@@ -309,6 +309,15 @@ func (rl *InMemoryRateLimiter) cleanup() {
 func RateLimit(limiter RateLimiter, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if this path bypasses rate limiting (public endpoints)
+			// Public endpoints (health checks, metrics) must never be rate limited
+			// to prevent K8s cascading failures and monitoring gaps
+			if publicEndpoints[r.URL.Path] {
+				next.ServeHTTP(w, r)
+
+				return
+			}
+
 			// Extract plugin ID from context (set by authentication middleware)
 			// If PluginContext exists, use plugin ID for per-plugin rate limiting
 			// If PluginContext is nil, use empty string for unauthenticated rate limiting

@@ -386,6 +386,185 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 	})
 }
 
+// TestPublicEndpointRateLimitBypass tests that public health endpoints bypass rate limiting.
+// This test validates that K8s health probes and monitoring tools can always access
+// public endpoints without being rate limited, preventing cascading failures.
+//
+// Test scenarios:
+//   - /ping bypasses rate limiting (unlimited requests)
+//   - /api/v1/health bypasses rate limiting (unlimited requests)
+//   - Protected endpoints still enforce rate limits
+//
+// This test sends 100 rapid requests to each public endpoint to verify no rate limiting occurs.
+func TestPublicEndpointRateLimitBypass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	testDB := setupTestDatabase(ctx, t)
+
+	// Wrap in storage.Connection
+	storageConn := &storage.Connection{DB: testDB.connection}
+
+	// Create key store
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create key store: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = keyStore.Close()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
+
+	// Create a test API key for protected endpoint verification
+	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	if err != nil {
+		t.Fatalf("Failed to generate API key: %v", err)
+	}
+
+	apiKey := &storage.APIKey{
+		ID:          "test-key-id",
+		Key:         testAPIKey,
+		PluginID:    "test-plugin",
+		Name:        "Test Plugin",
+		Permissions: []string{"lineage:write", "lineage:read"},
+		CreatedAt:   time.Now(),
+		ExpiresAt:   nil,
+		Active:      true,
+	}
+
+	if err := keyStore.Add(ctx, apiKey); err != nil {
+		t.Fatalf("Failed to add API key: %v", err)
+	}
+
+	// Create server config
+	serverConfig := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
+
+	// Create rate limiter with VERY restrictive limits to ensure bypass is working
+	// If bypass didn't work, these limits would be hit immediately
+	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 plugin RPS, 1 unauth RPS
+
+	t.Cleanup(func() {
+		rateLimiter.Close()
+	})
+
+	// Create server with auth AND rate limiting enabled
+	server := NewServer(serverConfig, keyStore, rateLimiter)
+
+	t.Run("Ping Endpoint Bypasses Rate Limiting", func(t *testing.T) {
+		// Send 100 rapid requests to /ping without API key
+		// If rate limiting applied, we would hit the limit immediately (1 RPS unauth)
+		successCount := 0
+		rateLimitedCount := 0
+
+		for i := 0; i < 100; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			switch rr.Code {
+			case http.StatusOK:
+				successCount++
+			case http.StatusTooManyRequests:
+				rateLimitedCount++
+			}
+		}
+
+		// ALL requests should succeed (no rate limiting)
+		if rateLimitedCount > 0 {
+			t.Errorf("/ping: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount)
+		}
+
+		if successCount != 100 {
+			t.Errorf("/ping: Expected 100 successful requests, got %d", successCount)
+		}
+	})
+
+	t.Run("Health Endpoint Bypasses Rate Limiting", func(t *testing.T) {
+		// Send 100 rapid requests to /api/v1/health without API key
+		// If rate limiting applied, we would hit the limit immediately (1 RPS unauth)
+		successCount := 0
+		rateLimitedCount := 0
+
+		for i := 0; i < 100; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			switch rr.Code {
+			case http.StatusOK:
+				successCount++
+			case http.StatusTooManyRequests:
+				rateLimitedCount++
+			}
+		}
+
+		// ALL requests should succeed (no rate limiting)
+		if rateLimitedCount > 0 {
+			t.Errorf("/api/v1/health: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount)
+		}
+
+		if successCount != 100 {
+			t.Errorf("/api/v1/health: Expected 100 successful requests, got %d", successCount)
+		}
+	})
+
+	t.Run("Protected Endpoint Still Enforces Rate Limits", func(t *testing.T) {
+		// Verify /api/v1/health/database DOES get rate limited (it's protected)
+		// With 2 RPS plugin limit, we should hit rate limit quickly
+		successCount := 0
+		rateLimitedCount := 0
+
+		// Send 20 rapid requests with API key
+		for i := 0; i < 20; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
+			req.Header.Set("X-Api-Key", testAPIKey)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			switch rr.Code {
+			case http.StatusOK:
+				successCount++
+			case http.StatusTooManyRequests:
+				rateLimitedCount++
+				// Verify RFC 7807 error format on first rate-limited response
+				if rateLimitedCount == 1 {
+					verifyRFC7807Error(t, rr, http.StatusTooManyRequests)
+				}
+			}
+		}
+
+		// Should have SOME rate-limited requests (2 RPS limit with bcrypt latency)
+		if rateLimitedCount == 0 {
+			t.Errorf("/api/v1/health/database: Expected some rate-limited requests, but all %d succeeded", successCount)
+		}
+	})
+}
+
 // TestRateLimitingIntegration tests the complete rate limiting flow with a real HTTP server and database.
 func TestRateLimitingIntegration(t *testing.T) {
 	if testing.Short() {
