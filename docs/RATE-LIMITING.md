@@ -39,9 +39,9 @@ Correlator implements a three-tier token bucket rate limiting system to protect 
                        │  Authenticated?   │
                        └────┬──────────┬───┘
                             │          │
-                    ┌───────▼───┐  ┌─ ─▼─────────────── ─┐
-                    │   YES     │  │    NO               │
-                    └───────┬───┘  └── ┬──────────────── ┘
+                    ┌───────▼───┐   ┌──▼────────────────┐
+                    │   YES     │   │    NO             │
+                    └───────┬───┘   └──┬────────────────┘
                             │          │
             ┌───────────────▼─────┐   ┌▼────────────────────── ┐
             │  Tier 2: Per-Plugin │   │ Tier 3: Unauthenticated│
@@ -243,7 +243,7 @@ Time 10m: Cleanup runs, removes 150 idle plugins → 650 tracked
 
 ---
 
-## Migration Path (Phase 2)
+## Migration Path
 
 ### Current: In-Memory Rate Limiter
 
