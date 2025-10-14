@@ -24,18 +24,51 @@ type (
 		Version     string `json:"version"`
 		Uptime      string `json:"uptime,omitempty"`
 	}
+
+	// Route represents an HTTP route configuration with a path and handler.
+	// Used for declarative route registration with middleware bypass support.
+	Route struct {
+		Path    string           // The URL path for this route (e.g., "/ping", "/api/v1/health")
+		Handler http.HandlerFunc // The HTTP handler function for this route
+	}
 )
 
 // Routes sets up all HTTP routes for the API server.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
-	// Health check endpoint (no versioning for basic ping)
-	mux.HandleFunc("/ping", s.handlePing)
+	// Public health endpoints (no authentication required)
+	s.registerPublicRoutes(
+		mux,
+		Route{"/ping", s.handlePing},            // K8s liveness probe - must never require auth
+		Route{"/api/v1/health", s.handleHealth}, // Basic health check - public for monitoring tools
+		Route{"/", s.handleNotFound},            // Catch-all handler for 404 responses
+	)
 
-	mux.HandleFunc("/api/v1/version", s.handleVersion)
-	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	// Protected endpoints (authentication required)
+	mux.HandleFunc("/api/v1/health/database", s.handleDatabaseHealth)
+}
 
-	// Catch-all handler for 404 responses
-	mux.HandleFunc("/", s.handleNotFound)
+// registerPublicRoutes registers HTTP routes that bypass authentication and rate limiting.
+// This is a convenience method that:
+//  1. Registers the route handler with the HTTP mux
+//  2. Automatically registers the path as a public endpoint (bypasses auth middleware)
+//
+// Public routes should only be used for health check endpoints that need to be accessible
+// without authentication (e.g., K8s liveness/readiness probes, monitoring tools).
+//
+// Security Warning: Never register business logic endpoints as public routes.
+//
+// Example:
+//
+//	s.registerPublicRoutes(
+//	    mux,
+//	    Route{"/ping", s.handlePing},
+//	    Route{"/api/v1/health", s.handleHealth},
+//	)
+func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
+	for _, route := range routes {
+		mux.Handle(route.Path, route.Handler)
+		middleware.RegisterPublicEndpoint(route.Path)
+	}
 }
 
 // handlePing responds to ping requests for basic server validation.
@@ -54,26 +87,30 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleVersion returns API version information for client compatibility.
-func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+// handleDatabaseHealth returns database connection pool statistics (protected endpoint).
+// This is a temporary dummy implementation until Subtask 4.
+// TODO: Implement full database health checks with connection pool stats.
+func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
-	version := Version{
-		Version:     "v1.0.0",
-		ServiceName: "correlator",
-		BuildInfo:   "development",
+	// Dummy response for now
+	health := map[string]interface{}{
+		"status": "healthy",
+		"database": map[string]interface{}{
+			"connected": true,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	if err := json.NewEncoder(w).Encode(version); err != nil {
-		s.logger.Error("Failed to encode version response",
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		s.logger.Error("Failed to encode database health response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
 
-		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode version response"))
+		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode database health response"))
 	}
 }
 

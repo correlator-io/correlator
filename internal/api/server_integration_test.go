@@ -110,7 +110,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	server := NewServer(config, keyStore, nil)
 
 	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 
 		rr := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Successful Authentication with Authorization Bearer Header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
@@ -139,7 +139,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Missing API Key Returns 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -176,7 +176,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Invalid API Key Returns 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("X-Api-Key", "correlator_ak_"+string(make([]byte, 64)))
 
 		rr := httptest.NewRecorder()
@@ -209,7 +209,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 			t.Fatalf("Failed to add inactive API key: %v", err)
 		}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("X-Api-Key", inactiveKey)
 
 		rr := httptest.NewRecorder()
@@ -243,7 +243,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 			t.Fatalf("Failed to add expired API key: %v", err)
 		}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("X-Api-Key", expiredKey)
 
 		rr := httptest.NewRecorder()
@@ -253,23 +253,137 @@ func TestAuthenticationIntegration(t *testing.T) {
 			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
 		}
 	})
+}
 
-	// Enable after completing task 4
-	// t.Run("Health Endpoints Work Without Authentication", func(t *testing.T) {
-	//	endpoints := []string{"/ping", "/api/v1/health"}
-	//
-	//	for _, endpoint := range endpoints {
-	//		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
-	//
-	//		rr := httptest.NewRecorder()
-	//		server.httpServer.Handler.ServeHTTP(rr, req)
-	//
-	//		if status := rr.Code; status != http.StatusOK {
-	//			t.Errorf("Endpoint %s: Expected status %d, got %d. Body: %s",
-	//				endpoint, http.StatusOK, status, rr.Body.String())
-	//		}
-	//	}
-	// })
+// TestPublicEndpointAuthBypass tests that public health endpoints work without authentication.
+// This test validates the auth bypass functionality for Kubernetes health probes and monitoring tools.
+//
+// Test scenarios:
+//   - /ping works without API key (liveness probe)
+//   - /api/v1/health works without API key (basic health check)
+//
+// This test will FAIL until auth bypass is implemented in plugin_auth.go.
+func TestPublicEndpointAuthBypass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	testDB := setupTestDatabase(ctx, t)
+
+	// Wrap in storage.Connection
+	storageConn := &storage.Connection{DB: testDB.connection}
+
+	// Create key store
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create key store: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = keyStore.Close()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
+
+	// Create server config
+	config := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
+
+	// Create server with auth enabled (keyStore provided)
+	server := NewServer(config, keyStore, nil)
+
+	t.Run("Ping Endpoint Works Without Authentication", func(t *testing.T) {
+		// Make request WITHOUT API key
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Should return 200 OK (not 401 Unauthorized)
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("/ping: Expected status %d, got %d. Body: %s",
+				http.StatusOK, status, rr.Body.String())
+		}
+
+		// Verify response body
+		if body := rr.Body.String(); body != "pong" {
+			t.Errorf("/ping: Expected body 'pong', got '%s'", body)
+		}
+
+		// Verify correlation ID is still set (CorrelationID middleware runs before auth)
+		verifyCorrelationID(t, rr)
+	})
+
+	t.Run("Health Endpoint Works Without Authentication", func(t *testing.T) {
+		// Make request WITHOUT API key
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Should return 200 OK (not 401 Unauthorized)
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("/api/v1/health: Expected status %d, got %d. Body: %s",
+				http.StatusOK, status, rr.Body.String())
+		}
+
+		// Verify response is valid JSON
+		var health HealthStatus
+		if err := json.Unmarshal(rr.Body.Bytes(), &health); err != nil {
+			t.Fatalf("/api/v1/health: Failed to parse health response: %v", err)
+		}
+
+		// Verify health fields
+		if health.Status != "healthy" {
+			t.Errorf("/api/v1/health: Expected status 'healthy', got '%s'", health.Status)
+		}
+
+		if health.ServiceName != "correlator" {
+			t.Errorf("/api/v1/health: Expected serviceName 'correlator', got '%s'", health.ServiceName)
+		}
+
+		if health.Version == "" {
+			t.Error("/api/v1/health: Expected version to be set")
+		}
+
+		// Verify correlation ID is set
+		verifyCorrelationID(t, rr)
+	})
+
+	t.Run("Protected Endpoint Still Requires Authentication", func(t *testing.T) {
+		// Verify /api/v1/health/database still requires auth (it's protected)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Should return 401 Unauthorized
+		if status := rr.Code; status != http.StatusUnauthorized {
+			t.Errorf("/api/v1/health/database: Expected status %d (should require auth), got %d. Body: %s",
+				http.StatusUnauthorized, status, rr.Body.String())
+		}
+
+		// Verify RFC 7807 error response
+		verifyRFC7807Error(t, rr, http.StatusUnauthorized)
+	})
 }
 
 // TestRateLimitingIntegration tests the complete rate limiting flow with a real HTTP server and database.
@@ -382,7 +496,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 				apiKey = apiKey2 // pragma: allowlist secret
 			}
 
-			response := makeAuthenticatedRequest(server, apiKey, "/api/v1/version")
+			response := makeAuthenticatedRequest(server, apiKey, "/api/v1/health/database")
 			switch response.Code {
 			case http.StatusOK:
 				successCount++
@@ -423,7 +537,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 		// Send 10 requests rapidly
 		for i := 0; i < 10; i++ {
-			response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/version")
+			response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/health/database")
 			switch response.Code {
 			case http.StatusOK:
 				successCount++
@@ -444,7 +558,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 		// Send 10 requests to plugin-2
 		for i := 0; i < 10; i++ {
-			response := makeAuthenticatedRequest(server, apiKey2, "/api/v1/version")
+			response := makeAuthenticatedRequest(server, apiKey2, "/api/v1/health/database")
 			switch response.Code {
 			case http.StatusOK:
 				successCount++
@@ -484,14 +598,14 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 		// Send multiple unauthenticated requests - all should get 401
 		for i := 0; i < 5; i++ {
-			response := makeAuthenticatedRequest(server, "", "/api/v1/version")
+			response := makeAuthenticatedRequest(server, "", "/api/v1/health/database")
 			if response.Code != http.StatusUnauthorized {
 				t.Errorf("Unauthenticated request %d should get 401 (auth fails), got %d", i+1, response.Code)
 			}
 		}
 
 		// Verify authenticated requests work independently
-		response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/version")
+		response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/health/database")
 		if response.Code != http.StatusOK {
 			t.Errorf("Authenticated request should succeed, got status %d", response.Code)
 		}
@@ -515,7 +629,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		rateLimitedCount := 0
 
 		for i := 0; i < 10; i++ {
-			response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/version")
+			response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/health/database")
 			switch response.Code {
 			case http.StatusOK:
 				successCount++
@@ -537,7 +651,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		time.Sleep(600 * time.Millisecond)
 
 		// After wait, at least 1 token should have refilled
-		response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/version")
+		response := makeAuthenticatedRequest(server, apiKey1, "/api/v1/health/database")
 		if response.Code != http.StatusOK {
 			t.Errorf("Expected request to succeed after token refill, got %d. Body: %s",
 				response.Code, response.Body.String())
@@ -657,8 +771,8 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 
 	// Test Case 1: Successful Request Flows Through All Middleware
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {
-		// Make authenticated request to /api/v1/version
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		// Make authenticated request to /api/v1/health/database
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		req.Header.Set("X-Api-Key", testAPIKey)
 
 		rr := httptest.NewRecorder()
@@ -678,7 +792,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	// Test Case 2: Authentication Failure Has Correlation ID And CORS
 	t.Run("Authentication Failure Has Correlation ID And CORS", func(t *testing.T) {
 		// Make request with missing API key
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 		// No X-Api-Key header set
 
 		rr := httptest.NewRecorder()
@@ -704,7 +818,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		var rateLimitedResponse *httptest.ResponseRecorder
 
 		for i := 0; i < 10; i++ {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/database", nil)
 			req.Header.Set("X-Api-Key", testAPIKey)
 
 			rr := httptest.NewRecorder()
@@ -792,7 +906,7 @@ func createTestRateLimiter(globalRPS, pluginRPS, unauthRPS int) *middleware.InMe
 // Parameters:
 //   - server: The server instance to test against
 //   - apiKey: The API key to use for authentication (empty string for unauthenticated requests)
-//   - path: The request path (e.g., "/api/v1/version")
+//   - path: The request path (e.g., "/api/v1/health/database")
 //
 // Returns:
 //   - *httptest.ResponseRecorder containing the response
