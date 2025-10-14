@@ -44,12 +44,10 @@ func LoadConfig() *Config {
 		GlobalRPS: config.GetEnvInt("CORRELATOR_GLOBAL_RPS", defaultGlobalRPS),
 		PluginRPS: config.GetEnvInt("CORRELATOR_PLUGIN_RPS", defaultPluginRPS),
 		UnAuthRPS: config.GetEnvInt("CORRELATOR_UNAUTH_RPS", defaultUnAuthRPS),
-
 		// Burst overrides (0 = auto-compute)
 		GlobalBurst: config.GetEnvInt("CORRELATOR_GLOBAL_BURST", 0),
 		PluginBurst: config.GetEnvInt("CORRELATOR_PLUGIN_BURST", 0),
 		UnAuthBurst: config.GetEnvInt("CORRELATOR_UNAUTH_BURST", 0),
-
 		// Cleanup configuration
 		CleanupInterval: config.GetEnvDuration(
 			"CORRELATOR_RATE_LIMIT_CLEANUP_INTERVAL", rateLimiterCleanupInterval,

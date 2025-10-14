@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	burstCapacityMultiplier    int           = 2
-	maxPlugins                 int           = 100
-	defaultGlobalRPS           int           = 100
-	defaultPluginRPS           int           = 50
-	defaultUnAuthRPS           int           = 10
-	rateLimiterCleanupInterval time.Duration = 5 * time.Minute
-	rateLimiterIdleTimeout     time.Duration = 1 * time.Hour
+	burstCapacityMultiplier    int     = 2
+	maxPlugins                 int     = 100
+	defaultGlobalRPS           int     = 100
+	defaultPluginRPS           int     = 50
+	defaultUnAuthRPS           int     = 10
+	thresholdMultiplier        float64 = 0.8
+	thresholdPercentage        int     = 80
+	rateLimiterCleanupInterval         = 5 * time.Minute
+	rateLimiterIdleTimeout             = 1 * time.Hour
 )
 
 type (
@@ -182,6 +184,20 @@ func (rl *InMemoryRateLimiter) Allow(pluginID string) bool {
 			}
 
 			rl.perPlugin[pluginID] = pl
+
+			// Operational monitoring: warn when approaching max plugins limit
+			// This helps operators detect plugin ID proliferation before hitting hard limits
+			// In later phases, lets add open telemetry metrics to track this
+			currentCount := len(rl.perPlugin)
+			threshold := int(float64(rl.maxPlugins) * thresholdMultiplier) // 80% threshold
+
+			if currentCount >= threshold {
+				slog.Warn("rate limiter approaching max plugins limit",
+					"current_plugins", currentCount,
+					"max_plugins", rl.maxPlugins,
+					"threshold_percent", thresholdPercentage,
+					"recommendation", "investigate potential plugin ID proliferation or increase max_plugins limit")
+			}
 		}
 
 		rl.mu.Unlock()

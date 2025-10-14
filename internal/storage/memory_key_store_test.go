@@ -116,14 +116,22 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("Delete() unexpected error: %v", err)
 		}
 
-		// Verify deletion
+		// Verify soft delete: key still exists but active=false
 		found, exists := store.FindByKey(ctx, testKey.Key)
-		if exists {
-			t.Errorf("FindByKey() found deleted key")
+		if !exists {
+			t.Errorf("FindByKey() key should still exist after soft delete")
 		}
 
-		if found != nil {
-			t.Errorf("FindByKey() returned non-nil for deleted key")
+		if found == nil {
+			t.Fatalf("FindByKey() returned nil for soft-deleted key")
+		}
+
+		if found.Active != false {
+			t.Errorf("FindByKey() Active = %v, want false (soft delete should set active=false)", found.Active)
+		}
+
+		if found.ID != testKey.ID {
+			t.Errorf("FindByKey() ID = %v, want %v", found.ID, testKey.ID)
 		}
 	})
 

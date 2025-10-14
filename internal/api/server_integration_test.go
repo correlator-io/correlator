@@ -48,61 +48,10 @@ func TestAuthenticationIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start PostgreSQL container
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("correlator_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(120*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("Failed to start postgres container: %v", err)
-	}
-
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(pgContainer); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-	})
-
-	// Get connection string
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("Failed to get connection string: %v", err)
-	}
-
-	// Connect to database
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-
-	defer func() {
-		_ = db.Close()
-	}()
-
-	// Run migrations
-	if err := runTestMigrations(db); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-
-	// Create storage connection directly with config
-	conn, err := sql.Open("postgres", connStr)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-
-	defer func() {
-		_ = conn.Close()
-	}()
+	testDB := setupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: conn}
+	storageConn := &storage.Connection{DB: testDB.connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -110,9 +59,17 @@ func TestAuthenticationIntegration(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
-	defer func() {
+	t.Cleanup(func() {
 		_ = keyStore.Close()
-	}()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
 
 	// Create test API key
 	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
@@ -322,62 +279,10 @@ func TestRateLimitingIntegration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	// Start PostgreSQL container
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("correlator_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(120*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("Failed to start postgres container: %v", err)
-	}
-
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(pgContainer); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-	})
-
-	// Get connection string
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("Failed to get connection string: %v", err)
-	}
-
-	// Connect to database
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
-	}
-
-	defer func() {
-		_ = db.Close()
-	}()
-
-	// Run migrations
-	if err := runTestMigrations(db); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-
-	// Create storage connection
-	conn, err := sql.Open("postgres", connStr)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-
-	defer func() {
-		_ = conn.Close()
-	}()
+	testDB := setupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: conn}
+	storageConn := &storage.Connection{DB: testDB.connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -385,9 +290,17 @@ func TestRateLimitingIntegration(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
-	defer func() {
+	t.Cleanup(func() {
 		_ = keyStore.Close()
-	}()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
 
 	// Create test API keys for plugin-1 and plugin-2
 	apiKey1, err := storage.GenerateAPIKey("plugin-1")
