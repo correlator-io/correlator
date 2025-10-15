@@ -2,12 +2,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+)
+
+const (
+	healthCheckTimeout = 2 * time.Second
 )
 
 type (
@@ -24,18 +29,52 @@ type (
 		Version     string `json:"version"`
 		Uptime      string `json:"uptime,omitempty"`
 	}
+
+	// Route represents an HTTP route configuration with a path and handler.
+	// Used for declarative route registration with middleware bypass support.
+	Route struct {
+		Path    string           // The URL path for this route (e.g., "/ping", "/api/v1/health")
+		Handler http.HandlerFunc // The HTTP handler function for this route
+	}
 )
 
 // Routes sets up all HTTP routes for the API server.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
-	// Health check endpoint (no versioning for basic ping)
-	mux.HandleFunc("/ping", s.handlePing)
+	// Public health endpoints
+	s.registerPublicRoutes(
+		mux,
+		Route{"/ping", s.handlePing},     // K8s liveness probe
+		Route{"/ready", s.handleReady},   // K8s readiness probe
+		Route{"/health", s.handleHealth}, // Basic health check - status, uptime, version
+		Route{"/", s.handleNotFound},     // Catch-all handler for 404 responses
+	)
 
-	mux.HandleFunc("/api/v1/version", s.handleVersion)
-	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	// Protected endpoints
+	mux.HandleFunc("/api/v1/health/data-consistency", s.handleDataConsistency)
+}
 
-	// Catch-all handler for 404 responses
-	mux.HandleFunc("/", s.handleNotFound)
+// registerPublicRoutes registers HTTP routes that bypass authentication and rate limiting.
+// This is a convenience method that:
+//  1. Registers the route handler with the HTTP mux
+//  2. Automatically registers the path as a public endpoint (bypasses auth middleware)
+//
+// Public routes should only be used for health check endpoints that need to be accessible
+// without authentication (e.g., K8s liveness/readiness probes, monitoring tools).
+//
+// Security Warning: Never register business logic endpoints as public routes.
+//
+// Example:
+//
+//	s.registerPublicRoutes(
+//	    mux,
+//	    Route{"/ping", s.handlePing},
+//	    Route{"/health", s.handleHealth},
+//	)
+func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
+	for _, route := range routes {
+		mux.Handle(route.Path, route.Handler)
+		middleware.RegisterPublicEndpoint(route.Path)
+	}
 }
 
 // handlePing responds to ping requests for basic server validation.
@@ -43,6 +82,7 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
 	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
 	w.WriteHeader(http.StatusOK)
 
 	_, err := w.Write([]byte("pong"))
@@ -54,26 +94,112 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleVersion returns API version information for client compatibility.
-func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+// handleReady responds to Kubernetes readiness probes with storage backend health checks.
+// This endpoint verifies that all storage dependencies are healthy and ready to serve requests.
+//
+// Response codes:
+//   - 200 OK: All storage backends are healthy and ready to accept traffic
+//   - 503 Service Unavailable: Storage backend is unhealthy or unreachable
+//
+// K8s readiness probes use this endpoint to determine if the pod should receive traffic.
+// If this endpoint returns 503, K8s will stop routing requests to the pod until it recovers.
+//
+// The health check delegates to the APIKeyStore's HealthCheck method, which verifies
+// the underlying storage backend (database, cache, etc.) is operational.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
-	version := Version{
-		Version:     "v1.0.0",
-		ServiceName: "correlator",
-		BuildInfo:   "development",
+	// If API key store not configured, return ready (degraded mode - no auth required)
+	if s.apiKeyStore == nil { // pragma: allowlist secret
+		s.logger.Warn("API key store not configured - readiness check disabled",
+			slog.String("correlation_id", correlationID),
+		)
+
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+
+		_, err := w.Write([]byte("ready"))
+		if err != nil {
+			s.logger.Error("Failed to write ready response",
+				slog.String("correlation_id", correlationID),
+				slog.String("error", err.Error()),
+			)
+		}
+
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	// Create context with 2-second timeout for storage health check
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
+	defer cancel()
 
-	if err := json.NewEncoder(w).Encode(version); err != nil {
-		s.logger.Error("Failed to encode version response",
+	if err := s.apiKeyStore.HealthCheck(ctx); err != nil {
+		s.logger.Error("Storage health check failed",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
 
-		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode version response"))
+		// Return 503 Service Unavailable if storage backend is unhealthy
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusServiceUnavailable)
+
+		_, writeErr := w.Write([]byte("storage unavailable"))
+		if writeErr != nil {
+			s.logger.Error("Failed to write unavailable response",
+				slog.String("correlation_id", correlationID),
+				slog.String("error", writeErr.Error()),
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+
+	_, err := w.Write([]byte("ready"))
+	if err != nil {
+		s.logger.Error("Failed to write ready response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// handleDataConsistency returns correlator health check.
+// TODO: Implement full data consistency check by the end of week 2 or week 4.
+func (s *Server) handleDataConsistency(w http.ResponseWriter, r *http.Request) {
+	correlationID := middleware.GetCorrelationID(r.Context())
+
+	// Dummy response for now
+	health := map[string]interface{}{
+		"missing_correlations": 23, //nolint: mnd
+		"stale_events":         5,  //nolint: mnd
+		"plugin_failures":      map[string]interface{}{},
+	}
+
+	data, err := json.Marshal(health)
+	if err != nil {
+		s.logger.Error("Failed to marshal data consistency response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+		WriteErrorResponse(w, r, s.logger, InternalServerError("..."))
+
+		return
+	}
+
+	// Only write headers after successful marshaling
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := w.Write(data); err != nil {
+		// At this point headers already sent, log only
+		correlationID := middleware.GetCorrelationID(r.Context())
+		s.logger.Error("Failed to write data consistency response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
@@ -92,20 +218,32 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := HealthStatus{
 		Status:      "healthy",
 		ServiceName: "correlator",
-		Version:     "v1.0.0",
+		Version:     "v1.0.0", // TODO: inject version at build time at the end of week 2
 		Uptime:      uptime,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(health); err != nil {
+	data, err := json.Marshal(health)
+	if err != nil {
 		s.logger.Error("Failed to encode health response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
 
 		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode health response"))
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := w.Write(data); err != nil {
+		correlationID := middleware.GetCorrelationID(r.Context())
+		s.logger.Error("Failed to write data consistency response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 

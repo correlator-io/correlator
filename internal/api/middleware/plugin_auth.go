@@ -15,6 +15,28 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// publicEndpoints defines public endpoints that bypass authentication.
+// These endpoints are accessible without API keys (e.g., K8s health probes, monitoring tools).
+//
+// Security note: Only health check endpoints should be in this map.
+// Never add business logic endpoints to this bypass list.
+var publicEndpoints = map[string]bool{} //nolint: gochecknoglobals
+
+// RegisterPublicEndpoint registers an endpoint that bypasses authentication.
+// This should only be called during route setup for health check endpoints.
+//
+// Security Warning: Never register business logic endpoints as public.
+// Public endpoints are accessible without API keys and should only be used
+// for K8s health probes and monitoring tools.
+//
+// Example:
+//
+//	middleware.RegisterPublicEndpoint("/ping")
+//	middleware.RegisterPublicEndpoint("/api/v1/health")
+func RegisterPublicEndpoint(endpoint string) {
+	publicEndpoints[endpoint] = true
+}
+
 type (
 	// AuthError represents an authentication error with a specific type.
 	AuthError struct {
@@ -220,6 +242,13 @@ func authenticateRequest(
 func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if this path bypasses authentication (public endpoints)
+			if publicEndpoints[r.URL.Path] {
+				next.ServeHTTP(w, r)
+
+				return
+			}
+
 			authStart := time.Now()
 
 			// Extract API key from headers

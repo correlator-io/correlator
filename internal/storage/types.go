@@ -75,6 +75,8 @@ type (
 		Delete(ctx context.Context, keyID string) error
 		// ListByPlugin returns all API keys for a specific plugin
 		ListByPlugin(ctx context.Context, pluginID string) ([]*APIKey, error)
+		// HealthCheck verifies the storage backend is healthy and ready to serve requests
+		HealthCheck(ctx context.Context) error
 	}
 )
 
