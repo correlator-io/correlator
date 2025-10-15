@@ -565,6 +565,156 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	})
 }
 
+// TestReadyEndpoint tests the /ready endpoint for K8s readiness probes.
+// This endpoint performs dependency health checks with a 2-second timeout.
+// The server depends on apiKeyStore which in turn has a dependency on a database connection.
+// The logic is if the  last dependency in the stack is health, then the server is healthy.
+func TestReadyEndpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	testDB := setupTestDatabase(ctx, t)
+
+	// Wrap in storage.Connection
+	storageConn := &storage.Connection{DB: testDB.connection}
+
+	// Create key store
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create key store: %v", err)
+	}
+
+	// Create rate limiter with VERY restrictive limits
+	// If bypass didn't work, these limits would be hit immediately
+	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 plugin RPS, 1 unauth RPS
+
+	t.Cleanup(func() {
+		rateLimiter.Close()
+		_ = keyStore.Close()
+
+		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
+			t.Errorf("Failed to terminate postgres container: %v", err)
+		}
+
+		if err := testDB.connection.Close(); err != nil {
+			t.Errorf("Failed to close database connection: %v", err)
+		}
+	})
+
+	// Create server config
+	serverConfig := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
+
+	// Create server with key store that has database health checking
+	server := NewServer(serverConfig, keyStore, rateLimiter)
+
+	t.Run("Ready Endpoint Bypasses Authentication", func(t *testing.T) {
+		// Send 10 requests without API key - all should succeed (no auth required)
+		for i := 0; i < 10; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			if status := rr.Code; status != http.StatusOK {
+				t.Errorf("/ready: Request %d failed with status %d (should bypass auth)", i+1, status)
+			}
+		}
+	})
+
+	t.Run("Ready Endpoint Bypasses Rate Limiting", func(t *testing.T) {
+		// Send 100 rapid requests to /ready without API key
+		// If rate limiting applied, we would hit the limit immediately (1 RPS unauth)
+		successCount := 0
+		rateLimitedCount := 0
+
+		for i := 0; i < 100; i++ {
+			req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+			rr := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(rr, req)
+
+			switch rr.Code {
+			case http.StatusOK:
+				successCount++
+			case http.StatusTooManyRequests:
+				rateLimitedCount++
+			}
+		}
+
+		// ALL requests should succeed (no rate limiting)
+		if rateLimitedCount > 0 {
+			t.Errorf("/ready: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount)
+		}
+
+		if successCount != 100 {
+			t.Errorf("/ready: Expected 100 successful requests, got %d", successCount)
+		}
+	})
+
+	t.Run("Ready Endpoint Returns 200 When Database Available", func(t *testing.T) {
+		// Make request to /ready WITHOUT API key (public endpoint)
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Should return 200 OK (database is healthy)
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("/ready: Expected status %d, got %d. Body: %s",
+				http.StatusOK, status, rr.Body.String())
+		}
+
+		// Verify response body
+		if body := rr.Body.String(); body != "ready" {
+			t.Errorf("/ready: Expected body 'ready', got '%s'", body)
+		}
+
+		// Verify correlation ID is set
+		verifyCorrelationID(t, rr)
+	})
+
+	t.Run("Ready Endpoint Returns 503 When Database Unavailable", func(t *testing.T) {
+		// Close the database connection to simulate database outage
+		if err := testDB.connection.Close(); err != nil {
+			t.Fatalf("Failed to close database connection: %v", err)
+		}
+
+		// Make request to /ready WITHOUT API key (public endpoint)
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		// Should return 503 Service Unavailable (database is down)
+		if status := rr.Code; status != http.StatusServiceUnavailable {
+			t.Errorf("/ready: Expected status %d, got %d. Body: %s",
+				http.StatusServiceUnavailable, status, rr.Body.String())
+		}
+
+		// Verify response body
+		if body := rr.Body.String(); body != "storage unavailable" {
+			t.Errorf("/ready: Expected body 'storage unavailable', got '%s'", body)
+		}
+
+		// Verify correlation ID is still set (even on failure)
+		verifyCorrelationID(t, rr)
+	})
+}
+
 // TestRateLimitingIntegration tests the complete rate limiting flow with a real HTTP server and database.
 func TestRateLimitingIntegration(t *testing.T) {
 	if testing.Short() {

@@ -2,12 +2,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+)
+
+const (
+	healthCheckTimeout = 2 * time.Second
 )
 
 type (
@@ -38,7 +43,8 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Public health endpoints (no authentication required)
 	s.registerPublicRoutes(
 		mux,
-		Route{"/ping", s.handlePing},            // K8s liveness probe - must never require auth
+		Route{"/ping", s.handlePing},            // K8s liveness probe
+		Route{"/ready", s.handleReady},          // K8s readiness probe
 		Route{"/api/v1/health", s.handleHealth}, // Basic health check - public for monitoring tools
 		Route{"/", s.handleNotFound},            // Catch-all handler for 404 responses
 	)
@@ -81,6 +87,78 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	_, err := w.Write([]byte("pong"))
 	if err != nil {
 		s.logger.Error("Failed to write ping response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// handleReady responds to Kubernetes readiness probes with storage backend health checks.
+// This endpoint verifies that all storage dependencies are healthy and ready to serve requests.
+//
+// Response codes:
+//   - 200 OK: All storage backends are healthy and ready to accept traffic
+//   - 503 Service Unavailable: Storage backend is unhealthy or unreachable
+//
+// K8s readiness probes use this endpoint to determine if the pod should receive traffic.
+// If this endpoint returns 503, K8s will stop routing requests to the pod until it recovers.
+//
+// The health check delegates to the APIKeyStore's HealthCheck method, which verifies
+// the underlying storage backend (database, cache, etc.) is operational.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	correlationID := middleware.GetCorrelationID(r.Context())
+
+	// If API key store not configured, return ready (degraded mode - no auth required)
+	if s.apiKeyStore == nil { // pragma: allowlist secret
+		s.logger.Warn("API key store not configured - readiness check disabled",
+			slog.String("correlation_id", correlationID),
+		)
+
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+
+		_, err := w.Write([]byte("ready"))
+		if err != nil {
+			s.logger.Error("Failed to write ready response",
+				slog.String("correlation_id", correlationID),
+				slog.String("error", err.Error()),
+			)
+		}
+
+		return
+	}
+
+	// Create context with 2-second timeout for storage health check
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
+	defer cancel()
+
+	if err := s.apiKeyStore.HealthCheck(ctx); err != nil {
+		s.logger.Error("Storage health check failed",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+
+		// Return 503 Service Unavailable if storage backend is unhealthy
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusServiceUnavailable)
+
+		_, writeErr := w.Write([]byte("storage unavailable"))
+		if writeErr != nil {
+			s.logger.Error("Failed to write unavailable response",
+				slog.String("correlation_id", correlationID),
+				slog.String("error", writeErr.Error()),
+			)
+		}
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+
+	_, err := w.Write([]byte("ready"))
+	if err != nil {
+		s.logger.Error("Failed to write ready response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
