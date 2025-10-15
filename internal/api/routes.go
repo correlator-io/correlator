@@ -40,17 +40,17 @@ type (
 
 // Routes sets up all HTTP routes for the API server.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
-	// Public health endpoints (no authentication required)
+	// Public health endpoints
 	s.registerPublicRoutes(
 		mux,
-		Route{"/ping", s.handlePing},            // K8s liveness probe
-		Route{"/ready", s.handleReady},          // K8s readiness probe
-		Route{"/api/v1/health", s.handleHealth}, // Basic health check - public for monitoring tools
-		Route{"/", s.handleNotFound},            // Catch-all handler for 404 responses
+		Route{"/ping", s.handlePing},     // K8s liveness probe
+		Route{"/ready", s.handleReady},   // K8s readiness probe
+		Route{"/health", s.handleHealth}, // Basic health check - status, uptime, version
+		Route{"/", s.handleNotFound},     // Catch-all handler for 404 responses
 	)
 
-	// Protected endpoints (authentication required)
-	mux.HandleFunc("/api/v1/health/database", s.handleDatabaseHealth)
+	// Protected endpoints
+	mux.HandleFunc("/api/v1/health/data-consistency", s.handleDataConsistency)
 }
 
 // registerPublicRoutes registers HTTP routes that bypass authentication and rate limiting.
@@ -68,7 +68,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	s.registerPublicRoutes(
 //	    mux,
 //	    Route{"/ping", s.handlePing},
-//	    Route{"/api/v1/health", s.handleHealth},
+//	    Route{"/health", s.handleHealth},
 //	)
 func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
 	for _, route := range routes {
@@ -165,18 +165,16 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleDatabaseHealth returns database connection pool statistics (protected endpoint).
-// This is a temporary dummy implementation until Subtask 4.
-// TODO: Implement full database health checks with connection pool stats.
-func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
+// handleDataConsistency returns correlator health check.
+// TODO: Implement full data consistency check by the end of week 2 or week 4.
+func (s *Server) handleDataConsistency(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
 	// Dummy response for now
 	health := map[string]interface{}{
-		"status": "healthy",
-		"database": map[string]interface{}{
-			"connected": true,
-		},
+		"missing_correlations": 23, //nolint: mnd
+		"stale_events":         5,  //nolint: mnd
+		"plugin_failures":      map[string]interface{}{},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
