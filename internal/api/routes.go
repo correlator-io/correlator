@@ -82,6 +82,7 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
 	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
 	w.WriteHeader(http.StatusOK)
 
 	_, err := w.Write([]byte("pong"))
@@ -177,16 +178,28 @@ func (s *Server) handleDataConsistency(w http.ResponseWriter, r *http.Request) {
 		"plugin_failures":      map[string]interface{}{},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(health); err != nil {
-		s.logger.Error("Failed to encode database health response",
+	data, err := json.Marshal(health)
+	if err != nil {
+		s.logger.Error("Failed to marshal data consistency response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
+		WriteErrorResponse(w, r, s.logger, InternalServerError("..."))
 
-		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode database health response"))
+		return
+	}
+
+	// Only write headers after successful marshaling
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := w.Write(data); err != nil {
+		// At this point headers already sent, log only
+		correlationID := middleware.GetCorrelationID(r.Context())
+		s.logger.Error("Failed to write data consistency response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
@@ -205,20 +218,32 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := HealthStatus{
 		Status:      "healthy",
 		ServiceName: "correlator",
-		Version:     "v1.0.0",
+		Version:     "v1.0.0", // TODO: inject version at build time at the end of week 2
 		Uptime:      uptime,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(health); err != nil {
+	data, err := json.Marshal(health)
+	if err != nil {
 		s.logger.Error("Failed to encode health response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
 
 		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to encode health response"))
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := w.Write(data); err != nil {
+		correlationID := middleware.GetCorrelationID(r.Context())
+		s.logger.Error("Failed to write data consistency response",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
