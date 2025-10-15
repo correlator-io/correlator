@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,11 @@ const (
 	keyCreated = "created"
 	keyUpdated = "updated"
 	keyDeleted = "deleted"
+)
+
+var (
+	// ErrNoDatabaseConnection is returned when the PersistentKeyStore has a nil Connection.
+	ErrNoDatabaseConnection = errors.New("database connection not initialized")
 )
 
 // PersistentKeyStore implements APIKeyStore interface with PostgreSQL backend.
@@ -43,6 +49,17 @@ func (s *PersistentKeyStore) Close() error {
 	}
 
 	return nil
+}
+
+// HealthCheck verifies the database connection is healthy and ready to serve requests.
+// Delegates to the underlying connection's health check with appropriate timeout.
+// This method is used by K8s readiness probes and monitoring systems.
+func (s *PersistentKeyStore) HealthCheck(ctx context.Context) error {
+	if s.conn == nil {
+		return ErrNoDatabaseConnection
+	}
+
+	return s.conn.HealthCheck(ctx)
 }
 
 // FindByKey retrieves an API key by its key value using O(1) hash lookup.

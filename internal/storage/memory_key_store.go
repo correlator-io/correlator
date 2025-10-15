@@ -27,6 +27,13 @@ func NewInMemoryKeyStore() *InMemoryKeyStore {
 	}
 }
 
+// HealthCheck verifies the in-memory store is ready to serve requests.
+// In-memory stores are always ready (no external dependencies), so this always returns nil.
+// This method exists to satisfy the APIKeyStore interface.
+func (s *InMemoryKeyStore) HealthCheck(_ context.Context) error {
+	return nil // In-memory stores are always healthy
+}
+
 // FindByKey retrieves an API key by its key value.
 func (s *InMemoryKeyStore) FindByKey(_ context.Context, key string) (*APIKey, bool) {
 	s.mutex.RLock()
