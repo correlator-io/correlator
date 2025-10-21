@@ -1,0 +1,44 @@
+{
+  "eventTime": "2025-10-21T10:05:00Z",
+  "eventType": "COMPLETE",
+  "producer": "https://github.com/dbt-labs/dbt-core/tree/1.5.0",
+  "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+  "run": {
+    "runId": "550e8400-e29b-41d4-a716-446655440000",
+    "facets": {
+      "sql": {
+        "query": "SELECT * FROM raw.orders WHERE amount > 100"
+      }
+    }
+  },
+  "job": {
+    "namespace": "dbt://analytics",
+    "name": "transform_orders",
+    "facets": {}
+  },
+  "inputs": [
+    {
+      "namespace": "postgres://prod-db:5432",
+      "name": "raw.public.orders",
+      "facets": {},
+      "inputFacets": {
+        "dataQualityMetrics": {
+          "rowCount": 1000000
+        }
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "namespace": "postgres://prod-db:5432",
+      "name": "analytics.public.orders",
+      "facets": {},
+      "outputFacets": {
+        "outputStatistics": {
+          "rowCount": 500000,
+          "size": 52428800
+        }
+      }
+    }
+  ]
+}

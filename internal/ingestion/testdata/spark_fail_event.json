@@ -1,0 +1,28 @@
+{
+  "eventTime": "2025-10-21T10:15:00Z",
+  "eventType": "FAIL",
+  "producer": "https://github.com/OpenLineage/OpenLineage/tree/0.30.0/integration/spark",
+  "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+  "run": {
+    "runId": "spark-run-id",
+    "facets": {
+      "errorMessage": {
+        "message": "java.lang.OutOfMemoryError: Java heap space",
+        "programmingLanguage": "java",
+        "stackTrace": "java.lang.OutOfMemoryError: Java heap space\n\tat org.apache.spark..."
+      }
+    }
+  },
+  "job": {
+    "namespace": "spark://prod-cluster",
+    "name": "recommendation.train_model",
+    "facets": {}
+  },
+  "inputs": [
+    {
+      "namespace": "hdfs://namenode:8020",
+      "name": "/data/training/features.parquet",
+      "facets": {}
+    }
+  ]
+}
