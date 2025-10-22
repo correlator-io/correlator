@@ -121,51 +121,81 @@ func SortEventsByTime(events []RunEvent) []RunEvent {
 	return sorted
 }
 
-// ApplyEventTransitions applies a sequence of events and validates state transitions.
-// Events are sorted by eventTime before applying transitions to handle out-of-order arrival.
+// ValidateEventSequence validates state transitions and returns events in chronological order.
 //
-// Returns the final state after applying all events, or an error if any transition is invalid.
+// Events are sorted by eventTime (not arrival time) to handle out-of-order delivery
+// in distributed systems. State transitions are then validated according to the
+// OpenLineage run cycle specification.
 //
-// Example usage:
+// The finalState returned is the last non-OTHER event type, since OTHER events
+// provide metadata without affecting run state.
 //
-//	events := []RunEvent{
-//	    {EventTime: t1, EventType: EventTypeStart, ...},
-//	    {EventTime: t2, EventType: EventTypeComplete, ...},
-//	}
-//	finalState, err := ApplyEventTransitions(events)
+// Edge case handling:
+//   - OTHER events at start: Validation starts from first non-OTHER event
+//   - OTHER events at end: Final state is last non-OTHER event
+//   - All OTHER events: Final state is OTHER
+//
+// Returns:
+//   - sortedEvents: Events in chronological order (ready for persistence)
+//   - finalState: The final run state (ignores OTHER events)
+//   - error: Non-nil if any transition is invalid
+//
+// Example:
+//
+//	sorted, finalState, err := ValidateEventSequence(events)
 //	if err != nil {
-//	    // Handle invalid transition
+//	    return fmt.Errorf("invalid event sequence: %w", err)
 //	}
+//	return db.PersistEvents(sorted, finalState)
 //
-// This function is used by the storage layer to validate event sequences before
-// persisting to the database.
-func ApplyEventTransitions(events []RunEvent) (EventType, error) {
+// Spec: https://openlineage.io/docs/spec/run-cycle
+func ValidateEventSequence(events []RunEvent) ([]RunEvent, EventType, error) {
 	if len(events) == 0 {
-		return "", ErrEmptyEventList
+		return nil, "", ErrEmptyEventList
 	}
 
 	// Sort events by eventTime to handle out-of-order arrival
 	sorted := SortEventsByTime(events)
 
-	// Start with the first event type as initial state
-	currentState := sorted[0].EventType
+	// Find the first non-OTHER event to establish initial state
+	// Edge case: If all events are OTHER, start from first OTHER event
+	var currentState EventType
 
-	// Apply transitions sequentially
-	for i := 1; i < len(sorted); i++ {
-		nextState := sorted[i].EventType
+	startIdx := 0
 
-		// Validate transition
-		err := ValidateStateTransition(currentState, nextState)
-		if err != nil {
-			return "", fmt.Errorf("transition %d failed (%s → %s at %s): %w",
-				i, currentState, nextState, sorted[i].EventTime.Format("15:04:05"), err)
-		}
+	for i, event := range sorted {
+		if event.EventType != EventTypeOther {
+			currentState = event.EventType
+			startIdx = i + 1
 
-		// Update current state (skip OTHER events as they don't change state)
-		if nextState != EventTypeOther {
-			currentState = nextState
+			break
 		}
 	}
 
-	return currentState, nil
+	// If no non-OTHER events found, all events are OTHER
+	if currentState == "" {
+		return sorted, EventTypeOther, nil
+	}
+
+	// Apply transitions sequentially from first non-OTHER event
+	for i := startIdx; i < len(sorted); i++ {
+		nextState := sorted[i].EventType
+
+		// OTHER events can happen at any time (they provide metadata)
+		if nextState == EventTypeOther {
+			continue
+		}
+
+		// Validate non-OTHER transition
+		err := ValidateStateTransition(currentState, nextState)
+		if err != nil {
+			return nil, "", fmt.Errorf("transition %d failed (%s → %s at %s): %w",
+				i, currentState, nextState, sorted[i].EventTime.Format("15:04:05"), err)
+		}
+
+		// Update current state
+		currentState = nextState
+	}
+
+	return sorted, currentState, nil
 }
