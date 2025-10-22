@@ -1,0 +1,28 @@
+{
+  "eventTime": "2025-10-21T10:01:00Z",
+  "eventType": "START",
+  "producer": "https://github.com/OpenLineage/OpenLineage/tree/0.30.0/integration/airflow",
+  "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+  "run": {
+    "runId": "child-run-id",
+    "facets": {
+      "parent": {
+        "run": {
+          "runId": "parent-run-id"
+        },
+        "job": {
+          "namespace": "airflow://production",
+          "name": "daily_etl"
+        }
+      },
+      "nominalTime": {
+        "nominalStartTime": "2025-10-21T00:00:00Z"
+      }
+    }
+  },
+  "job": {
+    "namespace": "airflow://production",
+    "name": "daily_etl.load_users",
+    "facets": {}
+  }
+}
