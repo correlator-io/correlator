@@ -4,6 +4,8 @@ package ingestion
 
 import (
 	"time"
+
+	"github.com/correlator-io/correlator/internal/canonicalization"
 )
 
 type (
@@ -183,4 +185,61 @@ func (et EventType) IsValid() bool {
 // Spec: https://openlineage.io/docs/spec/run-cycle#run-states
 func (et EventType) IsTerminal() bool {
 	return et == EventTypeComplete || et == EventTypeFail || et == EventTypeAbort
+}
+
+// JobRunID returns the canonical job run ID for this event.
+//
+// This ID correlates all events from the same job run (START, COMPLETE, etc.).
+// The ID is deterministic and collision-resistant (SHA256 hash).
+//
+// Formula: SHA256(job.namespace + job.name + run.runId)
+//
+// Example:
+//
+//	event1 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "run-1"}}
+//	event2 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "run-1"}}
+//	event1.JobRunID() == event2.JobRunID()  // true (same run)
+//
+// Returns: 64-character lowercase hex string (SHA256 output).
+func (e *RunEvent) JobRunID() string {
+	return canonicalization.GenerateJobRunID(e.Job.Namespace, e.Job.Name, e.Run.ID)
+}
+
+// IdempotencyKey returns the idempotency key for this event.
+//
+// This key is used to detect duplicate events and prevent reprocessing.
+// The key includes producer, job, run, eventTime, and eventType for uniqueness.
+//
+// Formula: SHA256(producer + job.namespace + job.name + run.runId + eventTime + eventType)
+//
+// Example:
+//
+//	event1 := RunEvent{...} // Same event sent twice
+//	event2 := RunEvent{...} // Duplicate
+//	event1.IdempotencyKey() == event2.IdempotencyKey()  // true (duplicate)
+//
+// Returns: 64-character lowercase hex string (SHA256 output).
+func (e *RunEvent) IdempotencyKey() string {
+	return canonicalization.GenerateIdempotencyKey(
+		e.Producer,
+		e.Job.Namespace,
+		e.Job.Name,
+		e.Run.ID,
+		e.EventTime.Format("2006-01-02T15:04:05.999999999Z07:00"), // RFC3339Nano
+		string(e.EventType),
+	)
+}
+
+// URN returns the canonical URN for this dataset.
+//
+// Format: {namespace}/{name}
+//
+// Example:
+//
+//	dataset := Dataset{Namespace: "postgres://prod-db:5432", Name: "analytics.public.orders"}
+//	dataset.URN()  // "postgres://prod-db:5432/analytics.public.orders"
+//
+// Returns: URN string.
+func (d *Dataset) URN() string {
+	return canonicalization.GenerateDatasetURN(d.Namespace, d.Name)
 }
