@@ -4,25 +4,38 @@ package ingestion
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
 )
 
 // Sentinel errors for validation failures.
 var (
-	ErrNilEvent               = errors.New("event cannot be nil")
-	ErrInvalidEventType       = errors.New("invalid eventType")
-	ErrMissingEventTime       = errors.New("eventTime is required")
-	ErrMissingProducer        = errors.New("producer is required")
-	ErrMissingSchemaURL       = errors.New("schemaURL is required")
-	ErrMissingRunID           = errors.New("run.runId is required")
-	ErrMissingJobNamespace    = errors.New("job.namespace is required")
-	ErrMissingJobName         = errors.New("job.name is required")
-	ErrNilDataset             = errors.New("dataset cannot be nil")
+	ErrNilEvent                = errors.New("event cannot be nil")
+	ErrInvalidEventType        = errors.New("invalid eventType")
+	ErrMissingEventTime        = errors.New("eventTime is required")
+	ErrMissingProducer         = errors.New("producer is required")
+	ErrMissingSchemaURL        = errors.New("schemaURL is required")
+	ErrInvalidSchemaURL        = errors.New("schemaURL must be an OpenLineage spec URL")
+	ErrMissingRunID            = errors.New("run.runId is required")
+	ErrMissingJobNamespace     = errors.New("job.namespace is required")
+	ErrMissingJobName          = errors.New("job.name is required")
+	ErrNilDataset              = errors.New("dataset cannot be nil")
 	ErrDatasetMissingNamespace = errors.New("dataset.namespace is required")
-	ErrDatasetMissingName     = errors.New("dataset.name is required")
-	ErrDatasetInvalidURN      = errors.New("dataset URN format is invalid")
+	ErrDatasetMissingName      = errors.New("dataset.name is required")
+	ErrDatasetInvalidURN       = errors.New("dataset URN format is invalid")
 )
+
+// openLineageSchemaURLPattern is a pre-compiled regex for validating OpenLineage schema URLs.
+// This is compiled once at package initialization to avoid repeated compilation overhead
+// during validation of incoming events.
+//
+// The pattern validates that the URL:
+//   - Starts with https://openlineage.io/spec/
+//   - Contains a version in X-Y-Z format (e.g., 2-0-2, 1-8-0)
+//   - Ends with /OpenLineage.json
+var openLineageSchemaURLPattern = regexp.MustCompile(`^https://openlineage\.io/spec/\d+-\d+-\d+/OpenLineage\.json$`)
 
 // Validator performs semantic validation of OpenLineage RunEvents.
 // Validation strategy follows ADR 001: semantic validation (unmarshal + business rules)
@@ -73,6 +86,12 @@ func (v *Validator) ValidateBaseEvent(event *RunEvent) error {
 	// Validate schemaURL (required)
 	if event.SchemaURL == "" {
 		return ErrMissingSchemaURL
+	}
+
+	// Validate schemaURL format (must be an OpenLineage spec URL)
+	// We accept all OpenLineage versions (1.x, 2.x, etc.) to support heterogeneous producers
+	if !IsValidOpenLineageSchemaURL(event.SchemaURL) {
+		return fmt.Errorf("%w, got: %s", ErrInvalidSchemaURL, event.SchemaURL)
 	}
 
 	return nil
@@ -175,4 +194,54 @@ func (v *Validator) ValidateDataset(dataset *Dataset) error {
 	}
 
 	return nil
+}
+
+// ExtractOpenLineageVersion extracts the version string from an OpenLineage schemaURL.
+// Returns empty string if the URL is not a valid OpenLineage spec URL.
+//
+// Example:
+//
+//	ExtractOpenLineageVersion("https://openlineage.io/spec/2-0-2/OpenLineage.json")
+//	// Returns: "2.0.2"
+//
+// This function is useful for:
+//   - Logging/metrics: Track which OpenLineage versions are being used
+//   - Debugging: Identify version-specific behavior in production
+//   - Observability: Alert when new major versions appear
+//
+// The version is extracted by parsing the URL path and converting hyphens to dots.
+func ExtractOpenLineageVersion(schemaURL string) string {
+	// Validate it's a valid OpenLineage spec URL
+	if !IsValidOpenLineageSchemaURL(schemaURL) {
+		return ""
+	}
+
+	// Remove prefix and suffix to get version: "2-0-2/OpenLineage.json" -> "2-0-2"
+	remainder := strings.TrimPrefix(schemaURL, "https://openlineage.io/spec/")
+	versionWithHyphens := strings.TrimSuffix(remainder, "/OpenLineage.json")
+
+	// Convert hyphens to dots: "2-0-2" -> "2.0.2"
+	version := strings.ReplaceAll(versionWithHyphens, "-", ".")
+
+	return version
+}
+
+// IsValidOpenLineageSchemaURL validates that a URL is a valid OpenLineage schema URL.
+// It checks that the URL matches the expected format:
+//   - Starts with https://openlineage.io/spec/
+//   - Contains a version in X-Y-Z format (e.g., 2-0-2, 1-8-0)
+//   - Ends with /OpenLineage.json
+//
+// This function uses a pre-compiled regex pattern for performance, avoiding
+// regex compilation overhead on every validation call.
+//
+// Examples:
+//
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/2-0-2/OpenLineage.json")  // true
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/1-8-0/OpenLineage.json")  // true
+//	IsValidOpenLineageSchemaURL("https://example.com/schema.json")                     // false
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/")                        // false
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/garbage")                 // false
+func IsValidOpenLineageSchemaURL(url string) bool {
+	return openLineageSchemaURLPattern.MatchString(url)
 }

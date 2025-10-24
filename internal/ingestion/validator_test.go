@@ -304,6 +304,85 @@ func TestValidateRunEvent_MissingSchemaURL(t *testing.T) {
 	}
 }
 
+func TestValidateRunEvent_InvalidSchemaURL(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	validator := NewValidator()
+
+	tests := []struct {
+		name      string
+		schemaURL string
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "not an OpenLineage URL",
+			schemaURL: "https://example.com/schema.json",
+			wantError: true,
+			errorMsg:  "schemaURL must be an OpenLineage spec URL",
+		},
+		{
+			name:      "malformed URL",
+			schemaURL: "https://openlineage.io/spec/hacked",
+			wantError: true,
+			errorMsg:  "schemaURL must be an OpenLineage spec URL",
+		},
+		{
+			name:      "valid OpenLineage 2.0.2",
+			schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+			wantError: false,
+		},
+		{
+			name:      "valid OpenLineage 1.8.0",
+			schemaURL: "https://openlineage.io/spec/1-8-0/OpenLineage.json",
+			wantError: false,
+		},
+		{
+			name:      "valid OpenLineage 2.0.1",
+			schemaURL: "https://openlineage.io/spec/2-0-1/OpenLineage.json",
+			wantError: false,
+		},
+		{
+			name:      "valid OpenLineage 0.9.0 (pre-release)",
+			schemaURL: "https://openlineage.io/spec/0-9-0/OpenLineage.json",
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := &RunEvent{
+				EventTime: time.Now().UTC(),
+				EventType: EventTypeStart,
+				Producer:  "https://example.com/producer",
+				SchemaURL: tt.schemaURL,
+				Run: Run{
+					ID: "test-run-id",
+				},
+				Job: Job{
+					Namespace: "test://namespace",
+					Name:      "test_job",
+				},
+			}
+
+			err := validator.ValidateRunEvent(event)
+
+			switch tt.wantError {
+			case true:
+				if err == nil {
+					t.Errorf("ValidateRunEvent() should fail for schemaURL: %s", tt.schemaURL)
+				}
+			case false:
+				if err != nil {
+					t.Errorf("ValidateRunEvent() should succeed for valid schemaURL: %s, got error: %v", tt.schemaURL, err)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateRunEvent_MissingRunID(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -831,5 +910,166 @@ func TestValidateDataset_WithFacets(t *testing.T) {
 	err := validator.ValidateDataset(dataset)
 	if err != nil {
 		t.Errorf("ValidateDataset() should allow facets: %v", err)
+	}
+}
+
+// ==============================================================================
+// Unit Tests: IsValidOpenLineageSchemaURL Helper
+// ==============================================================================
+
+func TestIsValidOpenLineageSchemaURL(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name  string
+		url   string
+		valid bool
+	}{
+		{
+			name:  "valid 2.0.2",
+			url:   "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+			valid: true,
+		},
+		{
+			name:  "valid 1.8.0",
+			url:   "https://openlineage.io/spec/1-8-0/OpenLineage.json",
+			valid: true,
+		},
+		{
+			name:  "valid 0.9.0",
+			url:   "https://openlineage.io/spec/0-9-0/OpenLineage.json",
+			valid: true,
+		},
+		{
+			name:  "valid 10.20.30 (multi-digit)",
+			url:   "https://openlineage.io/spec/10-20-30/OpenLineage.json",
+			valid: true,
+		},
+		{
+			name:  "invalid - not OpenLineage domain",
+			url:   "https://example.com/spec/2-0-2/OpenLineage.json",
+			valid: false,
+		},
+		{
+			name:  "invalid - missing version",
+			url:   "https://openlineage.io/spec/OpenLineage.json",
+			valid: false,
+		},
+		{
+			name:  "invalid - malformed version (dots instead of hyphens)",
+			url:   "https://openlineage.io/spec/2.0.2/OpenLineage.json",
+			valid: false,
+		},
+		{
+			name:  "invalid - incomplete version",
+			url:   "https://openlineage.io/spec/2-0/OpenLineage.json",
+			valid: false,
+		},
+		{
+			name:  "invalid - garbage after prefix",
+			url:   "https://openlineage.io/spec/garbage",
+			valid: false,
+		},
+		{
+			name:  "invalid - only prefix",
+			url:   "https://openlineage.io/spec/",
+			valid: false,
+		},
+		{
+			name:  "invalid - empty string",
+			url:   "",
+			valid: false,
+		},
+		{
+			name:  "invalid - malformed URL",
+			url:   "not-a-url",
+			valid: false,
+		},
+		{
+			name:  "invalid - missing /OpenLineage.json",
+			url:   "https://openlineage.io/spec/2-0-2",
+			valid: false,
+		},
+		{
+			name:  "invalid - wrong file name",
+			url:   "https://openlineage.io/spec/2-0-2/Schema.json",
+			valid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsValidOpenLineageSchemaURL(tt.url)
+
+			if result != tt.valid {
+				t.Errorf("IsValidOpenLineageSchemaURL(%q) = %v, want %v",
+					tt.url, result, tt.valid)
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Unit Tests: ExtractOpenLineageVersion Helper
+// ==============================================================================
+
+func TestExtractOpenLineageVersion(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name            string
+		schemaURL       string
+		expectedVersion string
+	}{
+		{
+			name:            "version 2.0.2",
+			schemaURL:       "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+			expectedVersion: "2.0.2",
+		},
+		{
+			name:            "version 1.8.0",
+			schemaURL:       "https://openlineage.io/spec/1-8-0/OpenLineage.json",
+			expectedVersion: "1.8.0",
+		},
+		{
+			name:            "version 0.9.0",
+			schemaURL:       "https://openlineage.io/spec/0-9-0/OpenLineage.json",
+			expectedVersion: "0.9.0",
+		},
+		{
+			name:            "version 3.0.0 (future)",
+			schemaURL:       "https://openlineage.io/spec/3-0-0/OpenLineage.json",
+			expectedVersion: "3.0.0",
+		},
+		{
+			name:            "invalid URL",
+			schemaURL:       "https://example.com/schema.json",
+			expectedVersion: "",
+		},
+		{
+			name:            "malformed URL",
+			schemaURL:       "not-a-url",
+			expectedVersion: "",
+		},
+		{
+			name:            "empty string",
+			schemaURL:       "",
+			expectedVersion: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version := ExtractOpenLineageVersion(tt.schemaURL)
+
+			if version != tt.expectedVersion {
+				t.Errorf("ExtractOpenLineageVersion(%q) = %q, want %q",
+					tt.schemaURL, version, tt.expectedVersion)
+			}
+		})
 	}
 }
