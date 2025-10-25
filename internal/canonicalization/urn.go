@@ -4,10 +4,34 @@
 // correlation of lineage edges across different data tools and systems.
 //
 // URN Format: {namespace}/{name}
+//
 // Examples:
-//   - PostgreSQL: "postgres://prod-db:5432/analytics.public.orders"
+//   - PostgreSQL: "postgresql://prod-db/analytics.public.orders" (normalized from postgres://)
 //   - BigQuery: "bigquery/project.dataset.table"
-//   - S3: "s3://bucket//path/to/file.parquet" (note: double slash for root paths)
+//   - S3: "s3://bucket//path/to/file.parquet" (normalized from s3a://, double slash correct)
+//
+// Namespace Normalization:
+// URN generation automatically normalizes namespaces to prevent correlation failures
+// when different tools use different URI schemes or port conventions:
+//   - postgres:// → postgresql:// (dbt psycopg2 → Great Expectations SQLAlchemy)
+//   - s3a://, s3n:// → s3:// (Spark Hadoop → AWS standard)
+//   - Default port removal: postgresql://db:5432 → postgresql://db
+//
+// This ensures that datasets from different tools are recognized as the same entity
+// in the lineage graph, preventing correlation accuracy from dropping below 90%.
+//
+// Query-Side Usage:
+// ALWAYS use GenerateDatasetURN() when querying lineage edges to ensure normalized lookup:
+//
+//	// Storage layer example
+//	func (s *Store) GetLineageByDataset(namespace, name string) ([]Edge, error) {
+//	    urn := canonicalization.GenerateDatasetURN(namespace, name) // Auto-normalizes
+//	    rows, err := s.db.Query("SELECT * FROM lineage_edges WHERE dataset_urn = $1", urn)
+//	    // ...
+//	}
+//
+// NEVER construct URNs manually via string concatenation. This will break multi-tool
+// correlation when query URN doesn't match stored URN due to normalization differences.
 //
 // Spec: https://openlineage.io/docs/spec/naming#dataset-naming
 package canonicalization
@@ -34,8 +58,15 @@ const (
 //
 // Format: {namespace}/{name}
 //
+// The namespace is automatically normalized to prevent correlation failures when
+// different tools use different URI schemes (postgres vs postgresql, s3 vs s3a).
+//
 // The URN format uses a single forward slash as delimiter, which creates
 // double slashes for S3/HDFS root paths (intentional per OpenLineage spec).
+//
+// IMPORTANT: Always use this function for dataset URN generation AND queries to
+// ensure normalized lookup. Never construct URNs manually via string concatenation.
+// This is critical for multi-tool correlation accuracy (dbt + Great Expectations + Airflow + Spark).
 //
 // Parameters:
 //   - namespace: Data source identifier (e.g., "postgres://prod-db:5432", "s3://bucket", "bigquery")
@@ -43,17 +74,21 @@ const (
 //
 // Examples:
 //   - GenerateDatasetURN("postgres://prod-db:5432", "analytics.public.orders")
-//     → "postgres://prod-db:5432/analytics.public.orders"
-//   - GenerateDatasetURN("s3://bucket", "/file.csv") → "s3://bucket//file.csv" (double slash correct)
+//     → "postgresql://prod-db/analytics.public.orders" (normalized!)
+//   - GenerateDatasetURN("s3a://bucket", "/file.csv") → "s3://bucket//file.csv" (normalized, double slash correct)
 //   - GenerateDatasetURN("bigquery", "project.dataset.table") → "bigquery/project.dataset.table"
 //   - GenerateDatasetURN("", "table") → "/table"
 //   - GenerateDatasetURN("namespace", "") → "namespace/"
 //
-// Returns: URN string (always includes delimiter even if namespace or name is empty).
+// Returns: Normalized URN string (always includes delimiter even if namespace or name is empty).
 func GenerateDatasetURN(namespace, name string) string {
-	// Simple concatenation with "/" delimiter
+	// Normalize namespace to prevent multi-tool correlation failures
+	// (e.g., dbt uses postgres://, Great Expectations uses postgresql://)
+	normalized := NormalizeNamespace(namespace)
+
+	// Concatenate with "/" delimiter
 	// Intentionally preserves double slashes for S3/HDFS root paths
-	return namespace + "/" + name
+	return normalized + "/" + name
 }
 
 // ParseDatasetURN parses a URN string into namespace and name components.

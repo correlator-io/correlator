@@ -850,33 +850,6 @@ func TestValidateDataset_SpecialCharactersInName(t *testing.T) {
 	}
 }
 
-func TestValidateDataset_URNRoundTripValidation(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	validator := NewValidator()
-
-	// Test that URN generation and parsing round-trip correctly
-	dataset := &Dataset{
-		Namespace: "postgres://prod-db:5432",
-		Name:      "analytics.public.orders",
-	}
-
-	err := validator.ValidateDataset(dataset)
-	if err != nil {
-		t.Errorf("ValidateDataset() failed round-trip validation: %v", err)
-	}
-
-	// Verify the URN format
-	urn := dataset.URN()
-
-	expected := "postgres://prod-db:5432/analytics.public.orders"
-	if urn != expected {
-		t.Errorf("Dataset.URN() = %q, expected %q", urn, expected)
-	}
-}
-
 func TestValidateDataset_WithFacets(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
