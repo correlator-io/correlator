@@ -16,7 +16,8 @@ func TestGenerateDatasetURN_PostgreSQL(t *testing.T) {
 
 	urn := GenerateDatasetURN("postgres://prod-db:5432", "analytics.public.orders")
 
-	expected := "postgres://prod-db:5432/analytics.public.orders"
+	// Namespace is normalized: postgres → postgresql, default port removed
+	expected := "postgresql://prod-db/analytics.public.orders"
 	if urn != expected {
 		t.Errorf("GenerateDatasetURN() = %q, expected %q", urn, expected)
 	}
@@ -120,7 +121,7 @@ func TestGenerateDatasetURN_FromParts(t *testing.T) {
 			name:      "PostgreSQL",
 			namespace: "postgres://prod-db:5432",
 			dataName:  "analytics.public.orders",
-			expected:  "postgres://prod-db:5432/analytics.public.orders",
+			expected:  "postgresql://prod-db/analytics.public.orders", // Normalized
 		},
 		{
 			name:      "BigQuery",
@@ -330,7 +331,8 @@ func TestGenerateDatasetURN_OnlyNamespace(t *testing.T) {
 
 	urn := GenerateDatasetURN("postgres://prod-db:5432", "")
 
-	expected := "postgres://prod-db:5432/"
+	// Namespace is normalized: postgres → postgresql, default port removed
+	expected := "postgresql://prod-db/"
 	if urn != expected {
 		t.Errorf("GenerateDatasetURN() = %q, expected %q", urn, expected)
 	}
@@ -388,7 +390,7 @@ func TestGenerateDatasetURN_SpecialCharacters(t *testing.T) {
 		{
 			name:      "Unicode in name",
 			namespace: "test://ns",
-			dataName:  "数据表_中文", //nolint: gosmopolitan
+			dataName:  "数据表_中文",           //nolint: gosmopolitan
 			expected:  "test://ns/数据表_中文", //nolint: gosmopolitan
 		},
 	}
@@ -477,7 +479,8 @@ func TestGenerateDatasetURN_EmptyName(t *testing.T) {
 	}
 
 	urn := GenerateDatasetURN("postgres://host:5432", "")
-	expected := "postgres://host:5432/"
+	// Namespace is normalized: postgres → postgresql, default port removed
+	expected := "postgresql://host/"
 
 	if urn != expected {
 		t.Errorf("GenerateDatasetURN(\"postgres://host:5432\", \"\") = %q, expected %q", urn, expected)
@@ -507,7 +510,8 @@ func TestParseDatasetURN_RoundTrip(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Test that GenerateDatasetURN + ParseDatasetURN is idempotent
+	// Test normalization idempotency: once normalized, stays normalized
+	// This is the CORRECT behavior - normalization prevents duplicates
 	testCases := []struct {
 		namespace string
 		name      string
@@ -521,23 +525,170 @@ func TestParseDatasetURN_RoundTrip(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.namespace+"/"+tc.name, func(t *testing.T) {
-			// Generate URN
-			urn := GenerateDatasetURN(tc.namespace, tc.name)
+			// Generate URN (this normalizes the namespace)
+			normalizedURN := GenerateDatasetURN(tc.namespace, tc.name)
 
-			// Parse it back
-			namespace, name, err := ParseDatasetURN(urn)
+			// Parse the normalized URN
+			namespace, name, err := ParseDatasetURN(normalizedURN)
 			if err != nil {
-				t.Fatalf("ParseDatasetURN(%q) failed: %v", urn, err)
+				t.Fatalf("ParseDatasetURN(%q) failed: %v", normalizedURN, err)
 			}
 
-			// Should match original
-			if namespace != tc.namespace {
-				t.Errorf("Round-trip namespace: got %q, expected %q", namespace, tc.namespace)
+			// Regenerate from parsed components
+			regeneratedURN := GenerateDatasetURN(namespace, name)
+
+			// Test idempotency: normalized → parsed → regenerated should be identical
+			if regeneratedURN != normalizedURN {
+				t.Errorf("Normalization not idempotent:\n"+
+					"  First:  %q\n"+
+					"  Second: %q", normalizedURN, regeneratedURN)
 			}
 
+			// Verify name is preserved (never normalized)
 			if name != tc.name {
-				t.Errorf("Round-trip name: got %q, expected %q", name, tc.name)
+				t.Errorf("Name changed during round-trip: got %q, expected %q", name, tc.name)
 			}
 		})
+	}
+}
+
+// ==============================================================================
+// Unit Tests: Multi-Tool Normalization (Prevents Correlation Failures)
+// ==============================================================================
+
+func TestGenerateDatasetURN_MultiToolNormalization(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Test that different tools referring to the same dataset produce identical URNs
+	tests := []struct {
+		name       string
+		namespace1 string
+		namespace2 string
+		dataset    string
+	}{
+		{
+			name:       "postgres vs postgresql scheme (dbt vs Great Expectations)",
+			namespace1: "postgres://prod-db:5432",
+			namespace2: "postgresql://prod-db:5432",
+			dataset:    "analytics.public.orders",
+		},
+		{
+			name:       "s3 vs s3a scheme (Airflow vs Spark)",
+			namespace1: "s3://bucket",
+			namespace2: "s3a://bucket",
+			dataset:    "/data/orders.parquet",
+		},
+		{
+			name:       "s3 vs s3n scheme (AWS vs legacy Hadoop)",
+			namespace1: "s3://bucket",
+			namespace2: "s3n://bucket",
+			dataset:    "/data/orders.parquet",
+		},
+		{
+			name:       "with vs without default PostgreSQL port",
+			namespace1: "postgresql://db:5432",
+			namespace2: "postgresql://db",
+			dataset:    "schema.table",
+		},
+		{
+			name:       "with vs without default MySQL port",
+			namespace1: "mysql://db:3306",
+			namespace2: "mysql://db",
+			dataset:    "schema.table",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			urn1 := GenerateDatasetURN(tt.namespace1, tt.dataset)
+			urn2 := GenerateDatasetURN(tt.namespace2, tt.dataset)
+
+			if urn1 != urn2 {
+				t.Errorf("Correlation WILL FAIL without normalization:\n"+
+					"  Tool 1 URN: %s\n"+
+					"  Tool 2 URN: %s\n"+
+					"IMPACT: Dataset appears as duplicate, correlation accuracy drops below 90%%",
+					urn1, urn2)
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Benchmarks: Normalization Performance
+// ==============================================================================
+
+func BenchmarkNormalizeNamespace(b *testing.B) {
+	if !testing.Short() {
+		b.Skip("skipping benchmark in non-short mode")
+	}
+
+	namespaces := []string{
+		"postgres://prod-db:5432",
+		"postgresql://prod-db:5432",
+		"s3a://bucket",
+		"bigquery",
+		"mysql://user:pass@host:3306/db?sslmode=require", // pragma: allowlist secret
+		"kafka://broker:9092",
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, ns := range namespaces {
+			_ = NormalizeNamespace(ns)
+		}
+	}
+}
+
+func BenchmarkGenerateDatasetURN(b *testing.B) {
+	if !testing.Short() {
+		b.Skip("skipping benchmark in non-short mode")
+	}
+
+	testCases := []struct {
+		namespace string
+		name      string
+	}{
+		{"postgres://prod-db:5432", "analytics.public.orders"},
+		{"s3a://bucket", "/data/file.parquet"},
+		{"bigquery", "project.dataset.table"},
+		{"mysql://db:3306", "schema.table"},
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for _, tc := range testCases {
+			_ = GenerateDatasetURN(tc.namespace, tc.name)
+		}
+	}
+}
+
+func BenchmarkGenerateDatasetURN_WithNormalization(b *testing.B) {
+	if !testing.Short() {
+		b.Skip("skipping benchmark in non-short mode")
+	}
+
+	// Benchmark specifically postgres → postgresql normalization overhead
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = GenerateDatasetURN("postgres://prod-db:5432", "analytics.orders")
+	}
+}
+
+func BenchmarkGenerateDatasetURN_WithoutNormalization(b *testing.B) {
+	if !testing.Short() {
+		b.Skip("skipping benchmark in non-short mode")
+	}
+
+	// Benchmark passthrough (no normalization needed)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = GenerateDatasetURN("bigquery", "project.dataset.table")
 	}
 }

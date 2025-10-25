@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/correlator-io/correlator/internal/canonicalization"
 )
 
 // Sentinel errors for validation failures.
@@ -24,7 +22,6 @@ var (
 	ErrNilDataset              = errors.New("dataset cannot be nil")
 	ErrDatasetMissingNamespace = errors.New("dataset.namespace is required")
 	ErrDatasetMissingName      = errors.New("dataset.name is required")
-	ErrDatasetInvalidURN       = errors.New("dataset URN format is invalid")
 )
 
 // openLineageSchemaURLPattern is a pre-compiled regex for validating OpenLineage schema URLs.
@@ -138,21 +135,22 @@ func (v *Validator) ValidateRunEvent(event *RunEvent) error {
 	return nil
 }
 
-// ValidateDataset validates that a Dataset contains all required OpenLineage fields
-// and satisfies URN format requirements.
+// ValidateDataset validates that a Dataset contains all required OpenLineage fields.
 //
-// Validation includes:
-//   - Required field validation (namespace, name must not be empty)
-//   - Advanced URN format validation (round-trip parse check)
+// Validation rules:
+//   - Dataset must not be nil
+//   - Namespace must not be empty (data source identifier)
+//   - Name must not be empty (dataset path/identifier)
 //
 // Required fields (per OpenLineage v2 spec):
-//   - namespace: Must not be empty (data source identifier)
-//   - name: Must not be empty (dataset path/identifier)
+//   - namespace: Data source identifier (e.g., "postgres://prod-db:5432", "s3://bucket", "bigquery")
+//   - name: Dataset path/identifier (e.g., "analytics.public.orders", "/path/to/file.parquet")
 //
-// URN format validation:
-//   - URN must contain "/" delimiter
-//   - URN must parse correctly (namespace and name must be recoverable)
-//   - Prevents malformed URNs like "namespace:" or "namespace//" from reaching database
+// URN format validation is deferred to the storage layer when URNs are generated.
+// This separation of concerns ensures:
+//   - Validator validates OpenLineage spec compliance (required fields, structure)
+//   - Canonicalization validates URN format (namespace normalization, parsing)
+//   - Storage layer handles URN generation errors gracefully
 //
 // Examples of valid datasets:
 //   - {Namespace: "postgres://prod-db:5432", Name: "analytics.public.orders"}
@@ -174,23 +172,6 @@ func (v *Validator) ValidateDataset(dataset *Dataset) error {
 	// Validate name (required)
 	if dataset.Name == "" {
 		return ErrDatasetMissingName
-	}
-
-	// Advanced URN format validation
-	// Generate URN from dataset fields
-	urn := canonicalization.GenerateDatasetURN(dataset.Namespace, dataset.Name)
-
-	// Attempt to parse URN back - this validates format
-	namespace, name, err := canonicalization.ParseDatasetURN(urn)
-	if err != nil {
-		return fmt.Errorf("%w: %w (namespace=%q, name=%q, urn=%q)",
-			ErrDatasetInvalidURN, err, dataset.Namespace, dataset.Name, urn)
-	}
-
-	// Verify round-trip: parsed values should match original
-	if namespace != dataset.Namespace || name != dataset.Name {
-		return fmt.Errorf("%w: round-trip mismatch (original: namespace=%q name=%q, parsed: namespace=%q name=%q)",
-			ErrDatasetInvalidURN, dataset.Namespace, dataset.Name, namespace, name)
 	}
 
 	return nil
