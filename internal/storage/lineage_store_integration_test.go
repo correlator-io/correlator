@@ -43,7 +43,7 @@ func TestLineageStoreIntegration(t *testing.T) {
 	t.Run("StoreEvents_AllSuccess", testStoreEventsAllSuccess(ctx, store))
 	t.Run("StoreEvents_PartialSuccess", testStoreEventsPartialSuccess(ctx, store))
 	t.Run("StoreEvents_AllDuplicates", testStoreEventsAllDuplicates(ctx, store))
-	t.Run("StoreEvent_DeferredFKConstraints", testStoreEventDeferredFKConstraints(ctx, store, conn))
+	t.Run("DeferredFKConstraints_TableLevel", testDeferredFKConstraintsAtTableLevel(ctx, conn))
 	t.Run("StoreEvent_StateHistoryUpdate", testStoreEventStateHistoryUpdate(ctx, store, conn))
 	t.Run("StoreEvent_ProducerExtraction", testStoreEventProducerExtraction(ctx, store, conn))
 	t.Run("StoreEvent_DatasetFacetMerge", testStoreEventDatasetFacetMerge(ctx, store, conn))
@@ -489,32 +489,100 @@ func testStoreEventsAllDuplicates(ctx context.Context, store *LineageStore) func
 	}
 }
 
-// testStoreEventDeferredFKConstraints verifies deferred FK constraint handling.
-// Expected: Event B references dataset from Event A (concurrent scenario works).
-func testStoreEventDeferredFKConstraints(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
+// testDeferredFKConstraintsAtTableLevel verifies PostgreSQL deferred FK constraints work correctly.
+// This test directly verifies the database-level deferred FK behavior by inserting a lineage_edge
+// BEFORE the referenced dataset exists, which would fail with immediate FK constraints.
+//
+// Expected: Can insert lineage_edge before dataset exists, FK constraint checked at COMMIT.
+func testDeferredFKConstraintsAtTableLevel(ctx context.Context, conn *Connection) func(*testing.T) {
 	return func(t *testing.T) {
-		// This test verifies that deferred FK constraints allow:
-		// - Event creating dataset X and lineage edge referencing X
-		// - Both operations succeed within same transaction
-		event := createTestEvent(
-			"dbt-deferred-1",
-			ingestion.EventTypeComplete,
-			2, // 2 inputs
-			2, // 2 outputs
-		)
+		jobRunID := "test-deferred-fk-" + uuid.NewString()
+		datasetURN := "urn:postgresql://prod-db:5432/analytics.public.test_deferred_table"
 
-		stored, _, err := store.StoreEvent(ctx, event)
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
-			t.Fatalf("StoreEvent() error = %v, want nil (deferred FK should handle)", err)
+			t.Fatalf("BeginTx failed: %v", err)
 		}
 
-		if !stored {
-			t.Errorf("StoreEvent() stored = false, want true")
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		// Step 1: Create job_run (required by job_run_id FK in lineage_edges)
+		//nolint:dupword
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO job_runs (
+				job_run_id, run_id, job_name, job_namespace,
+				current_state, event_type, event_time, state_history,
+				metadata, producer_name, started_at, created_at, updated_at
+			) VALUES (
+				$1, $2, 'test_job', 'test://namespace',
+				'START', 'START', NOW(), '{"transitions": []}',
+				'{}', 'test-producer', NOW(), NOW(), NOW()
+			)
+		`, jobRunID, uuid.NewString())
+		if err != nil {
+			t.Fatalf("Failed to insert job_run: %v", err)
 		}
 
-		// Verify all datasets and edges created successfully
-		verifyDatasetCountForJobRun(ctx, t, conn, event.JobRunID(), 4) // 2 inputs + 2 outputs
-		verifyLineageEdgeCount(ctx, t, conn, event.JobRunID(), 4)
+		// Step 2: CRITICAL - Insert lineage_edge BEFORE dataset exists
+		// This creates a temporary FK violation (dataset_urn -> datasets.dataset_urn)
+		// WITHOUT deferred FK: Would fail immediately with FK constraint error
+		// WITH deferred FK: Allowed, constraint checked at COMMIT time
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO lineage_edges (
+				job_run_id, dataset_urn, edge_type, created_at
+			) VALUES ($1, $2, 'input', NOW())
+		`, jobRunID, datasetURN)
+		if err != nil {
+			t.Fatalf("Inserting edge before dataset should succeed with deferred FK, got: %v", err)
+		}
+
+		// At this point, FK is violated but transaction hasn't committed yet
+		// This proves FK constraint check is DEFERRED (not immediate)
+
+		// Step 3: Insert dataset (parent row) to satisfy FK constraint before COMMIT
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO datasets (
+				dataset_urn, name, namespace, facets, created_at, updated_at
+			) VALUES ($1, $2, $3, '{}', NOW(), NOW())
+		`, datasetURN, "analytics.public.test_deferred_table", "postgresql://prod-db:5432")
+		if err != nil {
+			t.Fatalf("Failed to insert dataset: %v", err)
+		}
+
+		// Step 4: COMMIT - Deferred FK constraint check happens HERE
+		// Should succeed because FK is now satisfied (dataset exists)
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit failed, but FK should be satisfied: %v", err)
+		}
+
+		// Step 5: Verify both rows were committed successfully
+		var edgeCount int
+
+		err = conn.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1
+		`, jobRunID).Scan(&edgeCount)
+		if err != nil {
+			t.Fatalf("Failed to query lineage_edges: %v", err)
+		}
+
+		if edgeCount != 1 {
+			t.Errorf("Expected 1 lineage_edge, got %d", edgeCount)
+		}
+
+		var datasetCount int
+
+		err = conn.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM datasets WHERE dataset_urn = $1
+		`, datasetURN).Scan(&datasetCount)
+		if err != nil {
+			t.Fatalf("Failed to query datasets: %v", err)
+		}
+
+		if datasetCount != 1 {
+			t.Errorf("Expected 1 dataset, got %d", datasetCount)
+		}
 	}
 }
 
