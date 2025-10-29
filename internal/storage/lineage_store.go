@@ -75,6 +75,36 @@ func (s *LineageStore) HealthCheck(ctx context.Context) error {
 
 // StoreEvent implements ingestion.Store interface.
 // Stores a single OpenLineage event with idempotency, out-of-order handling, and deferred FK constraints.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control. The operation respects context cancellation.
+//   - event: The OpenLineage RunEvent to store. Must not be nil and must have valid required fields.
+//
+// Returns three values: (stored, duplicate, error)
+//   - stored (first bool): true if event was newly stored, false if duplicate or error occurred
+//   - duplicate (second bool): true if event was a duplicate (idempotent), false otherwise
+//   - error: non-nil if storage operation failed
+//
+// Return value combinations:
+//   - (true, false, nil)  → Event stored successfully (new event)
+//   - (false, true, nil)  → Duplicate event detected (idempotent, HTTP 200 OK)
+//   - (false, false, err) → Storage operation failed (HTTP 500 or 422)
+//
+// The function performs the following operations in order:
+//  1. Validates the event structure (nil checks, required fields)
+//  2. Checks idempotency using SHA256-based key (24-hour TTL)
+//  3. Begins transaction with deferred FK constraints
+//  4. Upserts job_run record (handles out-of-order via eventTime comparison)
+//  5. Upserts datasets and creates lineage edges (separate row per input/output)
+//  6. Records idempotency key with 24-hour expiration
+//  7. Commits transaction
+//
+// Out-of-order handling: Events are compared by eventTime in SQL using CASE statements.
+// Older events cannot overwrite newer state, but are recorded in state_history JSONB.
+//
+// Idempotency: Duplicate events (within 24 hours) return (false, true, nil) instead of
+// storing again. This follows industry standard where duplicates return
+// 200 OK (success) not 409 Conflict (error).
 func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent) (bool, bool, error) {
 	if err := s.validateRunEvent(event); err != nil {
 		return false, false, err
@@ -144,13 +174,20 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 // one bad event doesn't prevent other events from being stored. This is critical for
 // production reliability where 99 good events shouldn't fail because of 1 bad event.
 //
-// Returns a result for each event to support 207 Multi-Status HTTP responses.
+// Parameters:
+//   - ctx: Context for cancellation and timeout control.
+//   - events: Slice of pointers to RunEvent structs to store. Pointers avoid copying large structs.
+//
+// Returns two values: (results, error)
+//   - results: Slice of pointers to EventStoreResult, one per input event, for 207 Multi-Status responses.
+//   - error: Non-nil only for catastrophic failures (context cancelled, database connection lost).
+//
 // Returns operation-level error only for catastrophic failures (context cancelled, database connection lost).
 func (s *LineageStore) StoreEvents(
 	ctx context.Context,
-	events []ingestion.RunEvent,
-) ([]ingestion.EventStoreResult, error) {
-	results := make([]ingestion.EventStoreResult, len(events))
+	events []*ingestion.RunEvent,
+) ([]*ingestion.EventStoreResult, error) {
+	results := make([]*ingestion.EventStoreResult, len(events))
 
 	// Process each event independently (per-event transactions)
 	for i := range events {
@@ -165,9 +202,9 @@ func (s *LineageStore) StoreEvents(
 			}
 		}
 
-		stored, duplicate, err := s.StoreEvent(ctx, &events[i])
-		results[i] = ingestion.EventStoreResult{
-			Event:     &events[i],
+		stored, duplicate, err := s.StoreEvent(ctx, events[i])
+		results[i] = &ingestion.EventStoreResult{
+			Event:     events[i],
 			Stored:    stored,
 			Duplicate: duplicate,
 			Error:     err,
@@ -315,6 +352,31 @@ func (s *LineageStore) checkIdempotency(ctx context.Context, idempotencyKey stri
 
 // upsertJobRun inserts or updates a job_run record.
 // Handles out-of-order events by only updating if new event has later eventTime.
+//
+// Database Trigger Integration:
+// This method triggers the job_run_state_validation database trigger (migration 005)
+// which runs BEFORE UPDATE and provides two critical functions:
+//
+//  1. Terminal State Protection: Prevents invalid transitions from terminal states
+//     (COMPLETE, FAIL, ABORT) to non-terminal states. Returns error if violated.
+//
+//  2. State History Tracking: Automatically records state transitions in the
+//     state_history JSONB column with schema: {from, to, event_time, updated_at}.
+//     This happens automatically on every UPDATE that changes current_state.
+//
+// Example state_history after START → RUNNING → COMPLETE:
+//
+//	{
+//	  "transitions": [
+//	    {"from": "START", "to": "RUNNING", "event_time": "...", "updated_at": "..."},
+//	    {"from": "RUNNING", "to": "COMPLETE", "event_time": "...", "updated_at": "..."}
+//	  ]
+//	}
+//
+// Out-of-order Handling:
+// Uses CASE statements with eventTime comparison to prevent older events from
+// overwriting newer state. Only events with eventTime > existing eventTime update
+// current_state and event_type fields.
 func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *ingestion.RunEvent) error {
 	jobRunID := event.JobRunID()
 	producerName := extractProducerName(event.Producer)
@@ -369,22 +431,8 @@ func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *inge
 				ELSE job_runs.event_type
 			END,
 			event_time = GREATEST(job_runs.event_time, EXCLUDED.event_time),
-			state_history = CASE
-				WHEN EXCLUDED.event_time > job_runs.event_time THEN
-					jsonb_set(
-						job_runs.state_history,
-						'{transitions}',
-						COALESCE(job_runs.state_history->'transitions', '[]'::jsonb) || jsonb_build_array(
-							jsonb_build_object(
-								'from_state', job_runs.current_state,
-								'to_state', EXCLUDED.current_state,
-								'event_time', to_char(EXCLUDED.event_time, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-								'event_type', EXCLUDED.event_type
-							)
-						)
-					)
-				ELSE job_runs.state_history
-			END,
+			-- Note: state_history is updated by the job_run_state_validation trigger (migration 005)
+			-- The trigger runs BEFORE UPDATE and records: {from, to, event_time, updated_at}
 			metadata = CASE
 				WHEN EXCLUDED.event_time > job_runs.event_time THEN EXCLUDED.metadata
 				ELSE job_runs.metadata

@@ -69,7 +69,7 @@ type Store interface {
 	//       }
 	//   }
 	//   // Return 207 if partial success, 200 if all success, 422 if all failed
-	StoreEvents(ctx context.Context, events []RunEvent) ([]EventStoreResult, error)
+	StoreEvents(ctx context.Context, events []*RunEvent) ([]*EventStoreResult, error)
 
 	// HealthCheck verifies the storage backend is healthy and ready to serve requests.
 	//

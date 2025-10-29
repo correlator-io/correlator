@@ -322,12 +322,12 @@ func testStoreEventIdempotencyTTL(ctx context.Context, store *LineageStore, conn
 // Expected: All 5 events stored successfully, results all show stored=true.
 func testStoreEventsAllSuccess(ctx context.Context, store *LineageStore) func(*testing.T) {
 	return func(t *testing.T) {
-		events := []ingestion.RunEvent{
-			*createTestEvent("dbt-batch-1", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-batch-2", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-batch-3", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-batch-4", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-batch-5", ingestion.EventTypeStart, 1, 1),
+		events := []*ingestion.RunEvent{
+			createTestEvent("dbt-batch-1", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-batch-2", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-batch-3", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-batch-4", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-batch-5", ingestion.EventTypeStart, 1, 1),
 		}
 
 		results, err := store.StoreEvents(ctx, events)
@@ -369,11 +369,11 @@ func testStoreEventsPartialSuccess(ctx context.Context, store *LineageStore) fun
 		)
 		_, _, _ = store.StoreEvent(ctx, duplicate)
 
-		events := []ingestion.RunEvent{
-			*duplicate, // This will be a duplicate
-			*createTestEvent("dbt-partial-1", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-partial-2", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-partial-3", ingestion.EventTypeStart, 1, 1),
+		events := []*ingestion.RunEvent{
+			duplicate, // This will be a duplicate
+			createTestEvent("dbt-partial-1", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-partial-2", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-partial-3", ingestion.EventTypeStart, 1, 1),
 		}
 
 		results, err := store.StoreEvents(ctx, events)
@@ -411,9 +411,9 @@ func testStoreEventsPartialSuccess(ctx context.Context, store *LineageStore) fun
 // Expected: All events return duplicate=true (not errors).
 func testStoreEventsAllDuplicates(ctx context.Context, store *LineageStore) func(*testing.T) {
 	return func(t *testing.T) {
-		events := []ingestion.RunEvent{
-			*createTestEvent("dbt-alldup-1", ingestion.EventTypeStart, 1, 1),
-			*createTestEvent("dbt-alldup-2", ingestion.EventTypeStart, 1, 1),
+		events := []*ingestion.RunEvent{
+			createTestEvent("dbt-alldup-1", ingestion.EventTypeStart, 1, 1),
+			createTestEvent("dbt-alldup-2", ingestion.EventTypeStart, 1, 1),
 		}
 
 		// Store all events first time
@@ -476,7 +476,7 @@ func testStoreEventDeferredFKConstraints(ctx context.Context, store *LineageStor
 }
 
 // testStoreEventStateHistoryUpdate verifies state_history JSONB updates.
-// Expected: state_history contains transition records.
+// Expected: Full happy path START → RUNNING → COMPLETE with validated transitions.
 func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
 	return func(t *testing.T) {
 		baseTime := time.Now()
@@ -495,7 +495,33 @@ func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, 
 			t.Fatalf("StoreEvent(START) error = %v", err1)
 		}
 
-		// Store COMPLETE event (state transition)
+		// Verify initial state is START with no transitions yet
+		currentState := getJobRunState(ctx, t, conn, startEvent.JobRunID())
+		if currentState != string(ingestion.EventTypeStart) {
+			t.Errorf("After START: current_state = %s, want START", currentState)
+		}
+
+		// Store RUNNING event (first transition: START → RUNNING)
+		runningEvent := createTestEventWithTime(
+			"dbt-history-1", // Same run_id
+			ingestion.EventTypeRunning,
+			1,
+			1,
+			baseTime.Add(2*time.Minute),
+		)
+
+		_, _, err2 := store.StoreEvent(ctx, runningEvent)
+		if err2 != nil {
+			t.Fatalf("StoreEvent(RUNNING) error = %v", err2)
+		}
+
+		// Verify state transitioned to RUNNING
+		currentState = getJobRunState(ctx, t, conn, runningEvent.JobRunID())
+		if currentState != string(ingestion.EventTypeRunning) {
+			t.Errorf("After RUNNING: current_state = %s, want RUNNING", currentState)
+		}
+
+		// Store COMPLETE event (second transition: RUNNING → COMPLETE)
 		completeEvent := createTestEventWithTime(
 			"dbt-history-1", // Same run_id
 			ingestion.EventTypeComplete,
@@ -504,17 +530,68 @@ func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, 
 			baseTime.Add(5*time.Minute),
 		)
 
-		_, _, err2 := store.StoreEvent(ctx, completeEvent)
-		if err2 != nil {
-			t.Fatalf("StoreEvent(COMPLETE) error = %v", err2)
+		_, _, err3 := store.StoreEvent(ctx, completeEvent)
+		if err3 != nil {
+			t.Fatalf("StoreEvent(COMPLETE) error = %v", err3)
 		}
 
-		// Verify state_history contains transition
+		// Verify final state is COMPLETE
+		currentState = getJobRunState(ctx, t, conn, completeEvent.JobRunID())
+		if currentState != string(ingestion.EventTypeComplete) {
+			t.Errorf("After COMPLETE: current_state = %s, want COMPLETE", currentState)
+		}
+
+		// Verify state_history contains both transitions
 		stateHistory := getStateHistory(ctx, t, conn, completeEvent.JobRunID())
 
-		// state_history should have at least one transition recorded
-		if len(stateHistory) == 0 {
-			t.Errorf("state_history is empty, expected transition records")
+		// Debug: Print actual transitions if count is wrong
+		if len(stateHistory) != 2 {
+			t.Logf("Got %d transitions instead of 2:", len(stateHistory))
+
+			for i, trans := range stateHistory {
+				t.Logf("  Transition %d: %+v", i, trans)
+			}
+
+			t.Fatalf("state_history length = %d, want 2 transitions", len(stateHistory))
+		}
+
+		// Validate first transition: START → RUNNING
+		// Note: Schema is set by job_run_state_validation trigger (migration 005)
+		// Fields: {from, to, event_time, updated_at}
+		transition1 := stateHistory[0]
+		if fromState, ok := transition1["from"].(string); !ok || fromState != "START" {
+			t.Errorf("Transition 1: from = %v, want START", transition1["from"])
+		}
+
+		if toState, ok := transition1["to"].(string); !ok || toState != "RUNNING" {
+			t.Errorf("Transition 1: to = %v, want RUNNING", transition1["to"])
+		}
+
+		// Validate second transition: RUNNING → COMPLETE
+		transition2 := stateHistory[1]
+		if fromState, ok := transition2["from"].(string); !ok || fromState != "RUNNING" {
+			t.Errorf("Transition 2: from = %v, want RUNNING", transition2["from"])
+		}
+
+		if toState, ok := transition2["to"].(string); !ok || toState != "COMPLETE" {
+			t.Errorf("Transition 2: to = %v, want COMPLETE", transition2["to"])
+		}
+
+		// Verify event_time and updated_at are present in both transitions
+		if _, ok := transition1["event_time"].(string); !ok {
+			t.Errorf("Transition 1: event_time missing or not a string")
+		}
+
+		if _, ok := transition1["updated_at"].(string); !ok {
+			t.Errorf("Transition 1: updated_at missing or not a string")
+		}
+
+		if _, ok := transition2["event_time"].(string); !ok {
+			t.Errorf("Transition 2: event_time missing or not a string")
+		}
+
+		if _, ok := transition2["updated_at"].(string); !ok {
+			t.Errorf("Transition 2: updated_at missing or not a string")
 		}
 	}
 }
@@ -861,11 +938,11 @@ func BenchmarkLineageStore_StoreEventsBatch(b *testing.B) {
 	const batchSize = 100
 
 	// Pre-create all batches (memory-intensive!)
-	batches := make([][]ingestion.RunEvent, b.N)
+	batches := make([][]*ingestion.RunEvent, b.N)
 	for i := 0; i < b.N; i++ {
-		batches[i] = make([]ingestion.RunEvent, batchSize)
+		batches[i] = make([]*ingestion.RunEvent, batchSize)
 		for j := 0; j < batchSize; j++ {
-			batches[i][j] = *createTestEvent(
+			batches[i][j] = createTestEvent(
 				fmt.Sprintf("bench-batch-%d-%d", i, j),
 				ingestion.EventTypeStart,
 				1, 1,
