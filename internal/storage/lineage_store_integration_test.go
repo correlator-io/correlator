@@ -46,6 +46,9 @@ func TestLineageStoreIntegration(t *testing.T) {
 	t.Run("StoreEvent_DeferredFKConstraints", testStoreEventDeferredFKConstraints(ctx, store, conn))
 	t.Run("StoreEvent_StateHistoryUpdate", testStoreEventStateHistoryUpdate(ctx, store, conn))
 	t.Run("StoreEvent_ProducerExtraction", testStoreEventProducerExtraction(ctx, store, conn))
+	t.Run("StoreEvent_DatasetFacetMerge", testStoreEventDatasetFacetMerge(ctx, store, conn))
+	t.Run("StoreEvent_InputValidation", testStoreEventInputValidation(ctx, store))
+	t.Run("StoreEvent_ContextCancellation", testStoreEventContextCancellation(ctx, store))
 }
 
 // testStoreEventSingleSuccess verifies storing a single dbt START event.
@@ -173,10 +176,35 @@ func testStoreEventOutOfOrder(ctx context.Context, store *LineageStore, conn *Co
 			t.Fatalf("StoreEvent(START) error = %v", err2)
 		}
 
-		// Verify final state is COMPLETE (not overwritten by older START event)
+		// 1. Verify final state is COMPLETE (not overwritten by older START event)
 		finalState := getJobRunState(ctx, t, conn, completeEvent.JobRunID())
 		if finalState != string(ingestion.EventTypeComplete) {
 			t.Errorf("Final state = %s, want COMPLETE (newer event should win)", finalState)
+		}
+
+		// 2. Verify event_time is GREATEST (COMPLETE event time, not START)
+		eventTime := getJobRunEventTime(ctx, t, conn, completeEvent.JobRunID())
+		expectedTime := baseTime.Add(10 * time.Minute) // COMPLETE event time
+		// Use time comparison with tolerance (database may have microsecond differences)
+		timeDiff := eventTime.Sub(expectedTime)
+		if timeDiff < 0 {
+			timeDiff = -timeDiff
+		}
+
+		if timeDiff > time.Second {
+			t.Errorf("event_time = %v, want %v (COMPLETE event time, GREATEST)", eventTime, expectedTime)
+		}
+
+		// 3. Verify metadata was updated to COMPLETE event's metadata (newer wins)
+		metadata := getJobRunMetadata(ctx, t, conn, completeEvent.JobRunID())
+		if schemaURL, ok := metadata["schema_url"].(string); !ok || schemaURL != completeEvent.SchemaURL {
+			t.Errorf("metadata.schema_url = %v, want %s (COMPLETE event metadata should win)",
+				metadata["schema_url"], completeEvent.SchemaURL)
+		}
+
+		if producer, ok := metadata["producer"].(string); !ok || producer != completeEvent.Producer {
+			t.Errorf("metadata.producer = %v, want %s (COMPLETE event metadata should win)",
+				metadata["producer"], completeEvent.Producer)
 		}
 	}
 }
@@ -297,6 +325,21 @@ func testStoreEventIdempotencyTTL(ctx context.Context, store *LineageStore, conn
 
 		if !stored1 {
 			t.Errorf("First StoreEvent() stored = false, want true")
+		}
+
+		// Verify expires_at is set to ~24 hours from now
+		expiresAt := getIdempotencyExpiration(ctx, t, conn, event.IdempotencyKey())
+		expectedExpiration := time.Now().Add(24 * time.Hour)
+
+		timeDiff := expiresAt.Sub(expectedExpiration)
+		if timeDiff < 0 {
+			timeDiff = -timeDiff
+		}
+
+		// Allow 5 second tolerance for test execution time
+		if timeDiff > 5*time.Second {
+			t.Errorf("expires_at = %v, expected ~%v (diff: %v, should be ~24 hours)",
+				expiresAt, expectedExpiration, timeDiff)
 		}
 
 		// Manually expire the idempotency key (simulate 25 hours passed)
@@ -624,6 +667,189 @@ func testStoreEventProducerExtraction(ctx context.Context, store *LineageStore, 
 	}
 }
 
+// testStoreEventDatasetFacetMerge verifies JSONB facet merge behavior.
+// Expected: Facets accumulate over time, newer values override older ones.
+func testStoreEventDatasetFacetMerge(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) {
+		// Event 1: Dataset with facets {"schema": "v1", "owner": "alice"}
+		event1 := createTestEvent("facet-merge-1", ingestion.EventTypeStart, 1, 0)
+		event1.Inputs[0].Facets = ingestion.Facets{
+			"schema": map[string]interface{}{"version": "v1"},
+			"owner":  "alice",
+		}
+
+		stored1, _, err1 := store.StoreEvent(ctx, event1)
+		if err1 != nil {
+			t.Fatalf("First StoreEvent() error = %v", err1)
+		}
+
+		if !stored1 {
+			t.Errorf("First StoreEvent() stored = false, want true")
+		}
+
+		// Event 2: Same dataset with facets {"rows": 1000, "schema": "v2"}
+		event2 := createTestEvent("facet-merge-2", ingestion.EventTypeComplete, 1, 0)
+		event2.Inputs[0].Namespace = event1.Inputs[0].Namespace
+		event2.Inputs[0].Name = event1.Inputs[0].Name // Same dataset!
+		event2.Inputs[0].Facets = ingestion.Facets{
+			"rows":   float64(1000),
+			"schema": map[string]interface{}{"version": "v2"},
+		}
+
+		stored2, _, err2 := store.StoreEvent(ctx, event2)
+		if err2 != nil {
+			t.Fatalf("Second StoreEvent() error = %v", err2)
+		}
+
+		if !stored2 {
+			t.Errorf("Second StoreEvent() stored = false, want true")
+		}
+
+		// Verify merged facets: {"schema": "v2", "owner": "alice", "rows": 1000}
+		facets := getDatasetFacets(ctx, t, conn, event1.Inputs[0].URN())
+
+		// Check schema was updated to v2 (newer value wins)
+		if schema, ok := facets["schema"].(map[string]interface{}); !ok {
+			t.Errorf("schema facet missing or wrong type")
+		} else if version, ok := schema["version"].(string); !ok || version != "v2" {
+			t.Errorf("schema.version = %v, want v2 (newer should win)", schema["version"])
+		}
+
+		// Check owner preserved from Event 1
+		if owner, ok := facets["owner"].(string); !ok || owner != "alice" {
+			t.Errorf("owner = %v, want alice (should be preserved)", facets["owner"])
+		}
+
+		// Check rows added from Event 2
+		if rows, ok := facets["rows"].(float64); !ok || int(rows) != 1000 {
+			t.Errorf("rows = %v, want 1000 (should be added)", facets["rows"])
+		}
+	}
+}
+
+// testStoreEventInputValidation verifies defensive input validation.
+// Expected: Nil and invalid inputs return appropriate errors.
+func testStoreEventInputValidation(ctx context.Context, store *LineageStore) func(*testing.T) {
+	return func(t *testing.T) {
+		tests := []struct {
+			name    string
+			mutate  func(*ingestion.RunEvent)
+			wantErr string
+		}{
+			{
+				name: "nil event",
+				mutate: func(_ *ingestion.RunEvent) {
+					// Will test nil separately
+				},
+				wantErr: "event is nil",
+			},
+			{
+				name: "nil inputs",
+				mutate: func(e *ingestion.RunEvent) {
+					e.Inputs = nil
+				},
+				wantErr: "event.Inputs is nil",
+			},
+			{
+				name: "nil outputs",
+				mutate: func(e *ingestion.RunEvent) {
+					e.Outputs = nil
+				},
+				wantErr: "event.Outputs is nil",
+			},
+			{
+				name: "empty run ID",
+				mutate: func(e *ingestion.RunEvent) {
+					e.Run.ID = ""
+				},
+				wantErr: "event.Run.ID is empty",
+			},
+			{
+				name: "empty job name",
+				mutate: func(e *ingestion.RunEvent) {
+					e.Job.Name = ""
+				},
+				wantErr: "event.Job.Name is empty",
+			},
+			{
+				name: "zero event time",
+				mutate: func(e *ingestion.RunEvent) {
+					e.EventTime = time.Time{}
+				},
+				wantErr: "event.EventTime is zero",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if tt.name == "nil event" {
+					_, _, err := store.StoreEvent(ctx, nil)
+					if err == nil {
+						t.Errorf("Expected error, got nil")
+					} else if !containsString(err.Error(), tt.wantErr) {
+						t.Errorf("Expected error containing %q, got %v", tt.wantErr, err)
+					}
+
+					return
+				}
+
+				event := createTestEvent("validation-test", ingestion.EventTypeStart, 1, 1)
+				tt.mutate(event)
+
+				_, _, err := store.StoreEvent(ctx, event)
+				if err == nil {
+					t.Errorf("Expected error, got nil")
+				} else if !containsString(err.Error(), tt.wantErr) {
+					t.Errorf("Expected error containing %q, got %v", tt.wantErr, err)
+				}
+			})
+		}
+	}
+}
+
+// testStoreEventContextCancellation verifies graceful context cancellation handling.
+// Expected: Cancelled context returns appropriate error.
+func testStoreEventContextCancellation(ctx context.Context, store *LineageStore) func(*testing.T) {
+	return func(t *testing.T) {
+		event := createTestEvent("ctx-cancel", ingestion.EventTypeStart, 1, 1)
+
+		// Create context that's already cancelled
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel() // Cancel immediately
+
+		_, _, err := store.StoreEvent(cancelledCtx, event)
+		if err == nil {
+			t.Error("Expected error with cancelled context, got nil")
+		}
+
+		// Verify error mentions context cancellation or related terms
+		errMsg := err.Error()
+		if !containsString(errMsg, "context canceled") &&
+			!containsString(errMsg, "request cancelled") &&
+			!containsString(errMsg, "operation timeout") {
+			t.Errorf("Expected context cancellation error, got: %v", err)
+		}
+	}
+}
+
+// Helper functions for test setup and verification
+
+// containsString is a helper that checks if a string contains a substring.
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Helper functions for test setup and verification
 
 // createTestEvent creates a test OpenLineage event with specified parameters.
@@ -871,6 +1097,78 @@ func expireIdempotencyKey(ctx context.Context, t *testing.T, conn *Connection, i
 	if err != nil {
 		t.Fatalf("Failed to expire idempotency key: %v", err)
 	}
+}
+
+func getJobRunEventTime(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) time.Time {
+	t.Helper()
+
+	query := "SELECT event_time FROM job_runs WHERE job_run_id = $1"
+
+	var eventTime time.Time
+
+	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&eventTime)
+	if err != nil {
+		t.Fatalf("Failed to get event_time: %v", err)
+	}
+
+	return eventTime
+}
+
+func getJobRunMetadata(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) map[string]interface{} {
+	t.Helper()
+
+	query := "SELECT metadata FROM job_runs WHERE job_run_id = $1"
+
+	var metadataJSON []byte
+
+	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&metadataJSON)
+	if err != nil {
+		t.Fatalf("Failed to get metadata: %v", err)
+	}
+
+	var metadata map[string]interface{}
+
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		t.Fatalf("Failed to parse metadata JSON: %v", err)
+	}
+
+	return metadata
+}
+
+func getIdempotencyExpiration(ctx context.Context, t *testing.T, conn *Connection, key string) time.Time {
+	t.Helper()
+
+	query := "SELECT expires_at FROM lineage_event_idempotency WHERE idempotency_key = $1"
+
+	var expiresAt time.Time
+
+	err := conn.QueryRowContext(ctx, query, key).Scan(&expiresAt)
+	if err != nil {
+		t.Fatalf("Failed to get expires_at: %v", err)
+	}
+
+	return expiresAt
+}
+
+func getDatasetFacets(ctx context.Context, t *testing.T, conn *Connection, datasetURN string) map[string]interface{} {
+	t.Helper()
+
+	query := "SELECT facets FROM datasets WHERE dataset_urn = $1"
+
+	var facetsJSON []byte
+
+	err := conn.QueryRowContext(ctx, query, datasetURN).Scan(&facetsJSON)
+	if err != nil {
+		t.Fatalf("Failed to get dataset facets: %v", err)
+	}
+
+	var facets map[string]interface{}
+
+	if err := json.Unmarshal(facetsJSON, &facets); err != nil {
+		t.Fatalf("Failed to parse facets JSON: %v", err)
+	}
+
+	return facets
 }
 
 // Benchmark Tests
