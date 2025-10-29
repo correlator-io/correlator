@@ -18,8 +18,9 @@ import (
 )
 
 // setupTestDatabase creates a PostgreSQL testcontainer and runs migrations.
-func setupTestDatabase(ctx context.Context, t *testing.T) (*pgcontainer.PostgresContainer, *Connection) {
-	t.Helper()
+func setupTestDatabase(ctx context.Context, tb testing.TB) (*pgcontainer.PostgresContainer, *Connection) {
+	tb.Helper()
+	t := tb // Create local alias for compatibility
 
 	// Create PostgreSQL container
 	postgresContainer, err := pgcontainer.Run(ctx,
