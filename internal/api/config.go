@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	defaultPort       int    = 8080
-	maxPort           int    = 65535
-	defaultHost       string = "0.0.0.0"
-	defaultCORSMaxAge int    = 86400
-	defaultTimeout           = 30 * time.Second
-	defaultLogLevel          = slog.LevelInfo
+	defaultPort           int    = 8080
+	maxPort               int    = 65535
+	defaultHost           string = "0.0.0.0"
+	defaultCORSMaxAge     int    = 86400
+	defaultTimeout               = 30 * time.Second
+	defaultLogLevel              = slog.LevelInfo
+	defaultMaxRequestSize int64  = 1048576 // 1 MB (1024 * 1024 bytes)
 )
 
 var (
@@ -34,6 +35,9 @@ var (
 
 	// ErrInvalidShutdownTimeout indicates the shutdown timeout is zero or negative.
 	ErrInvalidShutdownTimeout = errors.New("shutdown timeout must be positive")
+
+	// ErrInvalidMaxRequestSize indicates the max request size is zero or negative.
+	ErrInvalidMaxRequestSize = errors.New("max request size must be positive")
 )
 
 type (
@@ -46,6 +50,7 @@ type (
 		WriteTimeout       time.Duration
 		ShutdownTimeout    time.Duration
 		LogLevel           slog.Level
+		MaxRequestSize     int64
 		CORSAllowedOrigins []string
 		CORSAllowedMethods []string
 		CORSAllowedHeaders []string
@@ -71,6 +76,7 @@ func LoadServerConfig() *ServerConfig {
 		WriteTimeout:    config.GetEnvDuration("CORRELATOR_SERVER_WRITE_TIMEOUT", defaultTimeout),
 		ShutdownTimeout: config.GetEnvDuration("CORRELATOR_SERVER_TIMEOUT", defaultTimeout),
 		LogLevel:        config.GetEnvLogLevel("CORRELATOR_SERVER_LOG_LEVEL", defaultLogLevel),
+		MaxRequestSize:  config.GetEnvInt64("CORRELATOR_MAX_REQUEST_SIZE", defaultMaxRequestSize),
 		CORSAllowedOrigins: config.ParseCommaSeparatedList(
 			config.GetEnvStr("CORRELATOR_CORS_ALLOWED_ORIGINS", "*"),
 		), // "*" is Development default - should be restricted in production
@@ -142,6 +148,10 @@ func (c *ServerConfig) Validate() error {
 
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("%w: got %v", ErrInvalidShutdownTimeout, c.ShutdownTimeout)
+	}
+
+	if c.MaxRequestSize <= 0 {
+		return fmt.Errorf("%w: got %d bytes", ErrInvalidMaxRequestSize, c.MaxRequestSize)
 	}
 
 	return nil

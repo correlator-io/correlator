@@ -88,7 +88,7 @@ func main() {
 		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
 	)
 
-	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter)
+	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, nil)
 
 	if err := server.Start(); err != nil {
 		logger.Error("Server failed to start",

@@ -51,6 +51,9 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// Protected endpoints
 	mux.HandleFunc("/api/v1/health/data-consistency", s.handleDataConsistency)
+
+	// Lineage endpoints
+	mux.HandleFunc("POST /api/v1/lineage/events", s.handleLineageEvents)
 }
 
 // registerPublicRoutes registers HTTP routes that bypass authentication and rate limiting.
@@ -250,4 +253,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleNotFound returns RFC 7807 compliant 404 responses for unknown endpoints.
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	WriteErrorResponse(w, r, s.logger, NotFound("The requested resource was not found"))
+}
+
+// handleLineageEvents handles OpenLineage event ingestion.
+// POST /api/v1/lineage/events - Ingest single or batch OpenLineage events
+//
+// TODO: Implement in Phase 3 (Subtask 5).
+func (s *Server) handleLineageEvents(w http.ResponseWriter, r *http.Request) {
+	// Stub implementation - returns 501 Not Implemented
+	// Will be implemented in Phase 3
+	problem := NewProblemDetail(
+		http.StatusNotImplemented,
+		"Not Implemented",
+		"OpenLineage event ingestion endpoint not yet implemented",
+	)
+
+	WriteErrorResponse(w, r, s.logger, problem)
 }

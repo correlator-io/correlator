@@ -14,17 +14,19 @@ import (
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/ingestion"
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
 // Server represents the HTTP API server.
 type Server struct {
-	httpServer  *http.Server
-	logger      *slog.Logger
-	config      *ServerConfig
-	startTime   time.Time
-	apiKeyStore storage.APIKeyStore
-	rateLimiter middleware.RateLimiter
+	httpServer   *http.Server
+	logger       *slog.Logger
+	config       *ServerConfig
+	startTime    time.Time
+	apiKeyStore  storage.APIKeyStore
+	rateLimiter  middleware.RateLimiter
+	lineageStore ingestion.Store
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
@@ -37,7 +39,13 @@ type Server struct {
 //   - cfg: Pure server configuration (ports, timeouts, CORS settings)
 //   - apiKeyStore: API key storage implementation (nil disables authentication)
 //   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
-func NewServer(cfg *ServerConfig, apiKeyStore storage.APIKeyStore, rateLimiter middleware.RateLimiter) *Server {
+//   - lineageStore: Lineage event storage implementation (nil disables lineage endpoints)
+func NewServer(
+	cfg *ServerConfig,
+	apiKeyStore storage.APIKeyStore,
+	rateLimiter middleware.RateLimiter,
+	lineageStore ingestion.Store,
+) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
@@ -48,10 +56,11 @@ func NewServer(cfg *ServerConfig, apiKeyStore storage.APIKeyStore, rateLimiter m
 
 	// Create server instance for route setup
 	server := &Server{
-		logger:      logger,
-		config:      cfg,
-		apiKeyStore: apiKeyStore,
-		rateLimiter: rateLimiter,
+		logger:       logger,
+		config:       cfg,
+		apiKeyStore:  apiKeyStore,
+		rateLimiter:  rateLimiter,
+		lineageStore: lineageStore,
 	}
 
 	// Set up all API routes
@@ -148,6 +157,8 @@ func (s *Server) Start() error {
 }
 
 // shutdown gracefully shuts down the server.
+// TODO: Reduce on the cognitive complexity
+//nolint: gocognit
 func (s *Server) shutdown() error {
 	// Create context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
@@ -189,6 +200,19 @@ func (s *Server) shutdown() error {
 				s.logger.Error("Failed to close rate limiter", slog.String("error", err.Error()))
 			} else {
 				s.logger.Info("Rate limiter closed successfully")
+			}
+		}
+	}
+
+	// Close lineage store to release database connections
+	if s.lineageStore != nil {
+		s.logger.Info("Closing lineage store")
+
+		if store, ok := s.lineageStore.(io.Closer); ok {
+			if err := store.Close(); err != nil {
+				s.logger.Error("Failed to close lineage store", slog.String("error", err.Error()))
+			} else {
+				s.logger.Info("Lineage store closed successfully")
 			}
 		}
 	}

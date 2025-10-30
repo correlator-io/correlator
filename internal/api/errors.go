@@ -12,6 +12,7 @@ import (
 
 // commonProblemTypes pre-computes type URIs for frequently used HTTP status codes
 // to avoid repeated string formatting allocations.
+//
 //nolint:gochecknoglobals // Global map is justified for memory optimization
 var commonProblemTypes = map[int]string{
 	http.StatusBadRequest:          "https://correlator.io/problems/400",
@@ -25,11 +26,11 @@ var commonProblemTypes = map[int]string{
 // ProblemDetail represents an RFC 7807 Problem Details structure.
 // See https://tools.ietf.org/html/rfc7807 for specification.
 type ProblemDetail struct {
-	Type         string `json:"type"`
-	Title        string `json:"title"`
-	Status       int    `json:"status"`
-	Detail       string `json:"detail,omitempty"`
-	Instance     string `json:"instance,omitempty"`
+	Type          string `json:"type"`
+	Title         string `json:"title"`
+	Status        int    `json:"status"`
+	Detail        string `json:"detail,omitempty"`
+	Instance      string `json:"instance,omitempty"`
 	CorrelationID string `json:"correlationId,omitempty"`
 }
 
