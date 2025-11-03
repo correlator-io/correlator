@@ -27,6 +27,7 @@ type Server struct {
 	apiKeyStore  storage.APIKeyStore
 	rateLimiter  middleware.RateLimiter
 	lineageStore ingestion.Store
+	validator    *ingestion.Validator // Shared validator (thread-safe, created once)
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
@@ -39,7 +40,7 @@ type Server struct {
 //   - cfg: Pure server configuration (ports, timeouts, CORS settings)
 //   - apiKeyStore: API key storage implementation (nil disables authentication)
 //   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
-//   - lineageStore: Lineage event storage implementation (nil disables lineage endpoints)
+//   - lineageStore: Lineage event storage implementation (REQUIRED - panics if nil)
 func NewServer(
 	cfg *ServerConfig,
 	apiKeyStore storage.APIKeyStore,
@@ -51,8 +52,17 @@ func NewServer(
 		Level: cfg.LogLevel,
 	}))
 
+	// Fail-fast: lineageStore is required (OpenLineage ingestion is core functionality)
+	if lineageStore == nil {
+		logger.Error("LineageStore is required - cannot start server without core functionality")
+		panic("correlator: lineageStore cannot be nil - this indicates a configuration error")
+	}
+
 	// Create base HTTP mux
 	mux := http.NewServeMux()
+
+	// Create validator once (thread-safe, no mutable state)
+	validator := ingestion.NewValidator()
 
 	// Create server instance for route setup
 	server := &Server{
@@ -61,6 +71,7 @@ func NewServer(
 		apiKeyStore:  apiKeyStore,
 		rateLimiter:  rateLimiter,
 		lineageStore: lineageStore,
+		validator:    validator,
 	}
 
 	// Set up all API routes
@@ -78,6 +89,9 @@ func NewServer(
 	} else {
 		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
 	}
+
+	// LineageStore is always configured (we panic if nil above)
+	logger.Info("Lineage store configured - lineage endpoints enabled")
 
 	// Apply middleware chain using functional options pattern.
 	// Middleware executes in the order listed (top-to-bottom):
@@ -157,8 +171,6 @@ func (s *Server) Start() error {
 }
 
 // shutdown gracefully shuts down the server.
-// TODO: Reduce on the cognitive complexity
-//nolint: gocognit
 func (s *Server) shutdown() error {
 	// Create context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
@@ -178,46 +190,39 @@ func (s *Server) shutdown() error {
 		return fmt.Errorf("server shutdown failed: %w", err)
 	}
 
-	// Close API key store to release database connections
-	if s.apiKeyStore != nil { // pragma: allowlist secret
-		s.logger.Info("Closing API key store")
-
-		if store, ok := s.apiKeyStore.(io.Closer); ok {
-			if err := store.Close(); err != nil {
-				s.logger.Error("Failed to close API key store", slog.String("error", err.Error()))
-			} else {
-				s.logger.Info("API key store closed successfully")
-			}
-		}
-	}
-
-	// Close rate limiter to stop (InMemoryRateLimiter) background cleanup goroutines
-	if s.rateLimiter != nil {
-		s.logger.Info("Closing rate limiter")
-
-		if limiter, ok := s.rateLimiter.(io.Closer); ok {
-			if err := limiter.Close(); err != nil {
-				s.logger.Error("Failed to close rate limiter", slog.String("error", err.Error()))
-			} else {
-				s.logger.Info("Rate limiter closed successfully")
-			}
-		}
-	}
-
-	// Close lineage store to release database connections
-	if s.lineageStore != nil {
-		s.logger.Info("Closing lineage store")
-
-		if store, ok := s.lineageStore.(io.Closer); ok {
-			if err := store.Close(); err != nil {
-				s.logger.Error("Failed to close lineage store", slog.String("error", err.Error()))
-			} else {
-				s.logger.Info("Lineage store closed successfully")
-			}
-		}
-	}
+	// Close all dependencies (best-effort - log failures but continue shutdown)
+	s.closeDependency("API key store", s.apiKeyStore)
+	s.closeDependency("rate limiter", s.rateLimiter)
+	s.closeDependency("lineage store", s.lineageStore)
 
 	s.logger.Info("Server shutdown completed successfully")
 
 	return nil
+}
+
+// closeDependency attempts to close a server dependency that implements io.Closer.
+// Logs the operation and its result. Errors are logged but don't stop shutdown (best-effort).
+func (s *Server) closeDependency(name string, store interface{}) {
+	// Skip if store is nil
+	if store == nil {
+		return
+	}
+
+	s.logger.Info("Closing " + name)
+
+	// Check if store implements io.Closer
+	closer, ok := store.(io.Closer)
+	if !ok {
+		// Dependency doesn't implement io.Closer, nothing to close
+		return
+	}
+
+	// Attempt to close (log error but continue)
+	if err := closer.Close(); err != nil {
+		s.logger.Error("Failed to close "+name, slog.String("error", err.Error()))
+
+		return
+	}
+
+	s.logger.Info(name + " closed successfully")
 }

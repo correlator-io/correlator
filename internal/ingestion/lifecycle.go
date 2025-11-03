@@ -124,9 +124,9 @@ func ValidateStateTransition(from, to EventType) error {
 //   - Distributed system timing
 //
 // Events must be sorted by eventTime (not arrival time) before applying state transitions.
-func SortEventsByTime(events []RunEvent) []RunEvent {
+func SortEventsByTime(events []*RunEvent) []*RunEvent {
 	// Create a copy to avoid modifying the original slice
-	sorted := make([]RunEvent, len(events))
+	sorted := make([]*RunEvent, len(events))
 	copy(sorted, events)
 
 	sort.Slice(sorted, func(i, j int) bool {
@@ -164,7 +164,7 @@ func SortEventsByTime(events []RunEvent) []RunEvent {
 //	return db.PersistEvents(sorted, finalState)
 //
 // Spec: https://openlineage.io/docs/spec/run-cycle
-func ValidateEventSequence(events []RunEvent) ([]RunEvent, EventType, error) {
+func ValidateEventSequence(events []*RunEvent) ([]*RunEvent, EventType, error) {
 	if len(events) == 0 {
 		return nil, "", ErrEmptyEventList
 	}

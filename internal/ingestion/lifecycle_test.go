@@ -109,7 +109,7 @@ func TestSortEventsByTime_OrdersCorrectly(t *testing.T) {
 	}
 
 	// Create events in wrong order (out of order arrival)
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 5, 0, 0, time.UTC),
 			EventType: EventTypeComplete,
@@ -159,7 +159,7 @@ func TestValidateEventSequence_ValidSequence(t *testing.T) {
 	}
 
 	// Typical batch job sequence: START -> COMPLETE
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 0, 0, 0, time.UTC),
 			EventType: EventTypeStart,
@@ -192,7 +192,7 @@ func TestValidateEventSequence_OutOfOrderEvents(t *testing.T) {
 	}
 
 	// Events arrive out of order: COMPLETE arrives before START
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 5, 0, 0, time.UTC), // Later time
 			EventType: EventTypeComplete,
@@ -231,7 +231,7 @@ func TestValidateEventSequence_OTHEREventAtEnd(t *testing.T) {
 
 	// Test case: OTHER event at the end (metadata after completion)
 	// Final state should be COMPLETE, not OTHER
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 0, 0, 0, time.UTC),
 			EventType: EventTypeStart,
@@ -271,7 +271,7 @@ func TestValidateEventSequence_OTHEREventAsInitial(t *testing.T) {
 
 	// Test case: OTHER event before START (metadata sent first)
 	// Initial state should be START (first non-OTHER event)
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 9, 55, 0, 0, time.UTC), // Before START
 			EventType: EventTypeOther,
@@ -310,7 +310,7 @@ func TestValidateEventSequence_AllOTHEREvents(t *testing.T) {
 	}
 
 	// Edge case: All events are OTHER
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 0, 0, 0, time.UTC),
 			EventType: EventTypeOther,
@@ -344,7 +344,7 @@ func TestValidateEventSequence_LongRunningJob(t *testing.T) {
 	}
 
 	// Long-running job: START -> RUNNING -> RUNNING -> COMPLETE
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 5, 0, 0, time.UTC),
 			EventType: EventTypeRunning,
@@ -387,7 +387,7 @@ func TestValidateEventSequence_InvalidSequence(t *testing.T) {
 	}
 
 	// Invalid sequence: COMPLETE -> START (even after sorting)
-	events := []RunEvent{
+	events := []*RunEvent{
 		{
 			EventTime: time.Date(2025, 10, 21, 10, 0, 0, 0, time.UTC),
 			EventType: EventTypeComplete,
@@ -411,7 +411,7 @@ func TestValidateEventSequence_EmptyEventList(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	events := make([]RunEvent, 0)
+	events := make([]*RunEvent, 0)
 
 	_, _, err := ValidateEventSequence(events)
 	if err == nil {

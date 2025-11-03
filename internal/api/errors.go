@@ -15,12 +15,15 @@ import (
 //
 //nolint:gochecknoglobals // Global map is justified for memory optimization
 var commonProblemTypes = map[int]string{
-	http.StatusBadRequest:          "https://correlator.io/problems/400",
-	http.StatusUnauthorized:        "https://correlator.io/problems/401",
-	http.StatusForbidden:           "https://correlator.io/problems/403",
-	http.StatusNotFound:            "https://correlator.io/problems/404",
-	http.StatusMethodNotAllowed:    "https://correlator.io/problems/405",
-	http.StatusInternalServerError: "https://correlator.io/problems/500",
+	http.StatusBadRequest:            "https://getcorrelator.io/problems/400",
+	http.StatusUnauthorized:          "https://getcorrelator.io/problems/401",
+	http.StatusForbidden:             "https://getcorrelator.io/problems/403",
+	http.StatusNotFound:              "https://getcorrelator.io/problems/404",
+	http.StatusMethodNotAllowed:      "https://getcorrelator.io/problems/405",
+	http.StatusRequestEntityTooLarge: "https://getcorrelator.io/problems/413",
+	http.StatusUnsupportedMediaType:  "https://getcorrelator.io/problems/415",
+	http.StatusUnprocessableEntity:   "https://getcorrelator.io/problems/422",
+	http.StatusInternalServerError:   "https://getcorrelator.io/problems/500",
 }
 
 // ProblemDetail represents an RFC 7807 Problem Details structure.
@@ -39,7 +42,7 @@ func NewProblemDetail(status int, title, detail string) *ProblemDetail {
 	// Use pre-computed type URI for common status codes to avoid allocation
 	problemType, exists := commonProblemTypes[status]
 	if !exists {
-		problemType = fmt.Sprintf("https://correlator.io/problems/%d", status)
+		problemType = fmt.Sprintf("https://getcorrelator.io/problems/%d", status)
 	}
 
 	return &ProblemDetail{
@@ -65,6 +68,7 @@ func (p *ProblemDetail) WithCorrelationID(correlationID string) *ProblemDetail {
 }
 
 // WriteErrorResponse writes an RFC 7807 compliant error response.
+// Uses marshal-first pattern to ensure encoding errors are caught before headers are sent.
 func WriteErrorResponse(w http.ResponseWriter, r *http.Request, logger *slog.Logger, problem *ProblemDetail) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
@@ -78,21 +82,36 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, logger *slog.Log
 		problem.Instance = r.URL.Path
 	}
 
-	// Set proper content type for RFC 7807
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(problem.Status)
-
-	if err := json.NewEncoder(w).Encode(problem); err != nil {
-		logger.Error("Failed to encode error response",
+	// Marshal FIRST (before writing anything) - fail fast if encoding fails
+	body, err := json.Marshal(problem)
+	if err != nil {
+		logger.Error("Failed to marshal error response",
 			slog.String("correlation_id", correlationID),
 			slog.String("path", r.URL.Path),
 			slog.String("method", r.Method),
-			slog.Any("encode_error", err),
+			slog.Any("marshal_error", err),
 			slog.Int("status", problem.Status),
 		)
 
-		// Fallback to basic error response
+		// Safe fallback: no headers sent yet, can call http.Error
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+
+		return
+	}
+
+	// Now write headers and body atomically
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(problem.Status)
+
+	if _, err := w.Write(body); err != nil {
+		// Headers already sent, response is corrupted, can only log
+		logger.Error("Failed to write error response",
+			slog.String("correlation_id", correlationID),
+			slog.String("path", r.URL.Path),
+			slog.String("method", r.Method),
+			slog.Any("write_error", err),
+			slog.Int("status", problem.Status),
+		)
 	}
 }
 
@@ -148,6 +167,33 @@ func Forbidden(detail string) *ProblemDetail {
 	return NewProblemDetail(
 		http.StatusForbidden,
 		"Forbidden",
+		detail,
+	)
+}
+
+// PayloadTooLarge creates a 413 Payload Too Large problem.
+func PayloadTooLarge(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusRequestEntityTooLarge,
+		"Payload Too Large",
+		detail,
+	)
+}
+
+// UnsupportedMediaType creates a 415 Unsupported Media Type problem.
+func UnsupportedMediaType(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusUnsupportedMediaType,
+		"Unsupported Media Type",
+		detail,
+	)
+}
+
+// UnprocessableEntity creates a 422 Unprocessable Entity problem.
+func UnprocessableEntity(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusUnprocessableEntity,
+		"Unprocessable Entity",
 		detail,
 	)
 }
