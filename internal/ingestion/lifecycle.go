@@ -1,5 +1,20 @@
 // Package ingestion provides OpenLineage event lifecycle state machine.
-// Handles state transitions, out-of-order events, and idempotency.
+// Handles state transitions, out-of-order events, and sequence validation.
+//
+// Usage:
+//
+//	This package is used by the HTTP layer to validate batch event sequences
+//	BEFORE storage. Single events bypass this validation and rely on database
+//	triggers for state transition protection (see migration 005).
+//
+// Architecture:
+//   - Application Layer (lifecycle.go): Validates batch sequences (HTTP 422 on error)
+//   - Database Layer (migration 005): Enforces terminal state immutability (raises exception)
+//
+// Why both layers?
+//   - Application: Provides client-friendly error messages for batch validation
+//   - Database: Ensures data integrity even if application validation is bypassed
+//   - Defense in depth: Application validates sequences, database validates single transitions
 package ingestion
 
 import (
@@ -109,9 +124,9 @@ func ValidateStateTransition(from, to EventType) error {
 //   - Distributed system timing
 //
 // Events must be sorted by eventTime (not arrival time) before applying state transitions.
-func SortEventsByTime(events []RunEvent) []RunEvent {
+func SortEventsByTime(events []*RunEvent) []*RunEvent {
 	// Create a copy to avoid modifying the original slice
-	sorted := make([]RunEvent, len(events))
+	sorted := make([]*RunEvent, len(events))
 	copy(sorted, events)
 
 	sort.Slice(sorted, func(i, j int) bool {
@@ -149,7 +164,7 @@ func SortEventsByTime(events []RunEvent) []RunEvent {
 //	return db.PersistEvents(sorted, finalState)
 //
 // Spec: https://openlineage.io/docs/spec/run-cycle
-func ValidateEventSequence(events []RunEvent) ([]RunEvent, EventType, error) {
+func ValidateEventSequence(events []*RunEvent) ([]*RunEvent, EventType, error) {
 	if len(events) == 0 {
 		return nil, "", ErrEmptyEventList
 	}

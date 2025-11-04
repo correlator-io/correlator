@@ -56,6 +56,16 @@ func NewLineageStore(conn *Connection) (*LineageStore, error) {
 	}, nil
 }
 
+// Close closes the database connection pool gracefully.
+// This method is safe to call multiple times.
+func (s *LineageStore) Close() error {
+	if s.conn != nil {
+		return s.conn.Close()
+	}
+
+	return nil
+}
+
 // HealthCheck verifies the database connection is healthy and ready to serve requests.
 //
 // Delegates to the underlying connection's health check with appropriate timeout.

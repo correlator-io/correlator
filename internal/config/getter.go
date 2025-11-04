@@ -45,6 +45,25 @@ func GetEnvInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+// GetEnvInt64 returns an int64 environment variable value or a default if not set.
+//
+// Parameters:
+//   - key[string]: Name of the environment variable as a string
+//   - defaultValue[int64]: The default value to return in-case no environment variable is set
+//
+// Example:
+//
+//	i := GetEnvInt64("MAX_REQUEST_SIZE", 1048576)
+func GetEnvInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if int64Value, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return int64Value
+		}
+	}
+
+	return defaultValue
+}
+
 // GetEnvDuration returns the environment variable value or a default if not set.
 //
 // Parameters:

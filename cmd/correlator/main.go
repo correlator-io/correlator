@@ -88,7 +88,22 @@ func main() {
 		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
 	)
 
-	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter)
+	lineageStore, err := storage.NewLineageStore(dbConn)
+	if err != nil {
+		logger.Error("Failed to connect to lineage store", slog.String("error", err.Error()))
+		// Fail-fast: exit immediately to prevent the server creation process from panicking. LineageStore is required!
+		os.Exit(1)
+	}
+
+	logger.Info("Lineage store initialized",
+		slog.String("database_url", storageConfig.MaskDatabaseURL()),
+		slog.Int("database_max_open_conns", storageConfig.MaxOpenConns),
+		slog.Int("database_max_idle_conns", storageConfig.MaxIdleConns),
+		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),
+		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
+	)
+
+	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore)
 
 	if err := server.Start(); err != nil {
 		logger.Error("Server failed to start",

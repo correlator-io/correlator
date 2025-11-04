@@ -59,8 +59,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -100,6 +106,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		WriteTimeout:       30 * time.Second,
 		ShutdownTimeout:    30 * time.Second,
 		LogLevel:           slog.LevelInfo,
+		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
@@ -107,7 +114,8 @@ func TestAuthenticationIntegration(t *testing.T) {
 	}
 
 	// Create server with dependency injection
-	server := NewServer(config, keyStore, nil)
+	// Pass nil for rateLimiter (not tested in this integration test)
+	server := NewServer(config, keyStore, nil, lineageStore)
 
 	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
@@ -281,8 +289,14 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -301,6 +315,7 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 		WriteTimeout:       30 * time.Second,
 		ShutdownTimeout:    30 * time.Second,
 		LogLevel:           slog.LevelInfo,
+		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
@@ -308,7 +323,8 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 	}
 
 	// Create server with auth enabled (keyStore provided)
-	server := NewServer(config, keyStore, nil)
+	// Pass nil for rateLimiter (not tested in this integration test)
+	server := NewServer(config, keyStore, nil, lineageStore)
 
 	t.Run("Ping Endpoint Works Without Authentication", func(t *testing.T) {
 		// Make request WITHOUT API key
@@ -414,8 +430,14 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -459,6 +481,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
+		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
 
 	// Create rate limiter with VERY restrictive limits to ensure bypass is working
@@ -470,7 +493,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	})
 
 	// Create server with auth AND rate limiting enabled
-	server := NewServer(serverConfig, keyStore, rateLimiter)
+	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 	t.Run("Ping Endpoint Bypasses Rate Limiting", func(t *testing.T) {
 		// Send 100 rapid requests to /ping without API key
@@ -587,6 +610,11 @@ func TestReadyEndpoint(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	// Create rate limiter with VERY restrictive limits
 	// If bypass didn't work, these limits would be hit immediately
 	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 plugin RPS, 1 unauth RPS
@@ -594,6 +622,7 @@ func TestReadyEndpoint(t *testing.T) {
 	t.Cleanup(func() {
 		rateLimiter.Close()
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -616,10 +645,11 @@ func TestReadyEndpoint(t *testing.T) {
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
+		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
 
 	// Create server with key store that has database health checking
-	server := NewServer(serverConfig, keyStore, rateLimiter)
+	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 	t.Run("Ready Endpoint Bypasses Authentication", func(t *testing.T) {
 		// Send 10 requests without API key - all should succeed (no auth required)
@@ -733,8 +763,14 @@ func TestRateLimitingIntegration(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -798,6 +834,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
+		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
 
 	// Test 1: Global Rate Limit Enforcement
@@ -811,7 +848,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		})
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter)
+		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 		// Send requests alternating between plugin-1 and plugin-2
 		// With 5 RPS global limit and ~50ms bcrypt latency, we expect some rate limiting
@@ -856,7 +893,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter)
+		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 		// Plugin 1: Send requests until rate limited
 		// With 2 RPS limit and ~50ms bcrypt latency, we need more than 2 requests
@@ -914,7 +951,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter)
+		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 		// IMPORTANT: Middleware order is Auth → RateLimit
 		// Unauthenticated requests get rejected by Auth middleware (401)
@@ -950,7 +987,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter)
+		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 		// Exhaust the rate limit by sending requests rapidly
 		// With 2 RPS and burst=4, we should hit the limit quickly
@@ -1023,8 +1060,14 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		t.Fatalf("Failed to create key store: %v", err)
 	}
 
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	if err != nil {
+		t.Fatalf("Failed to create lineage store: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -1093,10 +1136,11 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
+		MaxRequestSize:     1048576, // 1 MB
 	}
 
 	// Create server with all middleware enabled (auth + rate limiting + CORS)
-	server := NewServer(serverConfig, keyStore, rateLimiter)
+	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore)
 
 	// Test Case 1: Successful Request Flows Through All Middleware
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {
