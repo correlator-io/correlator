@@ -66,6 +66,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -295,6 +296,7 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -435,6 +437,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -619,6 +622,7 @@ func TestReadyEndpoint(t *testing.T) {
 	t.Cleanup(func() {
 		rateLimiter.Close()
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -766,6 +770,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
@@ -1062,6 +1067,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
+		_ = lineageStore.Close()
 
 		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
 			t.Errorf("Failed to terminate postgres container: %v", err)
