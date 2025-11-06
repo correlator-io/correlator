@@ -7,7 +7,7 @@ info:
 servers:
   - url: http://localhost:8080/api/v1
     description: Local development server
-  - url: https://correlator.yourdomain.com/api/v1
+  - url: https://getcorrelator.io/api/v1
     description: Production server
 
 security:
@@ -20,50 +20,143 @@ paths:
     post:
       summary: Ingest OpenLineage events
       description: |
-        Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant events
+        Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant RunEvents
         from external plugins (correlator-dbt, correlator-airflow, etc.).
 
         **Correlation Logic**: Extracts canonical `jobRunId` from RunEvent for linking
         test failures to job runs with >90% accuracy.
 
         **Performance**: Designed for 1,000 events/second sustained throughput.
+
+        **Batch Processing**: Supports single event or array of events. Returns per-event
+        status with 207 Multi-Status for partial success scenarios.
+
+        **Idempotency**: Duplicate events return 200 OK with "duplicate" status.
+
+        **MVP Scope**: Currently supports RunEvent only. DatasetEvent and JobEvent
+        support deferred to Phase 2+. NDJSON format deferred to Phase 2.
       operationId: ingestLineageEvents
       tags:
         - OpenLineage Ingestion
       requestBody:
-        description: OpenLineage RunEvent, DatasetEvent, or JobEvent
+        description: |
+          Array of OpenLineage RunEvents. Single events should be sent as arrays of length 1.
+          This approach simplifies client implementation and aligns with OpenLineage's batch-oriented design.
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OpenLineageEvent'
+              type: array
+              items:
+                $ref: './schemas/openlineage.yaml#/components/schemas/RunEvent'
+              minItems: 1
+              maxItems: 1000
+              description: Batch of RunEvents (up to 1000 events, ~1MB request limit)
             examples:
-              dbt_run_start:
-                $ref: '#/components/examples/dbt_run_start'
-              airflow_task_complete:
-                $ref: '#/components/examples/airflow_task_complete'
-          application/x-ndjson:
-            schema:
-              type: string
-              description: Newline-delimited JSON for bulk ingestion
-            example: |
-              {"eventTime":"2024-01-01T12:00:00Z","producer":"correlator-dbt","schemaURL":"https://openlineage.io/spec/1-0-0/OpenLineage.json","eventType":"START","run":{"runId":"dbt:abc123-def456"},"job":{"namespace":"dbt","name":"models.users"}}
-              {"eventTime":"2024-01-01T12:05:00Z","producer":"correlator-dbt","schemaURL":"https://openlineage.io/spec/1-0-0/OpenLineage.json","eventType":"COMPLETE","run":{"runId":"dbt:abc123-def456"},"job":{"namespace":"dbt","name":"models.users"}}
+              single_event:
+                summary: Single event (sent as array with 1 element)
+                value:
+                  - eventTime: "2024-01-01T12:00:00Z"
+                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+                    eventType: "START"
+                    run:
+                      runId: "dbt:abc123-def456"
+                    job:
+                      namespace: "dbt"
+                      name: "models.users"
+                    inputs: []
+                    outputs: []
+              batch_events:
+                summary: Batch of events for single run
+                value:
+                  - eventTime: "2024-01-01T12:00:00Z"
+                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+                    eventType: "START"
+                    run:
+                      runId: "dbt:abc123-def456"
+                    job:
+                      namespace: "dbt"
+                      name: "models.users"
+                  - eventTime: "2024-01-01T12:05:00Z"
+                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+                    eventType: "COMPLETE"
+                    run:
+                      runId: "dbt:abc123-def456"
+                    job:
+                      namespace: "dbt"
+                      name: "models.users"
       responses:
         '200':
-          description: Event(s) ingested successfully
+          description: All events processed successfully (stored or duplicates)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngestionResponse'
-        '202':
-          description: Event(s) accepted for processing (async mode)
+                $ref: '#/components/schemas/LineageResponse'
+              examples:
+                all_stored:
+                  summary: All events stored successfully
+                  value:
+                    correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+                    timestamp: "2024-01-01T12:05:30Z"
+                    stored: 2
+                    duplicates: 0
+                    failed: 0
+                    results:
+                      - index: 0
+                        status: 200
+                        message: "stored"
+                      - index: 1
+                        status: 200
+                        message: "stored"
+                all_duplicates:
+                  summary: All events are duplicates (idempotency)
+                  value:
+                    correlation_id: "234e5678-e89b-12d3-a456-426614174001"
+                    timestamp: "2024-01-01T12:05:31Z"
+                    stored: 0
+                    duplicates: 2
+                    failed: 0
+                    results:
+                      - index: 0
+                        status: 200
+                        message: "duplicate"
+                      - index: 1
+                        status: 200
+                        message: "duplicate"
+        '207':
+          description: Partial success - some events stored, some failed validation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngestionResponse'
+                $ref: '#/components/schemas/LineageResponse'
+              example:
+                correlation_id: "345e6789-e89b-12d3-a456-426614174002"
+                timestamp: "2024-01-01T12:05:32Z"
+                stored: 2
+                duplicates: 1
+                failed: 1
+                results:
+                  - index: 0
+                    status: 200
+                    message: "stored"
+                  - index: 1
+                    status: 200
+                    message: "duplicate"
+                  - index: 2
+                    status: 200
+                    message: "stored"
+                  - index: 3
+                    status: 422
+                    error: "missing required field: run.runId"
         '400':
           $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
         '429':
@@ -644,6 +737,9 @@ components:
     # Response Schemas
     IngestionResponse:
       type: object
+      description: |
+        Generic ingestion response for non-lineage endpoints (e.g., test results).
+        For lineage events, see LineageResponse with per-event granularity.
       properties:
         message:
           type: string
@@ -659,6 +755,78 @@ components:
           type: number
           example: 45.7
 
+    # Lineage-specific Response Schemas
+    LineageResponse:
+      type: object
+      required:
+        - correlation_id
+        - timestamp
+        - stored
+        - duplicates
+        - failed
+        - results
+      description: |
+        Response from OpenLineage event ingestion with per-event status.
+        Provides granular feedback for batch processing and debugging.
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+          description: Request correlation ID for tracking
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        timestamp:
+          type: string
+          format: date-time
+          description: Response timestamp in ISO 8601 format
+          example: "2024-01-01T12:05:30Z"
+        stored:
+          type: integer
+          minimum: 0
+          description: Number of events successfully stored
+          example: 2
+        duplicates:
+          type: integer
+          minimum: 0
+          description: Number of duplicate events (idempotency)
+          example: 0
+        failed:
+          type: integer
+          minimum: 0
+          description: Number of events that failed validation or storage
+          example: 0
+        results:
+          type: array
+          description: Per-event processing results
+          items:
+            $ref: '#/components/schemas/EventResult'
+
+    EventResult:
+      type: object
+      required:
+        - index
+        - status
+      description: Processing result for a single event in a batch
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: Zero-based index of the event in the request array
+          example: 0
+        status:
+          type: integer
+          description: HTTP status code for this specific event (200 or 422)
+          enum: [200, 422]
+          example: 200
+        message:
+          type: string
+          description: Success message ("stored" or "duplicate")
+          enum: ["stored", "duplicate"]
+          example: "stored"
+        error:
+          type: string
+          description: Error message if validation or storage failed
+          example: "missing required field: run.runId"
+
     # Error Response Schemas (reference to external file)
     Error:
       $ref: './schemas/errors.yaml#/components/schemas/Error'
@@ -671,12 +839,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            error:
-              code: "BAD_REQUEST"
-              message: "Invalid OpenLineage event format"
-              details:
-                field: "eventTime"
-                issue: "Invalid date-time format"
+            type: "https://getcorrelator.io/problems/400"
+            title: "Bad Request"
+            status: 400
+            detail: "Invalid OpenLineage event format"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "123e4567-e89b-12d3-a456-426614174000"
 
     ValidationError:
       description: Validation error - request doesn't meet schema requirements
@@ -685,14 +853,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            error:
-              code: "VALIDATION_ERROR"
-              message: "Schema validation failed"
-              details:
-                - field: "run.runId"
-                  issue: "Required field missing"
-                - field: "job.namespace"
-                  issue: "Must not be empty"
+            type: "https://getcorrelator.io/problems/422"
+            title: "Validation Error"
+            status: 422
+            detail: "Schema validation failed"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "123e4567-e89b-12d3-a456-426614174000"
 
     NotFound:
       description: Resource not found
@@ -701,11 +867,40 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            error:
-              code: "NOT_FOUND"
-              message: "Incident not found"
-              details:
-                incident_id: "123e4567-e89b-12d3-a456-426614174000"
+            type: "https://getcorrelator.io/problems/404"
+            title: "Not Found"
+            status: 404
+            detail: "The requested resource was not found"
+            instance: "/api/v1/incidents/123e4567-e89b-12d3-a456-426614174000"
+            correlation_id: "234e5678-e89b-12d3-a456-426614174001"
+
+    PayloadTooLarge:
+      description: Request payload exceeds maximum allowed size (1 MB)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://getcorrelator.io/problems/413"
+            title: "Payload Too Large"
+            status: 413
+            detail: "Request body exceeds maximum size of 1048576 bytes"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "345e6789-e89b-12d3-a456-426614174002"
+
+    UnsupportedMediaType:
+      description: Content-Type header is not supported
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://getcorrelator.io/problems/415"
+            title: "Unsupported Media Type"
+            status: 415
+            detail: "Content-Type must be application/json"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "456e7890-e89b-12d3-a456-426614174003"
 
     RateLimited:
       description: Rate limit exceeded
@@ -714,13 +909,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            error:
-              code: "RATE_LIMITED"
-              message: "Rate limit exceeded"
-              details:
-                limit: 1000
-                window: "1h"
-                retry_after: 300
+            type: "https://getcorrelator.io/problems/429"
+            title: "Rate Limited"
+            status: 429
+            detail: "Rate limit exceeded"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "567e8901-e89b-12d3-a456-426614174004"
 
     InternalError:
       description: Internal server error
@@ -729,10 +923,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            error:
-              code: "INTERNAL_ERROR"
-              message: "An unexpected error occurred"
-              correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+            type: "https://getcorrelator.io/problems/500"
+            title: "Internal Server Error"
+            status: 500
+            detail: "An unexpected error occurred"
+            instance: "/api/v1/lineage/events"
+            correlation_id: "678e9012-e89b-12d3-a456-426614174005"
 
   examples:
     dbt_run_start:

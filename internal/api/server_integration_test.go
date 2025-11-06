@@ -178,8 +178,8 @@ func TestAuthenticationIntegration(t *testing.T) {
 			t.Error("Expected RFC 7807 'detail' field in error response")
 		}
 
-		if errorResp["correlationId"] == nil {
-			t.Error("Expected RFC 7807 'correlationId' field in error response")
+		if errorResp["correlation_id"] == nil {
+			t.Error("Expected RFC 7807 'correlation_id' field in error response")
 		}
 	})
 
@@ -1305,7 +1305,7 @@ func makeAuthenticatedRequest(server *Server, apiKey, path string) *httptest.Res
 //   - status: HTTP status code
 //   - detail: Human-readable explanation
 //   - instance: URI reference identifying the specific occurrence
-//   - correlationId: Correlator-specific correlation ID for request tracing
+//   - correlation_id: Correlator-specific correlation ID for request tracing
 //
 // Parameters:
 //   - t: Testing instance
@@ -1332,7 +1332,7 @@ func verifyRFC7807Error(t *testing.T, response *httptest.ResponseRecorder, expec
 	}
 
 	// Verify required RFC 7807 fields
-	requiredFields := []string{"type", "title", "status", "detail", "instance", "correlationId"}
+	requiredFields := []string{"type", "title", "status", "detail", "instance", "correlation_id"}
 	for _, field := range requiredFields {
 		if problem[field] == nil {
 			t.Errorf("Missing required RFC 7807 field: %s", field)

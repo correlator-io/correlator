@@ -832,7 +832,7 @@ func TestPluginAuthenticationMiddleware_CorrelationIDInError(t *testing.T) {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
 
-	if problem["correlationId"] == nil || problem["correlationId"] == "" {
-		t.Error("Expected correlationId in problem detail")
+	if problem["correlation_id"] == nil || problem["correlation_id"] == "" {
+		t.Error("Expected correlation_id in problem detail")
 	}
 }

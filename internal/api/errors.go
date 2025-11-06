@@ -34,7 +34,7 @@ type ProblemDetail struct {
 	Status        int    `json:"status"`
 	Detail        string `json:"detail,omitempty"`
 	Instance      string `json:"instance,omitempty"`
-	CorrelationID string `json:"correlationId,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"` //nolint: tagliatelle
 }
 
 // NewProblemDetail creates a new RFC 7807 Problem Detail.
