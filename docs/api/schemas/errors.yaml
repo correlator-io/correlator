@@ -23,7 +23,7 @@ components:
           type: string
           format: uri
           description: URI reference identifying the problem type (RFC 7807)
-          example: "https://correlator.io/docs/errors#validation-error"
+          example: "https://getcorrelator.io/problems/422"
         title:
           type: string
           description: Short, human-readable summary of the problem type
@@ -252,7 +252,7 @@ components:
         error:
           code: "VALIDATION_ERROR"
           message: "OpenLineage event validation failed"
-          type: "https://correlator.io/docs/errors#validation-error"
+          type: "https://getcorrelator.io/problems/422"
           title: "Validation Error"
           status: 422
           detail: "The RunEvent is missing required fields and has invalid data types"
@@ -314,7 +314,7 @@ components:
         error:
           code: "PLUGIN_ERROR"
           message: "dbt plugin configuration error"
-          type: "https://correlator.io/docs/errors#plugin-error"
+          type: "https://getcorrelator.io/problems/400"
           title: "Plugin Error"
           status: 400
           detail: "The dbt plugin could not extract lineage from the provided invocation"
@@ -367,7 +367,7 @@ components:
         error:
           code: "CORRELATION_ERROR"
           message: "Failed to correlate test failure with job run"
-          type: "https://correlator.io/docs/errors#correlation-error"
+          type: "https://getcorrelator.io/problems/422"
           title: "Correlation Error"
           status: 422
           detail: "Unable to establish correlation between test failure and producing job run"
@@ -403,7 +403,7 @@ components:
         error:
           code: "RATE_LIMITED"
           message: "Rate limit exceeded"
-          type: "https://correlator.io/docs/errors#rate-limit"
+          type: "https://getcorrelator.io/problems/429"
           title: "Rate Limit Exceeded"
           status: 429
           detail: "You have exceeded the maximum number of requests per hour"
@@ -423,7 +423,7 @@ components:
         error:
           code: "AUTHENTICATION_ERROR"
           message: "Invalid API key"
-          type: "https://correlator.io/docs/errors#authentication-error"
+          type: "https://getcorrelator.io/problems/401"
           title: "Authentication Error"
           status: 401
           detail: "The provided API key is invalid or has been revoked"
@@ -441,7 +441,7 @@ components:
         error:
           code: "AUTHORIZATION_ERROR"
           message: "Insufficient permissions"
-          type: "https://correlator.io/docs/errors#authorization-error"
+          type: "https://getcorrelator.io/problems/403"
           title: "Authorization Error"
           status: 403
           detail: "You do not have permission to perform this operation"
@@ -460,7 +460,7 @@ components:
         error:
           code: "NOT_FOUND"
           message: "Incident not found"
-          type: "https://correlator.io/docs/errors#not-found"
+          type: "https://getcorrelator.io/problems/404"
           title: "Not Found"
           status: 404
           detail: "The requested incident does not exist or has been deleted"
@@ -477,7 +477,7 @@ components:
         error:
           code: "INTERNAL_ERROR"
           message: "Database connection error"
-          type: "https://correlator.io/docs/errors#internal-error"
+          type: "https://getcorrelator.io/problems/500"
           title: "Internal Server Error"
           status: 500
           detail: "An internal error occurred while processing your request"
@@ -514,7 +514,7 @@ components:
         error:
           code: "BAD_REQUEST"
           message: "Invalid JSON payload"
-          type: "https://correlator.io/docs/errors#bad-request"
+          type: "https://getcorrelator.io/problems/400"
           title: "Bad Request"
           status: 400
           detail: "The request body contains invalid JSON"

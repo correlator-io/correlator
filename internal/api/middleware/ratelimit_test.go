@@ -474,8 +474,8 @@ func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
 	}
 
 	// Verify RFC 7807 fields
-	if problem["type"] != "https://correlator.io/problems/429" {
-		t.Errorf("expected type https://correlator.io/problems/429, got %v", problem["type"])
+	if problem["type"] != "https://getcorrelator.io/problems/429" {
+		t.Errorf("expected type https://getcorrelator.io/problems/429, got %v", problem["type"])
 	}
 
 	if problem["title"] != "Too Many Requests" {

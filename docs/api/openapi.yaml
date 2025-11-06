@@ -839,7 +839,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#bad-request"
+            type: "https://getcorrelator.io/problems/400"
             title: "Bad Request"
             status: 400
             detail: "Invalid OpenLineage event format"
@@ -853,7 +853,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#validation-error"
+            type: "https://getcorrelator.io/problems/422"
             title: "Validation Error"
             status: 422
             detail: "Schema validation failed"
@@ -867,7 +867,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#not-found"
+            type: "https://getcorrelator.io/problems/404"
             title: "Not Found"
             status: 404
             detail: "The requested resource was not found"
@@ -881,7 +881,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#payload-too-large"
+            type: "https://getcorrelator.io/problems/413"
             title: "Payload Too Large"
             status: 413
             detail: "Request body exceeds maximum size of 1048576 bytes"
@@ -895,7 +895,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#unsupported-media-type"
+            type: "https://getcorrelator.io/problems/415"
             title: "Unsupported Media Type"
             status: 415
             detail: "Content-Type must be application/json"
@@ -909,7 +909,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#rate-limited"
+            type: "https://getcorrelator.io/problems/429"
             title: "Rate Limited"
             status: 429
             detail: "Rate limit exceeded"
@@ -923,7 +923,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://correlator.io/docs/errors#internal-error"
+            type: "https://getcorrelator.io/problems/500"
             title: "Internal Server Error"
             status: 500
             detail: "An unexpected error occurred"
