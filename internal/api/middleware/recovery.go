@@ -4,6 +4,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -34,7 +35,10 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 						Instance      string `json:"instance"`
 						CorrelationID string `json:"correlation_id"` //nolint: tagliatelle
 					}{
-						Type:          "https://getcorrelator.io/problems/500",
+						Type: fmt.Sprintf(
+							"https://getcorrelator.io/problems/%d",
+							http.StatusInternalServerError,
+						),
 						Title:         "Internal Server Error",
 						Status:        http.StatusInternalServerError,
 						Detail:        "An unexpected error occurred while processing the request",
