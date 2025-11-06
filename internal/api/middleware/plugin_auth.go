@@ -371,12 +371,12 @@ func writeRFC7807Error(
 
 	// Create RFC 7807 problem detail
 	problem := map[string]interface{}{
-		"type":          fmt.Sprintf("https://correlator.io/problems/%d", statusCode),
-		"title":         title,
-		"status":        statusCode,
-		"detail":        detail,
-		"instance":      r.URL.Path,
-		"correlationId": correlationID,
+		"type":           fmt.Sprintf("https://correlator.io/problems/%d", statusCode),
+		"title":          title,
+		"status":         statusCode,
+		"detail":         detail,
+		"instance":       r.URL.Path,
+		"correlation_id": correlationID,
 	}
 
 	// Set proper content type and status code

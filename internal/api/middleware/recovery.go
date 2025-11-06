@@ -33,7 +33,7 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 						Status        int    `json:"status"`
 						Detail        string `json:"detail"`
 						Instance      string `json:"instance"`
-						CorrelationID string `json:"correlationId"`
+						CorrelationID string `json:"correlation_id"` //nolint: tagliatelle
 					}{
 						Type:          fmt.Sprintf("https://correlator.io/problems/%d", http.StatusInternalServerError),
 						Title:         "Internal Server Error",

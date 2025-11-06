@@ -10,30 +10,15 @@ info:
 
 components:
   schemas:
-    # Base Error Schema - RFC 7807 compliant
+    # Base Error Schema - RFC 7807 Problem Details (flat, no wrapper)
+    # https://datatracker.ietf.org/doc/html/rfc7807
     Error:
       type: object
       required:
-        - error
+        - type
+        - title
+        - status
       properties:
-        error:
-          $ref: '#/components/schemas/ErrorDetails'
-
-    # Error Details - Main error information
-    ErrorDetails:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code
-          example: "VALIDATION_ERROR"
-        message:
-          type: string
-          description: Human-readable error message
-          example: "Schema validation failed"
         type:
           type: string
           format: uri
@@ -45,35 +30,22 @@ components:
           example: "Validation Error"
         status:
           type: integer
-          description: HTTP status code
+          description: HTTP status code (RFC 7807)
           example: 422
         detail:
           type: string
-          description: Human-readable explanation specific to this occurrence
+          description: Human-readable explanation specific to this occurrence (RFC 7807)
           example: "The OpenLineage event is missing required fields"
         instance:
           type: string
           format: uri
-          description: URI reference identifying the specific occurrence
+          description: URI reference identifying the specific occurrence (RFC 7807)
           example: "/api/v1/lineage/events"
-        timestamp:
-          type: string
-          format: date-time
-          description: When the error occurred
-          example: "2024-01-01T12:05:30Z"
         correlation_id:
           type: string
           format: uuid
-          description: Unique ID for tracking this error across systems
+          description: Unique ID for tracking this error across systems (Correlator extension)
           example: "123e4567-e89b-12d3-a456-426614174000"
-        details:
-          oneOf:
-            - $ref: '#/components/schemas/ValidationErrorDetails'
-            - $ref: '#/components/schemas/PluginErrorDetails'
-            - $ref: '#/components/schemas/CorrelationErrorDetails'
-            - type: object
-              additionalProperties: true
-          description: Additional error-specific details
 
     # Validation Error Details - Schema validation failures
     ValidationErrorDetails:
@@ -269,6 +241,10 @@ components:
           example: "CORR-2024-001-12345"
 
   examples:
+    # NOTE: Examples below still contain legacy "error:" wrapper and need updating
+    # to match RFC 7807 flat structure. See openapi.yaml for correct format.
+    # TODO: Remove "error:" wrapper from all examples below
+
     # Validation Error Examples
     openlineage_validation_error:
       summary: OpenLineage event validation error
