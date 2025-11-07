@@ -363,12 +363,12 @@ Body: [
 
 ## Performance Characteristics
 
-| Operation | Latency | Throughput | Notes |
-|-----------|---------|------------|-------|
-| **Field validation** | ~5µs | 232K events/sec | Semantic validation (no JSON schema) |
-| **Sequence validation** | ~2µs/event | 500K events/sec | State transition checks |
-| **Database trigger** | ~50µs | 20K events/sec | SQL function execution |
-| **Total (single event, validation only)** | **~57µs** | **18 events/sec** | Sum of validation steps (excludes I/O) |
+| Operation | Latency | Throughput          | Notes |
+|-----------|---------|---------------------|-------|
+| **Field validation** | ~5µs | 232K events/sec     | Semantic validation (no JSON schema) |
+| **Sequence validation** | ~2µs/event | 500K events/sec     | State transition checks |
+| **Database trigger** | ~50µs | 20K events/sec      | SQL function execution |
+| **Total (single event, validation only)** | **~57µs** | **~18k events/sec** | Sum of validation steps (excludes I/O) |
 
 **Target**: <100ms per event ✅ **Achieved: 57µs (validation only)**
 
