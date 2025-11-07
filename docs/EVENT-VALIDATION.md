@@ -131,11 +131,11 @@ if len(events) > 1 && isSingleRunBatch(events) {
 
 **Single-run batches ONLY:**
 - All events have same run.runId
-- Example: \`[START, RUNNING, COMPLETE]\` for runId "abc123"
+- Example: `[START, RUNNING, COMPLETE]` for runId "abc123"
 
 **Skipped for multi-run batches:**
 - Events for different runs (independent validation)
-- Example: \`[START(run1), START(run2), START(run3)]\`
+- Example: `[START(run1), START(run2), START(run3)]`
 
 ### What It Validates
 
@@ -481,4 +481,4 @@ curl -X POST /api/v1/lineage/events -d '[
 
 ---
 
-**Questions or issues?** File a GitHub issue at \`github.com/correlator-io/correlator/issues\`
+**Questions or issues?** File a GitHub issue at `github.com/correlator-io/correlator/issues`
