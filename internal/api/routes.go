@@ -479,7 +479,7 @@ func isSingleRunBatch(events []*ingestion.RunEvent) bool {
 //   - JSON parsing
 //   - Empty array check
 func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *ProblemDetail) {
-	// 2. Request size check (optimization: fail fast for known oversized requests)
+	// Request size check (optimization: fail fast for known oversized requests)
 	// Allow unknown sizes (-1) or 0 (empty, caught later)
 	if r.ContentLength > 0 && r.ContentLength > s.config.MaxRequestSize {
 		return nil, PayloadTooLarge(
@@ -487,12 +487,12 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		)
 	}
 
-	// 3. Empty body check (better UX: specific error message)
+	// Empty body check (better UX: specific error message)
 	if r.ContentLength == 0 {
 		return nil, BadRequest("Request body cannot be empty")
 	}
 
-	// 4. Parse JSON array (with size limit - ultimate protection)
+	// Parse JSON array (with size limit - ultimate protection)
 	var events []ingestion.RunEvent
 
 	decoder := json.NewDecoder(io.LimitReader(r.Body, s.config.MaxRequestSize))
@@ -500,13 +500,41 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		return nil, BadRequest("Invalid JSON: " + err.Error())
 	}
 
-	// 5. Empty array check
+	// Empty array check
 	if len(events) == 0 {
 		return nil, BadRequest("Event array cannot be empty")
 	}
 
-	// 6. Convert to pointers and normalize nil slices (JSON decoding quirk)
+	// Convert to pointers and normalize nil slices (JSON decoding quirk)
 	// Storage layer expects non-nil slices for Inputs/Outputs
+	return s.normalizeNilSlices(events), nil
+}
+
+// normalizeNilSlices converts event values to pointers and normalizes nil slices to empty slices.
+//
+// JSON unmarshaling has a quirk where omitted array fields become nil instead of empty arrays.
+// For example, if an OpenLineage event doesn't include "inputs" field, json.Unmarshal creates:
+//
+//	event.Inputs = nil  (not []Dataset{})
+//
+// The storage layer's defensive validation explicitly checks for nil slices:
+//
+//	if event.Inputs == nil {
+//	    return fmt.Errorf("event.Inputs is nil")
+//	}
+//
+// This normalization ensures that:
+//   - Omitted fields become empty arrays []Dataset{} (not nil)
+//   - Storage layer receives consistent input (never nil slices)
+//   - No panic risk from nil pointer dereference
+//
+// Example transformation:
+//
+//	Input:  RunEvent{Inputs: nil, Outputs: nil}
+//	Output: &RunEvent{Inputs: []Dataset{}, Outputs: []Dataset{}}
+//
+// Returns slice of event pointers with normalized slices (never nil).
+func (s *Server) normalizeNilSlices(events []ingestion.RunEvent) []*ingestion.RunEvent {
 	eventPointers := make([]*ingestion.RunEvent, len(events))
 	for i := range events {
 		if events[i].Inputs == nil {
@@ -520,7 +548,7 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		eventPointers[i] = &events[i]
 	}
 
-	return eventPointers, nil
+	return eventPointers
 }
 
 // validateEvents validates event sequence and individual events.
@@ -549,7 +577,7 @@ func (s *Server) validateEvents(
 		sortedEvents = events
 	}
 
-	// 8. Validate individual events using shared validator (created once in constructor)
+	// Validate individual events using shared validator (created once in constructor)
 	validationErrors := make([]error, len(sortedEvents))
 
 	for i := range sortedEvents {
