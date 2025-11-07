@@ -104,6 +104,7 @@ err := validator.ValidateRunEvent(event)
   "correlation_id": "abc123",
   "timestamp": "2024-01-01T12:00:00Z",
   "stored": 2,
+  "duplicates": 0,
   "failed": 1,
   "results": [
     {"index": 0, "status": 200, "message": "stored"},
