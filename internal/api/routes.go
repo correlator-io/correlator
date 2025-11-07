@@ -507,10 +507,10 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 
 	// Convert to pointers and normalize nil slices (JSON decoding quirk)
 	// Storage layer expects non-nil slices for Inputs/Outputs
-	return s.normaliseNilSlices(events), nil
+	return s.normalizeNilSlices(events), nil
 }
 
-// normaliseNilSlices converts event values to pointers and normalizes nil slices to empty slices.
+// normalizeNilSlices converts event values to pointers and normalizes nil slices to empty slices.
 //
 // JSON unmarshaling has a quirk where omitted array fields become nil instead of empty arrays.
 // For example, if an OpenLineage event doesn't include "inputs" field, json.Unmarshal creates:
@@ -534,7 +534,7 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 //	Output: &RunEvent{Inputs: []Dataset{}, Outputs: []Dataset{}}
 //
 // Returns slice of event pointers with normalized slices (never nil).
-func (s *Server) normaliseNilSlices(events []ingestion.RunEvent) []*ingestion.RunEvent {
+func (s *Server) normalizeNilSlices(events []ingestion.RunEvent) []*ingestion.RunEvent {
 	eventPointers := make([]*ingestion.RunEvent, len(events))
 	for i := range events {
 		if events[i].Inputs == nil {
