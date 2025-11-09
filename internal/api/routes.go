@@ -97,6 +97,14 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	    Route{"/health", s.handleHealth},
 //	)
 func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
+	validHTTPMethods := map[string]bool{
+		"GET":    true,
+		"POST":   true,
+		"PUT":    true,
+		"PATCH":  true,
+		"DELETE": true,
+	}
+
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
 
@@ -104,7 +112,10 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
 		// Go 1.22+ method-based routing uses "GET /path" format
 		// But r.URL.Path is just "/path" (no method prefix)
 		path := route.Path
-		if parts := strings.SplitN(path, " ", expectedURLParts); len(parts) == expectedURLParts {
+
+		parts := strings.SplitN(path, " ", expectedURLParts)
+		// If the route path contains a method prefix (e.g., "GET /ping"), extract the path part.
+		if len(parts) == expectedURLParts && validHTTPMethods[parts[0]] {
 			path = parts[1] // Extract path after method (e.g., "GET /ping" → "/ping")
 		}
 
