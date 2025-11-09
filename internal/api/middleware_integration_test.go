@@ -15,6 +15,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Import file source driver
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -40,50 +42,44 @@ type testDatabase struct {
 	connection *sql.DB
 }
 
-// TestAuthenticationIntegration tests the complete authentication flow with a real HTTP server and database.
-func TestAuthenticationIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+// middlewareTestServer encapsulates test server dependencies for middleware integration tests.
+// Only stores fields used by helper methods (server, testAPIKey, rateLimiter).
+// Cleanup dependencies (keyStore, lineageStore, testDB) are captured in t.Cleanup closures.
+type middlewareTestServer struct {
+	server      *Server
+	testAPIKey  string
+	rateLimiter *middleware.InMemoryRateLimiter
+}
 
-	ctx := context.Background()
+// setupMiddlewareTestServer creates a fully configured test server with all dependencies.
+// This helper eliminates ~100 lines of duplicated setup code per test.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - t: Testing instance for error reporting
+//   - withRateLimiter: If true, creates rate limiter with restrictive limits for testing
+//
+// Returns:
+//   - *middlewareTestServer containing server, API key, and optional rate limiter
+func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimiter bool) *middlewareTestServer {
+	t.Helper()
 
+	// Setup database with migrations
 	testDB := setupTestDatabase(ctx, t)
-
-	// Wrap in storage.Connection
 	storageConn := &storage.Connection{DB: testDB.connection}
 
-	// Create key store
+	// Create stores
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create key store")
 
 	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create lineage store")
 
-	t.Cleanup(func() {
-		_ = keyStore.Close()
-		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
-	})
-
-	// Create test API key
+	// Create and register API key
 	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
-	if err != nil {
-		t.Fatalf("Failed to generate API key: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate API key")
 
-	apiKey := &storage.APIKey{
+	err = keyStore.Add(ctx, &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
 		PluginID:    "test-plugin",
@@ -92,220 +88,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
 		Active:      true,
+	})
+	require.NoError(t, err, "Failed to add API key")
+
+	// Create rate limiter if requested
+	var rateLimiter *middleware.InMemoryRateLimiter
+	if withRateLimiter {
+		rateLimiter = createTestRateLimiter(5, 2, 1) // Restrictive limits for testing
 	}
-
-	if err := keyStore.Add(ctx, apiKey); err != nil {
-		t.Fatalf("Failed to add API key: %v", err)
-	}
-
-	// Create server config (pure configuration only)
-	config := &ServerConfig{
-		Port:               8080,
-		Host:               "localhost",
-		ReadTimeout:        30 * time.Second,
-		WriteTimeout:       30 * time.Second,
-		ShutdownTimeout:    30 * time.Second,
-		LogLevel:           slog.LevelInfo,
-		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
-		CORSAllowedOrigins: []string{"*"},
-		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
-		CORSMaxAge:         86400,
-	}
-
-	// Create server with dependency injection
-	// Pass nil for rateLimiter (not tested in this integration test)
-	server := NewServer(config, keyStore, nil, lineageStore)
-
-	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-		req.Header.Set("X-Api-Key", testAPIKey)
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusOK, status, rr.Body.String())
-		}
-
-		// Verify correlation ID header is set
-		if correlationID := rr.Header().Get("X-Correlation-ID"); correlationID == "" {
-			t.Error("Expected X-Correlation-ID header to be set")
-		}
-	})
-
-	t.Run("Successful Authentication with Authorization Bearer Header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusOK, status, rr.Body.String())
-		}
-	})
-
-	t.Run("Missing API Key Returns 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
-		}
-
-		// Verify RFC 7807 error response
-		var errorResp map[string]interface{}
-		if err := json.Unmarshal(rr.Body.Bytes(), &errorResp); err != nil {
-			t.Fatalf("Failed to parse error response: %v", err)
-		}
-
-		if errorResp["type"] == nil {
-			t.Error("Expected RFC 7807 'type' field in error response")
-		}
-
-		if errorResp["title"] == nil {
-			t.Error("Expected RFC 7807 'title' field in error response")
-		}
-
-		if errorResp["status"] == nil {
-			t.Error("Expected RFC 7807 'status' field in error response")
-		}
-
-		if errorResp["detail"] == nil {
-			t.Error("Expected RFC 7807 'detail' field in error response")
-		}
-
-		if errorResp["correlation_id"] == nil {
-			t.Error("Expected RFC 7807 'correlation_id' field in error response")
-		}
-	})
-
-	t.Run("Invalid API Key Returns 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-		req.Header.Set("X-Api-Key", "correlator_ak_"+string(make([]byte, 64)))
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
-		}
-	})
-
-	t.Run("Inactive API Key Returns 403", func(t *testing.T) {
-		// Create inactive API key
-		inactiveKey, err := storage.GenerateAPIKey("inactive-plugin")
-		if err != nil {
-			t.Fatalf("Failed to generate inactive API key: %v", err)
-		}
-
-		inactiveAPIKey := &storage.APIKey{
-			ID:          "inactive-key-id",
-			Key:         inactiveKey,
-			PluginID:    "inactive-plugin",
-			Name:        "Inactive Plugin",
-			Permissions: []string{"lineage:write"},
-			CreatedAt:   time.Now(),
-			ExpiresAt:   nil,
-			Active:      false, // Inactive
-		}
-
-		if err := keyStore.Add(ctx, inactiveAPIKey); err != nil {
-			t.Fatalf("Failed to add inactive API key: %v", err)
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-		req.Header.Set("X-Api-Key", inactiveKey)
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusForbidden {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusForbidden, status, rr.Body.String())
-		}
-	})
-
-	t.Run("Expired API Key Returns 401", func(t *testing.T) {
-		// Create expired API key
-		expiredKey, err := storage.GenerateAPIKey("expired-plugin")
-		if err != nil {
-			t.Fatalf("Failed to generate expired API key: %v", err)
-		}
-
-		expiredTime := time.Now().Add(-1 * time.Hour)
-		expiredAPIKey := &storage.APIKey{
-			ID:          "expired-key-id",
-			Key:         expiredKey,
-			PluginID:    "expired-plugin",
-			Name:        "Expired Plugin",
-			Permissions: []string{"lineage:write"},
-			CreatedAt:   time.Now().Add(-2 * time.Hour),
-			ExpiresAt:   &expiredTime, // Expired 1 hour ago
-			Active:      true,
-		}
-
-		if err := keyStore.Add(ctx, expiredAPIKey); err != nil {
-			t.Fatalf("Failed to add expired API key: %v", err)
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
-		req.Header.Set("X-Api-Key", expiredKey)
-
-		rr := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("Expected status %d, got %d. Body: %s", http.StatusUnauthorized, status, rr.Body.String())
-		}
-	})
-}
-
-// TestPublicEndpointAuthBypass tests that public health endpoints work without authentication.
-// This test validates the auth bypass functionality for Kubernetes health probes and monitoring tools.
-//
-// Test scenarios:
-//   - /ping works without API key (liveness probe)
-//   - /api/v1/health works without API key (basic health check)
-//
-// This test will FAIL until auth bypass is implemented in plugin_auth.go.
-func TestPublicEndpointAuthBypass(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx := context.Background()
-
-	testDB := setupTestDatabase(ctx, t)
-
-	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.connection}
-
-	// Create key store
-	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
-
-	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = keyStore.Close()
-		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
-	})
 
 	// Create server config
 	config := &ServerConfig{
@@ -315,89 +105,234 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 		WriteTimeout:       30 * time.Second,
 		ShutdownTimeout:    30 * time.Second,
 		LogLevel:           slog.LevelInfo,
-		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
+		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
 		CORSMaxAge:         86400,
 	}
 
-	// Create server with auth enabled (keyStore provided)
-	// Pass nil for rateLimiter (not tested in this integration test)
+	// Create server with dependencies
+	server := NewServer(config, keyStore, rateLimiter, lineageStore)
+
+	// Register cleanup (closure captures dependencies)
+	t.Cleanup(func() {
+		if rateLimiter != nil {
+			rateLimiter.Close()
+		}
+
+		_ = keyStore.Close()
+		_ = lineageStore.Close()
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
+	})
+
+	return &middlewareTestServer{
+		server:      server,
+		testAPIKey:  testAPIKey,
+		rateLimiter: rateLimiter,
+	}
+}
+
+// TestAuthenticationIntegration tests the complete authentication flow with a real HTTP server and database.
+// Note: Uses manual setup (not helper) because it needs NO rate limiter and dynamically adds inactive/expired keys.
+func TestAuthenticationIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := setupTestDatabase(ctx, t)
+	storageConn := &storage.Connection{DB: testDB.connection}
+
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	require.NoError(t, err, "Failed to create key store")
+
+	lineageStore, err := storage.NewLineageStore(storageConn)
+	require.NoError(t, err, "Failed to create lineage store")
+
+	t.Cleanup(func() {
+		_ = keyStore.Close()
+		_ = lineageStore.Close()
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
+	})
+
+	// Create test API key
+	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	require.NoError(t, err, "Failed to generate API key")
+
+	err = keyStore.Add(ctx, &storage.APIKey{
+		ID:          "test-key-id",
+		Key:         testAPIKey,
+		PluginID:    "test-plugin",
+		Name:        "Test Plugin",
+		Permissions: []string{"lineage:write", "lineage:read"},
+		CreatedAt:   time.Now(),
+		Active:      true,
+	})
+	require.NoError(t, err, "Failed to add API key")
+
+	// Create server (NO rate limiter for this test)
+	config := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		MaxRequestSize:     defaultMaxRequestSize,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
 	server := NewServer(config, keyStore, nil, lineageStore)
 
-	t.Run("Ping Endpoint Works Without Authentication", func(t *testing.T) {
-		// Make request WITHOUT API key
-		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+		req.Header.Set("X-Api-Key", testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
 
-		// Should return 200 OK (not 401 Unauthorized)
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("/ping: Expected status %d, got %d. Body: %s",
-				http.StatusOK, status, rr.Body.String())
-		}
-
-		// Verify response body
-		if body := rr.Body.String(); body != "pong" {
-			t.Errorf("/ping: Expected body 'pong', got '%s'", body)
-		}
-
-		// Verify correlation ID is still set (CorrelationID middleware runs before auth)
-		verifyCorrelationID(t, rr)
+		assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
+		assert.NotEmpty(t, rr.Header().Get("X-Correlation-ID"), "Expected X-Correlation-ID header")
 	})
 
-	t.Run("Health Endpoint Works Without Authentication", func(t *testing.T) {
-		// Make request WITHOUT API key
-		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	t.Run("Successful Authentication with Authorization Bearer Header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
 
-		// Should return 200 OK (not 401 Unauthorized)
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("/api/v1/health: Expected status %d, got %d. Body: %s",
-				http.StatusOK, status, rr.Body.String())
-		}
-
-		// Verify response is valid JSON
-		var health HealthStatus
-		if err := json.Unmarshal(rr.Body.Bytes(), &health); err != nil {
-			t.Fatalf("/api/v1/health: Failed to parse health response: %v", err)
-		}
-
-		// Verify health fields
-		if health.Status != "healthy" {
-			t.Errorf("/api/v1/health: Expected status 'healthy', got '%s'", health.Status)
-		}
-
-		if health.ServiceName != "correlator" {
-			t.Errorf("/api/v1/health: Expected serviceName 'correlator', got '%s'", health.ServiceName)
-		}
-
-		if health.Version == "" {
-			t.Error("/api/v1/health: Expected version to be set")
-		}
-
-		// Verify correlation ID is set
-		verifyCorrelationID(t, rr)
+		assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
 	})
 
-	t.Run("Protected Endpoint Still Requires Authentication", func(t *testing.T) {
-		// Verify /api/v1/health/data-consistency still requires auth (it's protected)
+	t.Run("Missing API Key Returns 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
 
-		// Should return 401 Unauthorized
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("/api/v1/health/data-consistency: Expected status %d (should require auth), got %d. Body: %s",
-				http.StatusUnauthorized, status, rr.Body.String())
-		}
+		assert.Equal(t, http.StatusUnauthorized, rr.Code, "Response body: %s", rr.Body.String())
+		verifyRFC7807Error(t, rr, http.StatusUnauthorized)
+	})
 
-		// Verify RFC 7807 error response
+	t.Run("Invalid API Key Returns 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+		req.Header.Set("X-Api-Key", "correlator_ak_"+string(make([]byte, 64)))
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code, "Response body: %s", rr.Body.String())
+	})
+
+	t.Run("Inactive API Key Returns 403", func(t *testing.T) {
+		inactiveKey, err := storage.GenerateAPIKey("inactive-plugin")
+		require.NoError(t, err)
+
+		err = keyStore.Add(ctx, &storage.APIKey{
+			ID:          "inactive-key-id",
+			Key:         inactiveKey,
+			PluginID:    "inactive-plugin",
+			Name:        "Inactive Plugin",
+			Permissions: []string{"lineage:write"},
+			CreatedAt:   time.Now(),
+			Active:      false,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+		req.Header.Set("X-Api-Key", inactiveKey)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code, "Response body: %s", rr.Body.String())
+	})
+
+	t.Run("Expired API Key Returns 401", func(t *testing.T) {
+		expiredKey, err := storage.GenerateAPIKey("expired-plugin")
+		require.NoError(t, err)
+
+		expiredTime := time.Now().Add(-1 * time.Hour)
+		err = keyStore.Add(ctx, &storage.APIKey{
+			ID:          "expired-key-id",
+			Key:         expiredKey,
+			PluginID:    "expired-plugin",
+			Name:        "Expired Plugin",
+			Permissions: []string{"lineage:write"},
+			CreatedAt:   time.Now().Add(-2 * time.Hour),
+			ExpiresAt:   &expiredTime,
+			Active:      true,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+		req.Header.Set("X-Api-Key", expiredKey)
+
+		rr := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code, "Response body: %s", rr.Body.String())
+	})
+}
+
+// TestPublicEndpointAuthBypass tests that public health endpoints work without authentication.
+// This test validates the auth bypass functionality for Kubernetes health probes and monitoring tools.
+//
+// Test scenarios:
+//   - /ping works without API key (liveness probe)
+//   - /api/v1/health works without API key (basic health check)
+func TestPublicEndpointAuthBypass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupMiddlewareTestServer(ctx, t, false)
+
+	t.Run("Ping Endpoint Works Without Authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
+		assert.Equal(t, "pong", rr.Body.String(), "Expected 'pong' response")
+		verifyCorrelationID(t, rr)
+	})
+
+	t.Run("Health Endpoint Works Without Authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
+
+		var health HealthStatus
+
+		err := json.Unmarshal(rr.Body.Bytes(), &health)
+		require.NoError(t, err, "Failed to parse health response")
+
+		assert.Equal(t, "healthy", health.Status, "Expected healthy status")
+		assert.Equal(t, "correlator", health.ServiceName, "Expected correlator service name")
+		assert.NotEmpty(t, health.Version, "Expected version to be set")
+
+		verifyCorrelationID(t, rr)
+	})
+
+	t.Run("Protected Endpoint Still Requires Authentication", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/data-consistency", nil)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rr.Code, "Response body: %s", rr.Body.String())
 		verifyRFC7807Error(t, rr, http.StatusUnauthorized)
 	})
 }
