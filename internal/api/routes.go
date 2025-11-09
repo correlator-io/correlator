@@ -17,6 +17,7 @@ import (
 
 const (
 	healthCheckTimeout = 2 * time.Second
+	expectedURLParts   = 2
 )
 
 type (
@@ -65,10 +66,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Public health endpoints
 	s.registerPublicRoutes(
 		mux,
-		Route{"/ping", s.handlePing},     // K8s liveness probe
-		Route{"/ready", s.handleReady},   // K8s readiness probe
-		Route{"/health", s.handleHealth}, // Basic health check - status, uptime, version
-		Route{"/", s.handleNotFound},     // Catch-all handler for 404 responses
+		Route{"GET /ping", s.handlePing},     // K8s liveness probe
+		Route{"GET /ready", s.handleReady},   // K8s readiness probe
+		Route{"GET /health", s.handleHealth}, // Basic health check - status, uptime, version
+		Route{"/", s.handleNotFound},         // Catch-all handler for 404 responses
 	)
 
 	// Protected endpoints
@@ -96,9 +97,37 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 //	    Route{"/health", s.handleHealth},
 //	)
 func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
+	validHTTPMethods := map[string]bool{
+		"GET":    true,
+		"POST":   true,
+		"PUT":    true,
+		"PATCH":  true,
+		"DELETE": true,
+	}
+
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
-		middleware.RegisterPublicEndpoint(route.Path)
+
+		// Strip method prefix for public endpoint bypass registration
+		// Go 1.22+ method-based routing uses "GET /path" format
+		// But r.URL.Path is just "/path" (no method prefix)
+		path := route.Path
+
+		parts := strings.Fields(path)
+		// If the route path contains a method prefix (e.g., "GET /ping"), extract the path part.
+		if len(parts) == expectedURLParts && validHTTPMethods[parts[0]] {
+			path = strings.TrimSpace(parts[1]) // Extract path after method (e.g., "GET /ping" → "/ping")
+		}
+
+		// Skip registering an empty path as a public
+		if path == "" {
+			s.logger.Warn("Malformed route path detected, ignoring route", slog.String("path", path))
+
+			continue
+		}
+
+		// Always register (handles both "GET /ping" and "/" formats)
+		middleware.RegisterPublicEndpoint(path)
 	}
 }
 
