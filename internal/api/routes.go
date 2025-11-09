@@ -104,7 +104,7 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
 		// Go 1.22+ method-based routing uses "GET /path" format
 		// But r.URL.Path is just "/path" (no method prefix)
 		path := route.Path
-		if parts := strings.Split(path, " "); len(parts) == expectedURLParts {
+		if parts := strings.SplitN(path, " ", expectedURLParts); len(parts) == expectedURLParts {
 			path = parts[1] // Extract path after method (e.g., "GET /ping" → "/ping")
 		}
 
