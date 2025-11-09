@@ -17,6 +17,7 @@ import (
 
 const (
 	healthCheckTimeout = 2 * time.Second
+	expectedURLParts   = 2
 )
 
 type (
@@ -65,10 +66,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Public health endpoints
 	s.registerPublicRoutes(
 		mux,
-		Route{"/ping", s.handlePing},     // K8s liveness probe
-		Route{"/ready", s.handleReady},   // K8s readiness probe
-		Route{"/health", s.handleHealth}, // Basic health check - status, uptime, version
-		Route{"/", s.handleNotFound},     // Catch-all handler for 404 responses
+		Route{"GET /ping", s.handlePing},     // K8s liveness probe
+		Route{"GET /ready", s.handleReady},   // K8s readiness probe
+		Route{"GET /health", s.handleHealth}, // Basic health check - status, uptime, version
+		Route{"/", s.handleNotFound},         // Catch-all handler for 404 responses
 	)
 
 	// Protected endpoints
@@ -98,7 +99,17 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
-		middleware.RegisterPublicEndpoint(route.Path)
+
+		// Strip method prefix for public endpoint bypass registration
+		// Go 1.22+ method-based routing uses "GET /path" format
+		// But r.URL.Path is just "/path" (no method prefix)
+		path := route.Path
+		if parts := strings.Split(path, " "); len(parts) == expectedURLParts {
+			path = parts[1] // Extract path after method (e.g., "GET /ping" → "/ping")
+		}
+
+		// Always register (handles both "GET /ping" and "/" formats)
+		middleware.RegisterPublicEndpoint(path)
 	}
 }
 
