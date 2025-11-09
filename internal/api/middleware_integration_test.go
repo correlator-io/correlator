@@ -86,7 +86,6 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 		Name:        "Test Plugin",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
-		ExpiresAt:   nil,
 		Active:      true,
 	})
 	require.NoError(t, err, "Failed to add API key")
