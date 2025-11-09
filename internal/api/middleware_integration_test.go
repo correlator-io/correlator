@@ -361,33 +361,21 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create key store")
 
 	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
 	})
 
 	// Create a test API key for protected endpoint verification
 	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
-	if err != nil {
-		t.Fatalf("Failed to generate API key: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
 		ID:          "test-key-id",
@@ -400,9 +388,8 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		Active:      true,
 	}
 
-	if err := keyStore.Add(ctx, apiKey); err != nil {
-		t.Fatalf("Failed to add API key: %v", err)
-	}
+	err = keyStore.Add(ctx, apiKey)
+	require.NoError(t, err, "Failed to add API key")
 
 	// Create server config
 	serverConfig := &ServerConfig{
@@ -451,13 +438,12 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// ALL requests should succeed (no rate limiting)
-		if rateLimitedCount > 0 {
-			t.Errorf("/ping: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount)
-		}
-
-		if successCount != 100 {
-			t.Errorf("/ping: Expected 100 successful requests, got %d", successCount)
-		}
+		assert.Equal(t,
+			0,
+			rateLimitedCount,
+			"/ping: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount,
+		)
+		assert.Equal(t, 100, successCount, "/ping: Expected 100 successful requests, got %d", successCount)
 	})
 
 	t.Run("Health Endpoint Bypasses Rate Limiting", func(t *testing.T) {
@@ -481,13 +467,13 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// ALL requests should succeed (no rate limiting)
-		if rateLimitedCount > 0 {
-			t.Errorf("/api/v1/health: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount)
-		}
-
-		if successCount != 100 {
-			t.Errorf("/api/v1/health: Expected 100 successful requests, got %d", successCount)
-		}
+		assert.Equal(t,
+			0,
+			rateLimitedCount,
+			"/health: Expected 0 rate-limited requests (bypass enabled), got %d",
+			rateLimitedCount,
+		)
+		assert.Equal(t, 100, successCount, "/health: Expected 100 successful requests, got %d", successCount)
 	})
 
 	t.Run("Protected Endpoint Still Enforces Rate Limits", func(t *testing.T) {
@@ -517,9 +503,12 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// Should have SOME rate-limited requests (2 RPS limit with bcrypt latency)
-		if rateLimitedCount == 0 {
-			t.Errorf("/api/v1/health/data-consistency: Expected some rate-limited requests, but all %d succeeded", successCount)
-		}
+		assert.NotEqual(t,
+			0,
+			rateLimitedCount,
+			"/api/v1/health/data-consistency: Expected some rate-limited requests, but all %d succeeded",
+			successCount,
+		)
 	})
 }
 
@@ -541,14 +530,10 @@ func TestReadyEndpoint(t *testing.T) {
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create key store")
 
 	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create rate limiter with VERY restrictive limits
 	// If bypass didn't work, these limits would be hit immediately
@@ -558,14 +543,8 @@ func TestReadyEndpoint(t *testing.T) {
 		rateLimiter.Close()
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
 	})
 
 	// Create server config
@@ -694,33 +673,21 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create key store")
 
 	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
 	})
 
 	// Create test API keys for plugin-1 and plugin-2
 	apiKey1, err := storage.GenerateAPIKey("plugin-1")
-	if err != nil {
-		t.Fatalf("Failed to generate API key for plugin-1: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate API key for plugin-1")
 
 	apiKeyObj1 := &storage.APIKey{
 		ID:          "plugin-1-key-id",
@@ -733,14 +700,11 @@ func TestRateLimitingIntegration(t *testing.T) {
 		Active:      true,
 	}
 
-	if err := keyStore.Add(ctx, apiKeyObj1); err != nil {
-		t.Fatalf("Failed to add API key for plugin-1: %v", err)
-	}
+	err = keyStore.Add(ctx, apiKeyObj1)
+	require.NoError(t, err, "Failed to add API key for plugin-1")
 
 	apiKey2, err := storage.GenerateAPIKey("plugin-2")
-	if err != nil {
-		t.Fatalf("Failed to generate API key for plugin-2: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate API key for plugin-2")
 
 	apiKeyObj2 := &storage.APIKey{
 		ID:          "plugin-2-key-id",
@@ -753,9 +717,8 @@ func TestRateLimitingIntegration(t *testing.T) {
 		Active:      true,
 	}
 
-	if err := keyStore.Add(ctx, apiKeyObj2); err != nil {
-		t.Fatalf("Failed to add API key for plugin-2: %v", err)
-	}
+	err = keyStore.Add(ctx, apiKeyObj2)
+	require.NoError(t, err, "Failed to add API key for plugin-2")
 
 	// Create server config
 	serverConfig := &ServerConfig{
@@ -991,33 +954,21 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create key store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create key store")
 
 	lineageStore, err := storage.NewLineageStore(storageConn)
-	if err != nil {
-		t.Fatalf("Failed to create lineage store: %v", err)
-	}
+	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-
-		if err := testcontainers.TerminateContainer(testDB.container); err != nil {
-			t.Errorf("Failed to terminate postgres container: %v", err)
-		}
-
-		if err := testDB.connection.Close(); err != nil {
-			t.Errorf("Failed to close database connection: %v", err)
-		}
+		_ = testDB.connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.container)
 	})
 
 	// Create test API key for authenticated requests
 	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
-	if err != nil {
-		t.Fatalf("Failed to generate API key: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
 		ID:          "test-key-id",
@@ -1030,15 +981,12 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		Active:      true,
 	}
 
-	if err := keyStore.Add(ctx, apiKey); err != nil {
-		t.Fatalf("Failed to add API key: %v", err)
-	}
+	err = keyStore.Add(ctx, apiKey)
+	require.NoError(t, err, "Failed to add API key")
 
 	// Create inactive API key for authorization failure tests
 	inactiveAPIKey, err := storage.GenerateAPIKey("inactive-plugin")
-	if err != nil {
-		t.Fatalf("Failed to generate inactive API key: %v", err)
-	}
+	require.NoError(t, err, "Failed to generate inactive API key")
 
 	inactiveKey := &storage.APIKey{
 		ID:          "inactive-key-id",
@@ -1051,9 +999,8 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		Active:      false, // Inactive
 	}
 
-	if err := keyStore.Add(ctx, inactiveKey); err != nil {
-		t.Fatalf("Failed to add inactive API key: %v", err)
-	}
+	err = keyStore.Add(ctx, inactiveKey)
+	require.NoError(t, err, "Failed to add inactive API key")
 
 	// Create rate limiter with low limits for easy testing
 	rateLimiter := createTestRateLimiter(100, 2, 1)
