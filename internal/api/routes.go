@@ -113,10 +113,17 @@ func (s *Server) registerPublicRoutes(mux *http.ServeMux, routes ...Route) {
 		// But r.URL.Path is just "/path" (no method prefix)
 		path := route.Path
 
-		parts := strings.SplitN(path, " ", expectedURLParts)
+		parts := strings.Fields(path)
 		// If the route path contains a method prefix (e.g., "GET /ping"), extract the path part.
 		if len(parts) == expectedURLParts && validHTTPMethods[parts[0]] {
-			path = parts[1] // Extract path after method (e.g., "GET /ping" → "/ping")
+			path = strings.TrimSpace(parts[1]) // Extract path after method (e.g., "GET /ping" → "/ping")
+		}
+
+		// Skip registering an empty path as a public
+		if path == "" {
+			s.logger.Warn("Malformed route path detected, ignoring route", slog.String("path", path))
+
+			continue
 		}
 
 		// Always register (handles both "GET /ping" and "/" formats)
