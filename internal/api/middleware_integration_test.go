@@ -437,12 +437,20 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// ALL requests should succeed (no rate limiting)
-		assert.Equal(t,
+		assert.Equalf(
+			t,
 			0,
 			rateLimitedCount,
-			"/ping: Expected 0 rate-limited requests (bypass enabled), got %d", rateLimitedCount,
+			"/ping: Expected 0 rate-limited requests (bypass enabled), got %d",
+			rateLimitedCount,
 		)
-		assert.Equal(t, 100, successCount, "/ping: Expected 100 successful requests, got %d", successCount)
+		assert.Equalf(
+			t,
+			100,
+			successCount,
+			"/ping: Expected 100 successful requests, got %d",
+			successCount,
+		)
 	})
 
 	t.Run("Health Endpoint Bypasses Rate Limiting", func(t *testing.T) {
@@ -466,13 +474,20 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// ALL requests should succeed (no rate limiting)
-		assert.Equal(t,
+		assert.Equalf(
+			t,
 			0,
 			rateLimitedCount,
 			"/health: Expected 0 rate-limited requests (bypass enabled), got %d",
 			rateLimitedCount,
 		)
-		assert.Equal(t, 100, successCount, "/health: Expected 100 successful requests, got %d", successCount)
+		assert.Equalf(
+			t,
+			100,
+			successCount,
+			"/health: Expected 100 successful requests, got %d",
+			successCount,
+		)
 	})
 
 	t.Run("Protected Endpoint Still Enforces Rate Limits", func(t *testing.T) {
@@ -502,7 +517,8 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		}
 
 		// Should have SOME rate-limited requests (2 RPS limit with bcrypt latency)
-		assert.NotEqual(t,
+		assert.NotEqualf(
+			t,
 			0,
 			rateLimitedCount,
 			"/api/v1/health/data-consistency: Expected some rate-limited requests, but all %d succeeded",
