@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -28,13 +29,21 @@ var (
 
 	// ErrInvalidEdgeType is returned when an invalid edge type (not "input" or "output") is provided.
 	ErrInvalidEdgeType = errors.New("invalid edge type: must be 'input' or 'output'")
+
+	// ErrInvalidCleanupInterval is returned when an invalid cleanup interval is provided.
+	ErrInvalidCleanupInterval = errors.New("cleanup interval must be greater than zero")
 )
 
-// Cleanup timeout constants.
+// Cleanup configuration constants.
 const (
 	// cleanupQueryTimeout is the maximum time allowed for a single cleanup query execution.
 	cleanupQueryTimeout = 30 * time.Second
-	shutdownTimeout     = 5 * time.Second
+	// shutdownTimeout is the maximum time to wait for cleanup goroutine to stop during Close().
+	shutdownTimeout = 5 * time.Second
+	// cleanupBatchSize is the maximum number of rows to delete per batch to avoid long-running locks.
+	cleanupBatchSize = 10000
+	// batchSleepDuration is the sleep time between batches to avoid overwhelming the database.
+	batchSleepDuration = 100 * time.Millisecond
 )
 
 // LineageStore implements ingestion.Store interface with PostgreSQL backend.
@@ -51,6 +60,7 @@ type LineageStore struct {
 	cleanupInterval time.Duration
 	cleanupStop     chan struct{} // Signal to stop cleanup goroutine
 	cleanupDone     chan struct{} // Signal cleanup has stopped
+	closeOnce       sync.Once
 }
 
 // NewLineageStore creates a PostgreSQL-backed OpenLineage event store with background cleanup.
@@ -64,6 +74,10 @@ type LineageStore struct {
 func NewLineageStore(conn *Connection, cleanupInterval time.Duration) (*LineageStore, error) {
 	if conn == nil {
 		return nil, ErrNoDatabaseConnection
+	}
+
+	if cleanupInterval <= 0 {
+		return nil, ErrInvalidCleanupInterval
 	}
 
 	store := &LineageStore{
@@ -97,20 +111,18 @@ func NewLineageStore(conn *Connection, cleanupInterval time.Duration) (*LineageS
 //
 // Background goroutine uses channel-based cancellation via cleanupStop/cleanupDone channels.
 func (s *LineageStore) Close() error {
-	// Signal cleanup goroutine to stop
-	if s.cleanupStop != nil {
+	s.closeOnce.Do(func() {
+		// Signal cleanup goroutine to stop
 		close(s.cleanupStop)
-	}
 
-	// Wait for cleanup to finish (with timeout)
-	if s.cleanupDone != nil {
+		// Wait for cleanup to finish (with timeout)
 		select {
 		case <-s.cleanupDone:
 			s.logger.Info("Cleanup goroutine stopped gracefully")
 		case <-time.After(shutdownTimeout):
 			s.logger.Warn("Cleanup goroutine did not stop within timeout")
 		}
-	}
+	})
 
 	return nil
 }
@@ -721,6 +733,10 @@ func (s *LineageStore) runCleanup() {
 	ticker := time.NewTicker(s.cleanupInterval)
 	defer ticker.Stop()
 
+	// Create a cancellable context for cleanup operations
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for {
 		select {
 		case <-s.cleanupStop:
@@ -729,22 +745,29 @@ func (s *LineageStore) runCleanup() {
 			return
 		case <-ticker.C:
 			// Create context with timeout for cleanup query
-			ctx, cancel := context.WithTimeout(context.Background(), cleanupQueryTimeout)
-			s.cleanupExpiredIdempotencyKeys(ctx)
-			cancel()
+			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, cleanupQueryTimeout)
+			s.cleanupExpiredIdempotencyKeys(cleanupCtx)
+			cleanupCancel()
 		}
 	}
 }
 
-// cleanupExpiredIdempotencyKeys deletes expired idempotency keys from the database.
+// cleanupExpiredIdempotencyKeys deletes expired idempotency keys from the database in batches.
 // Called periodically by runCleanup() goroutine with a context that has a 30-second timeout.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control (typically with 30s timeout from runCleanup)
 //
-// Query: DELETE FROM lineage_event_idempotency WHERE expires_at < NOW()
+// Batching Strategy:
+//   - Deletes up to cleanupBatchSize (10,000) rows per batch to avoid long-running table locks
+//   - Loops until no more expired rows exist (handles large backlogs)
+//   - Sleeps batchSleepDuration (100ms) between batches to avoid overwhelming database
+//   - Respects context cancellation for graceful shutdown mid-cleanup
 //
-// Logs metrics on success (rows deleted, duration, status=success) and errors on failure.
+// Query uses idx_idempotency_expires index (migration 006) for efficient expired row lookup.
+// ORDER BY ensures oldest expired rows are deleted first (FIFO cleanup).
+//
+// Logs metrics on success (rows deleted, batches, duration, status=success) and errors on failure.
 // If cleanup succeeds but row count is unavailable, logs a warning with status=success.
 // Failures are logged but don't crash the cleanup goroutine.
 func (s *LineageStore) cleanupExpiredIdempotencyKeys(ctx context.Context) {
@@ -754,41 +777,96 @@ func (s *LineageStore) cleanupExpiredIdempotencyKeys(ctx context.Context) {
 		return
 	}
 
-	query := `DELETE FROM lineage_event_idempotency WHERE expires_at < NOW()`
-
 	startTime := time.Now()
+	totalDeleted := int64(0)
+	batchCount := 0
 
-	result, err := s.conn.ExecContext(ctx, query)
-	if err != nil {
-		s.logger.Error("Failed to cleanup expired idempotency keys",
-			slog.String("error", err.Error()),
-			slog.String("status", "failed"))
+	// Batch delete loop - continues until no more expired rows exist
+	for {
+		// Check if context is cancelled (shutdown requested or timeout exceeded)
+		if ctx.Err() != nil {
+			s.logger.Info("Cleanup cancelled",
+				slog.Int64("rows_deleted", totalDeleted),
+				slog.Int("batches_completed", batchCount),
+				slog.Duration("duration", time.Since(startTime)))
 
-		return
+			return
+		}
+
+		// Delete one batch using idx_idempotency_expires index for efficient lookup
+		// ORDER BY ensures oldest expired rows are deleted first (FIFO)
+		query := `
+			DELETE FROM lineage_event_idempotency
+			WHERE idempotency_key IN (
+				SELECT idempotency_key
+				FROM lineage_event_idempotency
+				WHERE expires_at < NOW()
+				ORDER BY expires_at ASC
+				LIMIT $1
+			)
+		`
+
+		result, err := s.conn.ExecContext(ctx, query, cleanupBatchSize)
+		if err != nil {
+			s.logger.Error("Failed to cleanup expired idempotency keys",
+				slog.String("error", err.Error()),
+				slog.Int64("rows_deleted_before_error", totalDeleted),
+				slog.Int("batches_completed", batchCount),
+				slog.String("status", "failed"))
+
+			return
+		}
+
+		rowsDeleted, err := result.RowsAffected()
+		if err != nil {
+			// DELETE succeeded but can't get row count - log as warning with success status
+			s.logger.Warn("Cleanup batch completed but row count unavailable",
+				slog.String("error", err.Error()),
+				slog.Int64("rows_deleted_before_error", totalDeleted),
+				slog.Int("batches_completed", batchCount),
+				slog.Duration("duration", time.Since(startTime)),
+				slog.String("status", "success"))
+
+			return
+		}
+
+		totalDeleted += rowsDeleted
+		batchCount++
+
+		// If we deleted fewer rows than batch size, we're done (no more expired rows)
+		if rowsDeleted < cleanupBatchSize {
+			break
+		}
+
+		// Small sleep between batches to avoid overwhelming database
+		// Allows other queries to interleave with cleanup operations
+		select {
+		case <-ctx.Done():
+			// Context cancelled during sleep - exit gracefully
+			s.logger.Info("Cleanup cancelled between batches",
+				slog.Int64("rows_deleted", totalDeleted),
+				slog.Int("batches_completed", batchCount),
+				slog.Duration("duration", time.Since(startTime)))
+
+			return
+		case <-time.After(batchSleepDuration):
+			// Continue to next batch
+		}
 	}
 
 	duration := time.Since(startTime)
 
-	rowsDeleted, err := result.RowsAffected()
-	if err != nil {
-		// DELETE succeeded but can't get row count - log as warning with success status
-		s.logger.Warn("Cleanup completed but row count unavailable",
-			slog.String("error", err.Error()),
-			slog.Duration("duration", duration),
-			slog.String("status", "success"))
-
-		return
-	}
-
 	// Always log cleanup execution (Debug level for 0 rows, Info for >0) for debugging and monitoring purposes
-	if rowsDeleted == 0 {
+	if totalDeleted == 0 {
 		s.logger.Debug("Cleanup completed - no expired keys found",
 			slog.Int64("rows_deleted", 0),
+			slog.Int("batches_completed", batchCount),
 			slog.Duration("duration", duration),
 			slog.String("status", "success"))
 	} else {
 		s.logger.Info("Cleaned up expired idempotency keys",
-			slog.Int64("rows_deleted", rowsDeleted),
+			slog.Int64("rows_deleted", totalDeleted),
+			slog.Int("batches_completed", batchCount),
 			slog.Duration("duration", duration),
 			slog.String("status", "success"))
 	}
