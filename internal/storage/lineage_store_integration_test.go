@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,12 +29,12 @@ func TestLineageStoreIntegration(t *testing.T) {
 		_ = container.Terminate(ctx)
 	}()
 
-	store, err := NewLineageStore(conn)
+	store, err := NewLineageStore(conn, 1*time.Hour)
 	if err != nil {
 		t.Fatalf("NewLineageStore() error = %v", err)
 	}
 
-	// Run all test cases as subtests
+	// Run all storage tests using the shared store
 	t.Run("StoreEvent_SingleSuccess", testStoreEventSingleSuccess(ctx, store, conn))
 	t.Run("StoreEvent_Duplicate", testStoreEventDuplicate(ctx, store, conn))
 	t.Run("StoreEvent_OutOfOrder", testStoreEventOutOfOrder(ctx, store, conn))
@@ -49,6 +50,15 @@ func TestLineageStoreIntegration(t *testing.T) {
 	t.Run("StoreEvent_DatasetFacetMerge", testStoreEventDatasetFacetMerge(ctx, store, conn))
 	t.Run("StoreEvent_InputValidation", testStoreEventInputValidation(ctx, store))
 	t.Run("StoreEvent_ContextCancellation", testStoreEventContextCancellation(ctx, store))
+
+	// Close the main store BEFORE running cleanup tests to prevent goroutine interference
+	// Cleanup tests create their own stores with custom intervals
+	_ = store.Close()
+
+	// Run cleanup tests (each creates its own store)
+	t.Run("Cleanup_ExpiredIdempotencyKeys", testCleanupExpiredIdempotencyKeys(ctx, conn))
+	t.Run("Cleanup_GracefulShutdown", testCleanupGracefulShutdown(ctx, conn))
+	t.Run("Cleanup_ConcurrentOperations", testCleanupConcurrentOperations(ctx, conn))
 }
 
 // testStoreEventSingleSuccess verifies storing a single dbt START event.
@@ -1239,6 +1249,225 @@ func getDatasetFacets(ctx context.Context, t *testing.T, conn *Connection, datas
 	return facets
 }
 
+// testCleanupExpiredIdempotencyKeys verifies cleanup deletes only expired keys.
+// Expected: Expired keys deleted, valid keys preserved.
+func testCleanupExpiredIdempotencyKeys(ctx context.Context, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) {
+		// Create LineageStore with 1-second cleanup interval (for testing)
+		store, err := NewLineageStore(conn, 1*time.Second) //nolint:contextcheck
+		if err != nil {
+			t.Fatalf("NewLineageStore() error = %v", err)
+		}
+
+		defer func() {
+			_ = store.Close()
+		}()
+
+		// Insert 3 test keys with unique prefix to avoid pollution from other tests
+		// Use a unique prefix to distinguish this test's keys from keys inserted by storage tests
+		testPrefix := "cleanup-test-"
+		validKey1 := testPrefix + "valid-key-1"
+		validKey2 := testPrefix + "valid-key-2"
+		expiredKey := testPrefix + "expired-key-1"
+
+		// Insert valid keys (24 hours from now)
+		insertIdempotencyKey(ctx, t, conn, validKey1, time.Now().Add(24*time.Hour))
+		insertIdempotencyKey(ctx, t, conn, validKey2, time.Now().Add(24*time.Hour))
+
+		// Insert expired key (1 hour ago)
+		insertIdempotencyKey(ctx, t, conn, expiredKey, time.Now().Add(-1*time.Hour))
+
+		// Verify all 3 test keys exist before cleanup
+		// Note: We only count keys with our test prefix to avoid pollution from storage tests
+		if !idempotencyKeyExists(ctx, t, conn, validKey1) {
+			t.Fatalf("Valid key 1 was not inserted")
+		}
+
+		if !idempotencyKeyExists(ctx, t, conn, validKey2) {
+			t.Fatalf("Valid key 2 was not inserted")
+		}
+
+		if !idempotencyKeyExists(ctx, t, conn, expiredKey) {
+			t.Fatalf("Expired key was not inserted")
+		}
+
+		// Call cleanup directly (don't wait for ticker)
+		// Use context with timeout to match production behavior
+		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cleanupCancel()
+
+		store.cleanupExpiredIdempotencyKeys(cleanupCtx)
+
+		// Verify valid keys still exist (not deleted by cleanup)
+		if !idempotencyKeyExists(ctx, t, conn, validKey1) {
+			t.Errorf("Valid key 1 was deleted (should be preserved)")
+		}
+
+		if !idempotencyKeyExists(ctx, t, conn, validKey2) {
+			t.Errorf("Valid key 2 was deleted (should be preserved)")
+		}
+
+		// Verify expired key was deleted by cleanup
+		if idempotencyKeyExists(ctx, t, conn, expiredKey) {
+			t.Errorf("Expired key still exists (should be deleted)")
+		}
+	}
+}
+
+// testCleanupGracefulShutdown verifies cleanup goroutine stops gracefully.
+// Expected: Cleanup goroutine stops within timeout when Close() is called.
+func testCleanupGracefulShutdown(_ context.Context, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) { //nolint:contextcheck
+		// Create LineageStore with 1-second cleanup interval
+		store, err := NewLineageStore(conn, 1*time.Second)
+		if err != nil {
+			t.Fatalf("NewLineageStore() error = %v", err)
+		}
+
+		// Give goroutine time to start
+		time.Sleep(100 * time.Millisecond)
+
+		// Close should complete within 10 seconds (generous timeout for slow CI)
+		done := make(chan error, 1)
+
+		go func() {
+			done <- store.Close()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Close() returned error: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Errorf("Close() did not complete within 10 seconds (cleanup goroutine failed to stop)")
+		}
+	}
+}
+
+// testCleanupConcurrentOperations verifies cleanup doesn't interfere with normal operations.
+// Expected: No race conditions or deadlocks when cleanup runs concurrently with StoreEvent.
+func testCleanupConcurrentOperations(ctx context.Context, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) {
+		// Create LineageStore with 100ms cleanup interval (aggressive for testing)
+		store, err := NewLineageStore(conn, 100*time.Millisecond) //nolint:contextcheck
+		if err != nil {
+			t.Fatalf("NewLineageStore() error = %v", err)
+		}
+		defer store.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Goroutine 1: Store events continuously
+		go func() {
+			defer wg.Done()
+
+			for i := 0; i < 50; i++ {
+				event := createTestEvent(
+					fmt.Sprintf("concurrent-%d", i),
+					ingestion.EventTypeStart,
+					1,
+					1,
+				)
+
+				_, _, err := store.StoreEvent(ctx, event)
+				if err != nil {
+					t.Errorf("StoreEvent() error: %v", err)
+
+					return
+				}
+
+				time.Sleep(20 * time.Millisecond) // 50 events per second
+			}
+		}()
+
+		// Goroutine 2: Let cleanup run several times
+		go func() {
+			defer wg.Done()
+
+			time.Sleep(1 * time.Second) // Allow multiple cleanup cycles (100ms interval)
+		}()
+
+		// Wait for both goroutines with timeout
+		done := make(chan struct{})
+
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Success - both goroutines completed
+		case <-time.After(10 * time.Second):
+			t.Fatal("Concurrent operations did not complete within 10 seconds")
+		}
+
+		// Verify at least some events were stored successfully
+		count := countAllIdempotencyKeys(ctx, t, conn)
+		if count == 0 {
+			t.Error("No events were stored during concurrent operations (possible deadlock or race condition)")
+		}
+	}
+}
+
+// Helper functions for cleanup tests
+
+// insertIdempotencyKey inserts a test idempotency key with specified expiration.
+func insertIdempotencyKey(ctx context.Context, t *testing.T, conn *Connection, key string, expiresAt time.Time) {
+	t.Helper()
+
+	// Set created_at to 1 hour before expires_at to satisfy CHECK constraint
+	createdAt := expiresAt.Add(-1 * time.Hour)
+
+	query := `
+		INSERT INTO lineage_event_idempotency (
+			idempotency_key,
+			created_at,
+			expires_at,
+			event_metadata
+		) VALUES ($1, $2, $3, '{}')
+	`
+
+	_, err := conn.ExecContext(ctx, query, key, createdAt, expiresAt)
+	if err != nil {
+		t.Fatalf("Failed to insert idempotency key: %v", err)
+	}
+}
+
+// countAllIdempotencyKeys counts all idempotency keys (including expired).
+func countAllIdempotencyKeys(ctx context.Context, t *testing.T, conn *Connection) int {
+	t.Helper()
+
+	query := "SELECT COUNT(*) FROM lineage_event_idempotency"
+
+	var count int
+
+	err := conn.QueryRowContext(ctx, query).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count idempotency keys: %v", err)
+	}
+
+	return count
+}
+
+// idempotencyKeyExists checks if a specific idempotency key exists.
+func idempotencyKeyExists(ctx context.Context, t *testing.T, conn *Connection, key string) bool {
+	t.Helper()
+
+	query := "SELECT COUNT(*) FROM lineage_event_idempotency WHERE idempotency_key = $1"
+
+	var count int
+
+	err := conn.QueryRowContext(ctx, query, key).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check idempotency key existence: %v", err)
+	}
+
+	return count > 0
+}
+
 // Benchmark Tests
 
 // BenchmarkLineageStore_StoreEventSingle benchmarks single event storage.
@@ -1256,7 +1485,7 @@ func BenchmarkLineageStore_StoreEventSingle(b *testing.B) {
 		_ = container.Terminate(ctx)
 	}()
 
-	store, err := NewLineageStore(conn)
+	store, err := NewLineageStore(conn, 1*time.Hour)
 	if err != nil {
 		b.Fatalf("NewLineageStore() error = %v", err)
 	}
@@ -1296,7 +1525,7 @@ func BenchmarkLineageStore_StoreEventsBatch(b *testing.B) {
 		_ = container.Terminate(ctx)
 	}()
 
-	store, err := NewLineageStore(conn)
+	store, err := NewLineageStore(conn, 1*time.Hour)
 	if err != nil {
 		b.Fatalf("NewLineageStore() error = %v", err)
 	}

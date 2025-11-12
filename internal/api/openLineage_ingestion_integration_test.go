@@ -41,7 +41,7 @@ func setupLineageTestServer(ctx context.Context, t *testing.T) *lineageTestServe
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour) //nolint:contextcheck
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
