@@ -740,6 +740,7 @@ func (s *LineageStore) runCleanup() {
 	for {
 		select {
 		case <-s.cleanupStop:
+			cancel() // cancel parent context ctx
 			s.logger.Info("Stopping idempotency cleanup goroutine")
 
 			return
