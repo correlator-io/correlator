@@ -41,13 +41,14 @@ func NewPersistentKeyStore(conn *Connection) (*PersistentKeyStore, error) {
 	}, nil
 }
 
-// Close closes the database connection pool gracefully.
+// Close performs cleanup for the PersistentKeyStore.
 // This method is safe to call multiple times.
+//
+// Note: Does NOT close the database connection, as the connection is managed externally
+// via dependency injection. The caller is responsible for closing the connection.
 func (s *PersistentKeyStore) Close() error {
-	if s.conn != nil {
-		return s.conn.Close()
-	}
-
+	// Currently no cleanup needed for PersistentKeyStore.
+	// Connection is managed externally.
 	return nil
 }
 

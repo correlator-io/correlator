@@ -73,7 +73,12 @@ func main() {
 	dbConn, err := storage.NewConnection(storageConfig)
 	if err != nil {
 		logger.Error("Failed to connect to database", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
+
+	defer func() {
+		_ = dbConn.Close() // Ensure connection closes on normal shutdown
+	}()
 
 	apiKeyStore, err := storage.NewPersistentKeyStore(dbConn)
 	if err != nil {
@@ -88,15 +93,19 @@ func main() {
 		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
 	)
 
-	lineageStore, err := storage.NewLineageStore(dbConn)
+	lineageStore, err := storage.NewLineageStore(dbConn, storageConfig.CleanupInterval)
 	if err != nil {
 		logger.Error("Failed to connect to lineage store", slog.String("error", err.Error()))
+		// Close database connection before exit (defer won't run with os.Exit)
+		_ = dbConn.Close()
 		// Fail-fast: exit immediately to prevent the server creation process from panicking. LineageStore is required!
+		//nolint:gocritic // Explicit cleanup before os.Exit is intentional (defer won't run)
 		os.Exit(1)
 	}
 
 	logger.Info("Lineage store initialized",
 		slog.String("database_url", storageConfig.MaskDatabaseURL()),
+		slog.Duration("cleanup_interval", storageConfig.CleanupInterval),
 		slog.Int("database_max_open_conns", storageConfig.MaxOpenConns),
 		slog.Int("database_max_idle_conns", storageConfig.MaxIdleConns),
 		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),

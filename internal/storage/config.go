@@ -9,10 +9,11 @@ import (
 )
 
 const (
-	defaultMaxOpenConns    = 25
-	defaultMaxIdleConns    = 5
-	defaultConnMaxLifetime = 30 * time.Minute
-	defaultConnMaxIdleTime = 10 * time.Minute
+	defaultMaxOpenConns       = 25
+	defaultMaxIdleConns       = 5
+	defaultConnMaxLifetime    = 30 * time.Minute
+	defaultConnMaxIdleTime    = 10 * time.Minute
+	defaultCleanupInterval    = 1 * time.Hour // Default cleanup interval for idempotency table
 )
 
 var (
@@ -27,6 +28,7 @@ type Config struct {
 	MaxIdleConns    int           // Maximum number of idle connections
 	ConnMaxLifetime time.Duration // Maximum lifetime of connections
 	ConnMaxIdleTime time.Duration // Maximum idle time for connections
+	CleanupInterval time.Duration // Cleanup interval for idempotency table (TTL cleanup)
 }
 
 // LoadConfig loads PostgreSQL configuration from environment variables with fallback to defaults.
@@ -37,6 +39,7 @@ func LoadConfig() *Config {
 		MaxIdleConns:    config.GetEnvInt("DATABASE_MAX_IDLE_CONNS", defaultMaxIdleConns),
 		ConnMaxLifetime: config.GetEnvDuration("DATABASE_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
 		ConnMaxIdleTime: config.GetEnvDuration("DATABASE_CONN_MAX_IDLE_TIME", defaultConnMaxIdleTime),
+		CleanupInterval: config.GetEnvDuration("IDEMPOTENCY_CLEANUP_INTERVAL", defaultCleanupInterval),
 	}
 }
 

@@ -72,7 +72,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour) //nolint:contextcheck
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
@@ -147,7 +147,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour)
 	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
@@ -362,7 +362,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour)
 	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
@@ -547,7 +547,7 @@ func TestReadyEndpoint(t *testing.T) {
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour)
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create rate limiter with VERY restrictive limits
@@ -690,7 +690,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour)
 	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
@@ -971,7 +971,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
 
-	lineageStore, err := storage.NewLineageStore(storageConn)
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour)
 	require.NoError(t, err, "Failed to create lineage store")
 
 	t.Cleanup(func() {
