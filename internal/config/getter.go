@@ -64,6 +64,29 @@ func GetEnvInt64(key string, defaultValue int64) int64 {
 	return defaultValue
 }
 
+// GetEnvBool returns a bool environment variable value or a default if not set.
+// Accepts: "true", "1", "yes" as true; "false", "0", "no" as false (case-insensitive).
+//
+// Parameters:
+//   - key[string]: Name of the environment variable as a string
+//   - defaultValue[bool]: The default value to return in-case no environment variable is set
+//
+// Example:
+//
+//	b := GetEnvBool("CORRELATOR_AUTH_ENABLED", false)
+func GetEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true", "1", "yes":
+			return true
+		case "false", "0", "no":
+			return false
+		}
+	}
+
+	return defaultValue
+}
+
 // GetEnvDuration returns the environment variable value or a default if not set.
 //
 // Parameters:

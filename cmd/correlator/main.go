@@ -14,6 +14,7 @@ import (
 
 	"github.com/correlator-io/correlator/internal/api"
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
@@ -80,18 +81,28 @@ func main() {
 		_ = dbConn.Close() // Ensure connection closes on normal shutdown
 	}()
 
-	apiKeyStore, err := storage.NewPersistentKeyStore(dbConn)
-	if err != nil {
-		logger.Error("Failed to connect to persistent key store", slog.String("error", err.Error()))
-	}
+	var apiKeyStore storage.APIKeyStore
 
-	logger.Info("Persistent key store initialized",
-		slog.String("database_url", storageConfig.MaskDatabaseURL()),
-		slog.Int("database_max_open_conns", storageConfig.MaxOpenConns),
-		slog.Int("database_max_idle_conns", storageConfig.MaxIdleConns),
-		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),
-		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
-	)
+	authEnabled := config.GetEnvBool("CORRELATOR_AUTH_ENABLED", false)
+	if authEnabled {
+		apiKeyStore, err = storage.NewPersistentKeyStore(dbConn)
+		if err != nil {
+			logger.Error("Failed to connect to persistent key store", slog.String("error", err.Error()))
+
+			_ = dbConn.Close()
+			//nolint:gocritic // Explicit cleanup before os.Exit is intentional (defer won't run)
+			os.Exit(1)
+		}
+
+		logger.Info("Plugin authentication enabled",
+			slog.String("database_url", storageConfig.MaskDatabaseURL()),
+		)
+	} else {
+		logger.Warn("Plugin authentication disabled",
+			slog.String("security", "Only use in trusted networks (localhost, VPN, internal)"),
+			slog.String("note", "Set CORRELATOR_AUTH_ENABLED=true to enable API key authentication"),
+		)
+	}
 
 	lineageStore, err := storage.NewLineageStore(dbConn, storageConfig.CleanupInterval)
 	if err != nil {
@@ -99,7 +110,6 @@ func main() {
 		// Close database connection before exit (defer won't run with os.Exit)
 		_ = dbConn.Close()
 		// Fail-fast: exit immediately to prevent the server creation process from panicking. LineageStore is required!
-		//nolint:gocritic // Explicit cleanup before os.Exit is intentional (defer won't run)
 		os.Exit(1)
 	}
 

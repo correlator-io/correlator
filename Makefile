@@ -270,6 +270,8 @@ run:
 		$(MAKE) run-linter; \
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "migrate" ]; then \
 		$(MAKE) run-migrate-$(wordlist 3,3,$(MAKECMDGOALS)); \
+	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "smoketest" ]; then \
+		$(MAKE) run-smoketest-$(wordlist 3,3,$(MAKECMDGOALS)); \
 	else \
 		echo "❌ Unknown run target: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "Available targets:"; \
@@ -285,6 +287,7 @@ run:
 		echo "  make run migrate status     # Check migration status"; \
 		echo "  make run migrate version    # Show migration version"; \
 		echo "  make run migrate drop       # Drop all tables (destructive, uses --force)"; \
+		echo "  make run smoketest lineage  # Run lineage ingestion smoke tests"; \
 		exit 1; \
 	fi
 
@@ -332,6 +335,10 @@ run-migrate-version:
 run-migrate-drop:
 	@echo "⚠️ Dropping all database tables..."
 	@$(MAKE) run-migrator ACTION="drop --force"
+
+run-smoketest-lineage: ensure-not-in-dev-container
+	@echo "🧪 Running OpenLineage ingestion smoke tests..."
+	@./scripts/smoketest-lineage.sh
 
 # Internal helper for environment-aware migrations
 run-migrator:
@@ -610,7 +617,7 @@ help:
 	@echo "        make run                      # Start development server"
 	@echo "        make run test                 # Run all tests"
 	@echo "        make run benchmark            # Run benchmark tests"
-	@echo "        make run linter               # Run benchmark tests"
+	@echo "        make run linter               # Run linter"
 	@echo "        make check                    # Check code quality before commit"
 	@echo ""
 	@echo "    🐳 Environment:"
