@@ -616,6 +616,7 @@ help:
 	@echo "        make start                    # Smart setup + enter dev container"
 	@echo "        make run                      # Start development server"
 	@echo "        make run test                 # Run all tests"
+	@echo "        make run smoketest lineage    # Run smoke tests (end-to-end validation)"
 	@echo "        make run benchmark            # Run benchmark tests"
 	@echo "        make run linter               # Run linter"
 	@echo "        make check                    # Check code quality before commit"

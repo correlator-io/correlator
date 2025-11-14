@@ -8,16 +8,30 @@
 #   - PostgreSQL running (make docker)
 #   - Migrations applied (make run migrate up)
 #   - jq installed (brew install jq)
+#   - psql installed (optional - for auto-cleanup)
+#   - DATABASE_URL set (optional - for auto-cleanup)
 #
 # Usage:
+#   # Zero-config mode (no cleanup, may show duplicates on re-run)
 #   ./scripts/smoketest-lineage.sh
-#   SERVER_URL=http://localhost:8080 API_KEY=my-key ./scripts/smoketest-lineage.sh
+#
+#   # With auto-cleanup (repeatable tests)
+#   DATABASE_URL=my-database-url ./scripts/smoketest-lineage.sh
+#
+#   # With authentication
+#   CORRELATOR_AUTH_ENABLED=true API_KEY=my-key ./scripts/smoketest-lineage.sh
 #
 # Scope: Basic smoke tests (6 scenarios)
 # - Single events (dbt, Airflow, Spark)
 # - Duplicate detection (idempotency)
 # - Invalid input (missing field)
 # - Empty body
+#
+# Reserved Namespace Convention:
+# - Tests use 'correlator-smoke-test' in all namespaces for automatic cleanup
+# - Examples: dbt://correlator-smoke-test-analytics, postgres://correlator-smoke-test-db:5432
+# - ⚠️  DO NOT use 'correlator-smoke-test' in production namespaces (data will be deleted)
+# - Pattern matching: Cleanup deletes WHERE namespace LIKE '%correlator-smoke-test%'
 #
 # Note: API expects array format even for single events: [event]
 #
@@ -39,6 +53,7 @@ SERVER_URL="${SERVER_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-test-api-key}"
 ENDPOINT="${SERVER_URL}/api/v1/lineage/events"
 AUTH_ENABLED="${CORRELATOR_AUTH_ENABLED:-false}"
+DATABASE_URL="${DATABASE_URL:-}"  # Optional - for cleanup
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,6 +82,71 @@ print_test_result() {
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} ${test_name}"
         echo -e "  ${RED}${message}${NC}"
+    fi
+}
+
+# Helper function to cleanup previous test data
+# TODO(Week 16): Remove this function once CLI tool has dedicated cleanup command
+# Future: correlator test cleanup --namespace "dbt://analytics,airflow://production,spark://prod-cluster"
+cleanup_test_data() {
+    if [ -z "$DATABASE_URL" ]; then
+        echo "ℹ️  DATABASE_URL not set - skipping cleanup (graceful degradation)"
+        echo "   Note: Second run will show duplicates (idempotency working correctly)"
+        return 0
+    fi
+
+    if ! command -v psql &> /dev/null; then
+        echo "ℹ️  psql not installed - skipping cleanup (graceful degradation)"
+        echo "   Note: Second run will show duplicates (idempotency working correctly)"
+        return 0
+    fi
+
+    echo "🧹 Cleaning up previous smoke test data..."
+
+    # Uses reserved namespace pattern: 'correlator-smoke-test' in namespace
+    # This pattern-based approach is superior to UUID-based cleanup because:
+    #   1. Self-maintaining (new tests automatically included)
+    #   2. Complete cleanup (datasets + job_runs + edges + idempotency)
+    #   3. Extensible (no hardcoded UUIDs to update)
+    #   4. Tests real namespace normalization (postgres:// → postgresql://)
+    #
+    # Reserved Namespace Convention (Week 16 Documentation):
+    #   dbt://correlator-smoke-test-*
+    #   airflow://correlator-smoke-test-*
+    #   spark://correlator-smoke-test-*
+    #   postgres://correlator-smoke-test-*:5432
+    #   hdfs://correlator-smoke-test-*:8020
+    #
+    # ⚠️  Users must NOT use 'correlator-smoke-test' in production namespaces!
+    #
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=0 << 'SQL' >/dev/null 2>&1 || true
+    -- Delete in correct order (respecting foreign key constraints)
+    -- Pattern matching on 'correlator-smoke-test' in namespaces
+
+    -- 1. Delete idempotency keys for smoke test job runs
+    DELETE FROM lineage_event_idempotency
+    WHERE event_metadata->>'job_namespace' LIKE '%correlator-smoke-test%';
+
+    -- 2. Delete lineage edges for smoke test job runs
+    DELETE FROM lineage_edges
+    WHERE job_run_id IN (
+        SELECT job_run_id FROM job_runs
+        WHERE job_namespace LIKE '%correlator-smoke-test%'
+    );
+
+    -- 3. Delete smoke test job runs
+    DELETE FROM job_runs
+    WHERE job_namespace LIKE '%correlator-smoke-test%';
+
+    -- 4. Delete smoke test datasets (safe with reserved namespace convention)
+    DELETE FROM datasets
+    WHERE namespace LIKE '%correlator-smoke-test%';
+SQL
+
+    if [ $? -eq 0 ]; then
+        echo "✅ Previous smoke test data cleaned"
+    else
+        echo "⚠️  Cleanup had errors (non-fatal, continuing with tests)"
     fi
 }
 
@@ -111,6 +191,10 @@ fi
 echo "✅ Dependencies installed"
 echo ""
 
+# Cleanup previous test data (optional - graceful degradation)
+cleanup_test_data
+echo ""
+
 # Check server availability
 echo "🔍 Checking server availability..."
 if ! curl -s -f "${SERVER_URL}/ping" > /dev/null; then
@@ -122,7 +206,7 @@ echo "✅ Server available at ${SERVER_URL}"
 echo ""
 
 echo "🧪 Running smoke tests for OpenLineage ingestion endpoint"
-echo "=================================================="
+echo "========================================================="
 echo ""
 
 #===============================================================================
@@ -139,20 +223,20 @@ DBT_EVENT='{
     "facets": {}
   },
   "job": {
-    "namespace": "dbt://analytics",
+    "namespace": "dbt://correlator-smoke-test-analytics",
     "name": "transform_orders",
     "facets": {}
   },
   "inputs": [
     {
-      "namespace": "postgres://prod-db:5432",
+      "namespace": "postgres://correlator-smoke-test-db:5432",
       "name": "raw.public.orders",
       "facets": {}
     }
   ],
   "outputs": [
     {
-      "namespace": "postgres://prod-db:5432",
+      "namespace": "postgres://correlator-smoke-test-db:5432",
       "name": "analytics.public.orders",
       "facets": {}
     }
@@ -195,7 +279,7 @@ AIRFLOW_EVENT='{
     "facets": {}
   },
   "job": {
-    "namespace": "airflow://production",
+    "namespace": "airflow://correlator-smoke-test",
     "name": "daily_etl.load_users",
     "facets": {}
   },
@@ -233,13 +317,13 @@ SPARK_EVENT='{
     "facets": {}
   },
   "job": {
-    "namespace": "spark://prod-cluster",
+    "namespace": "spark://correlator-smoke-test-cluster",
     "name": "recommendation.train_model",
     "facets": {}
   },
   "inputs": [
     {
-      "namespace": "hdfs://namenode:8020",
+      "namespace": "hdfs://correlator-smoke-test:8020",
       "name": "/data/training/features.parquet",
       "facets": {}
     }
@@ -297,7 +381,7 @@ INVALID_EVENT='{
     "facets": {}
   },
   "job": {
-    "namespace": "dbt://analytics",
+    "namespace": "dbt://correlator-smoke-test-analytics",
     "name": "invalid_job",
     "facets": {}
   }
