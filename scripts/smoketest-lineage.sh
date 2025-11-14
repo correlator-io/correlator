@@ -119,7 +119,9 @@ cleanup_test_data() {
     #
     # ⚠️  Users must NOT use 'correlator-smoke-test' in production namespaces!
     #
-    psql "$DATABASE_URL" -v ON_ERROR_STOP=0 << 'SQL' >/dev/null 2>&1 || true
+    # Temporarily disable exit-on-error to capture cleanup status
+    set +e
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=0 << 'SQL' >/dev/null 2>&1
     -- Delete in correct order (respecting foreign key constraints)
     -- Pattern matching on 'correlator-smoke-test' in namespaces
 
@@ -142,8 +144,10 @@ cleanup_test_data() {
     DELETE FROM datasets
     WHERE namespace LIKE '%correlator-smoke-test%';
 SQL
+    cleanup_status=$?
+    set -e  # Re-enable exit-on-error
 
-    if [ $? -eq 0 ]; then
+    if [ $cleanup_status -eq 0 ]; then
         echo "✅ Previous smoke test data cleaned"
     else
         echo "⚠️  Cleanup had errors (non-fatal, continuing with tests)"
