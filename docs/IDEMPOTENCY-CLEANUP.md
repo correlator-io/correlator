@@ -323,14 +323,14 @@ WHERE expires_at < NOW();
 ```
 
 **Possible Causes:**
-1. Missing index on `expires_at` column (check migration 005)
+1. Missing index on `expires_at` column (check migration 006)
 2. Table too large (millions of expired keys)
 3. Database under heavy load
 
 **Resolution:**
 1. **Short-term:** Run manual cleanup during low-traffic period
 2. **Long-term:** Reduce `IDEMPOTENCY_CLEANUP_INTERVAL` (e.g., from `1h` to `30m`)
-3. **Verify index:** Ensure migration 005 applied correctly
+3. **Verify index:** Ensure migration 006 applied correctly
 
 ---
 
