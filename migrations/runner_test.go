@@ -442,29 +442,6 @@ func TestMigrationRunnerResourceManagement(t *testing.T) {
 	_ = mock.Version()
 }
 
-// BenchmarkMigrationRunnerOperations benchmarks basic operations.
-func BenchmarkMigrationRunnerOperations(b *testing.B) {
-	mock := &mockMigrationRunner{}
-
-	b.Run("Status", func(b *testing.B) {
-		for range b.N {
-			_ = mock.Status()
-		}
-	})
-
-	b.Run("Version", func(b *testing.B) {
-		for range b.N {
-			_ = mock.Version()
-		}
-	})
-
-	b.Run("Up", func(b *testing.B) {
-		for range b.N {
-			_ = mock.Up()
-		}
-	})
-}
-
 // TestExecuteCommand tests the CLI command execution logic, particularly the --force flag behavior.
 func TestExecuteCommand(t *testing.T) {
 	tests := []struct {
