@@ -22,10 +22,8 @@ const (
 // This function encapsulates the file list to avoid global variables.
 func getExpectedEmbeddedFiles() []string {
 	return []string{
-		"001_initial_schema.down.sql",
-		"001_initial_schema.up.sql",
-		"002_performance_optimization.down.sql",
-		"002_performance_optimization.up.sql",
+		"001_initial_openlineage_schema.down.sql",
+		"001_initial_openlineage_schema.up.sql",
 	}
 }
 
@@ -144,7 +142,7 @@ func TestGetEmbeddedMigrations(t *testing.T) {
 	}
 
 	t.Run("can access actual embedded files", func(t *testing.T) {
-		_, err := fsys.Open("001_initial_schema.up.sql")
+		_, err := fsys.Open("001_initial_openlineage_schema.up.sql")
 		if err != nil {
 			t.Errorf("expected to be able to read embedded migration file, got error: %v", err)
 		}
@@ -459,8 +457,8 @@ func TestGetMaxSchemaVersionWithRealEmbedded(t *testing.T) {
 	// Test with actual embedded migrations
 	result := getMaxSchemaVersion()
 
-	// We know we have at least 002_performance_optimization migration
-	expectedMin := 2
+	// We know we have at least 001_initial_openlineage_schema migration
+	expectedMin := 1
 	if result < expectedMin {
 		t.Errorf("getMaxSchemaVersion() = %d, expected at least %d", result, expectedMin)
 	}

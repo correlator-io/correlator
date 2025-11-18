@@ -634,10 +634,10 @@ func TestRunnerGetMaxEmbeddedSchemaVersion(t *testing.T) {
 		{
 			name: "realistic_migration_set",
 			migrationFiles: map[string]*fstest.MapFile{
-				"001_initial_schema.up.sql":   {Data: []byte("CREATE TABLE users (id SERIAL PRIMARY KEY);")},
-				"001_initial_schema.down.sql": {Data: []byte("DROP TABLE users;")},
-				"002_add_indexes.up.sql":      {Data: []byte("CREATE INDEX idx_users_email ON users(email);")},
-				"002_add_indexes.down.sql":    {Data: []byte("DROP INDEX idx_users_email;")},
+				"001_initial_openlineage_schema.up.sql":   {Data: []byte("CREATE TABLE users (id SERIAL PRIMARY KEY);")},
+				"001_initial_openlineage_schema.down.sql": {Data: []byte("DROP TABLE users;")},
+				"002_add_indexes.up.sql":                  {Data: []byte("CREATE INDEX idx_users_email ON users(email);")},
+				"002_add_indexes.down.sql":                {Data: []byte("DROP INDEX idx_users_email;")},
 				"003_performance_optimization.up.sql": {
 					Data: []byte("CREATE INDEX CONCURRENTLY idx_performance ON users(created_at);"),
 				},

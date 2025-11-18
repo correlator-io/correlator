@@ -37,7 +37,7 @@ func Benchmark_GetEmbeddedMigrationContent(b *testing.B) {
 	}
 
 	migration := NewEmbeddedMigration(nil)
-	filename := "001_initial_schema.up.sql"
+	filename := "001_initial_openlineage_schema.up.sql"
 
 	b.ResetTimer()
 
