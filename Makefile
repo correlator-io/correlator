@@ -488,6 +488,8 @@ build:
 		echo "🔨 Building development binary..."; \
 		go build -o bin/$(BINARY_NAME) ./cmd/correlator; \
 		echo "✅ Built: bin/$(BINARY_NAME)"; \
+	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "migrator" ]; then \
+    		$(MAKE) build-migrator-local; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "prod" ]; then \
 		$(MAKE) build-prod; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "all" ]; then \
@@ -605,7 +607,7 @@ help:
 	@echo "    docker  - Container operations (docker, docker prod, docker stop)"
 	@echo ""
 	@echo "🏗️  Build & Deploy:"
-	@echo "    build   - Create artifacts (build, build prod, build all)"
+	@echo "    build   - Create artifacts (build, build migrator, build prod, build all)"
 	@echo "    deploy  - Prepare for production (builds + images + migrations)"
 	@echo ""
 	@echo "🔧 Maintenance:"
