@@ -191,7 +191,7 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 			t.Errorf("initial status failed: %v", err)
 		}
 
-		// Apply all embedded migrations (001_initial_schema.up.sql + 002_performance_optimization.up.sql)
+		// Apply all embedded migrations (001_initial_openlineage_schema.up.sql)
 		err = runner.Up()
 		if err != nil {
 			t.Errorf("migration up failed: %v", err)
@@ -209,7 +209,7 @@ func TestMigrationRunnerWorkFlow(t *testing.T) {
 			t.Errorf("version check failed: %v", err)
 		}
 
-		// Rollback one migration (002_performance_optimization.down.sql)
+		// Rollback the migration (001_initial_openlineage_schema.down.sql)
 		err = runner.Down()
 		if err != nil {
 			t.Errorf("migration down failed: %v", err)
@@ -705,8 +705,8 @@ func TestRunnerGetMaxEmbeddedSchemaVersionWithRealEmbedded(t *testing.T) {
 	// Test with actual embedded migrations
 	result := runner.getMaxEmbeddedSchemaVersion()
 
-	// We know we have at least 002_performance_optimization migration
-	expectedMin := 2
+	// We know we have at least 001_initial_openlineage_schema migration
+	expectedMin := 1
 	if result < expectedMin {
 		t.Errorf("getMaxEmbeddedSchemaVersion() = %d, expected at least %d", result, expectedMin)
 	}
