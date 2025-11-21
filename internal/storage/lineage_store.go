@@ -16,6 +16,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/correlator-io/correlator/internal/config"
+	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
@@ -32,6 +33,17 @@ var (
 
 	// ErrInvalidCleanupInterval is returned when an invalid cleanup interval is provided.
 	ErrInvalidCleanupInterval = errors.New("cleanup interval must be greater than zero")
+)
+
+// Compile-time interface assertions to ensure LineageStore implements both interfaces.
+// This provides early compile-time errors if interface contracts change.
+var (
+	// LineageStore implements ingestion.Store (write interface for lineage events).
+	_ ingestion.Store = (*LineageStore)(nil)
+
+	// LineageStore implements correlation.Store (read interface for correlation queries)
+	// Methods defined in correlation_views.go file (same package, same type).
+	_ correlation.Store = (*LineageStore)(nil)
 )
 
 // Cleanup configuration constants.
