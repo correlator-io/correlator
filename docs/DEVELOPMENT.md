@@ -39,7 +39,7 @@ Our development workflow is built around **8 intent-based commands** that handle
 - **`make docker`** - Container operations (docker, docker prod, docker stop)
 
 ### 🏗️ Build & Deploy
-- **`make build`** - Create artifacts (build, build prod, build all)
+- **`make build`** - Create artifacts (build, build migrator, build prod, build all)
 - **`make deploy`** - Prepare for production (builds + images + migrations)
 
 ### 🔧 Maintenance
@@ -249,9 +249,6 @@ make reset                    # When things go wrong:
 correlator/
 ├── .devcontainer/          # Dev container configuration
 ├── cmd/                    # Application entry points
-│   ├── correlator/         # Main service
-│   ├── ingester/           # Data ingestion
-│   └── migrator/           # Database migrations
 ├── deployments/docker/     # Container orchestration
 ├── internal/               # Internal packages
 ├── migrations/             # Database schema
@@ -391,7 +388,7 @@ make docker                   # Shows available docker operations
 ### Further Reading
 
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
-- **[Migrator](migrations/README.md)** - Database migrator
+- **[Migrator](../docs/MIGRATOR.md)** - Database migrator
 
 ---
 
