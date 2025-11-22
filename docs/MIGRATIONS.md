@@ -955,7 +955,7 @@ Before committing migration:
 
 ## Related Documentation
 
-- **Operating migrator**: [MIGRATOR.md](../.idea/archive-migrations/MIGRATOR.md) - CLI commands, Make targets, troubleshooting
+- **Operating migrator**: [MIGRATOR.md](../docs/MIGRATOR.md) - CLI commands, Make targets, troubleshooting
 - **Development setup**: [DEVELOPMENT.md](DEVELOPMENT.md) - Full environment setup
 - **Squashing ADR**: [adr/002-squash-week-1-migrations.md](adr/002-squash-week-1-migrations.md)
 - **Schema documentation**: [migrations/001_initial_openlineage_schema.up.sql](../migrations/001_initial_openlineage_schema.up.sql) - Inline documentation
