@@ -45,14 +45,14 @@ type Store interface {
 	//   - filter: Optional filter (nil = no filtering, returns all incidents).
 	//
 	// Returns:
-	//   - Slice of IncidentCorrelation results (empty slice if no matches)
+	//   - Slice of Incident results (empty slice if no matches)
 	//   - Error if query fails or context is cancelled
 	//
 	// Performance:
 	//   - View is pre-materialized (fast queries, ~10-50ms typical)
 	//   - Uses indexes: incident_correlation_view_pk, idx_incident_correlation_view_job_run_id
 	//   - Refresh latency: Call RefreshViews() to update data.
-	QueryIncidents(ctx context.Context, filter *IncidentCorrelationFilter) ([]IncidentCorrelation, error)
+	QueryIncidents(ctx context.Context, filter *IncidentFilter) ([]Incident, error)
 
 	// QueryLineageImpact queries the lineage_impact_analysis view for downstream impact.
 	//

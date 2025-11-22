@@ -78,7 +78,7 @@ func (s *LineageStore) RefreshViews(ctx context.Context) error {
 //   - filter: Optional filter (nil = no filtering, returns all incidents)
 //
 // Returns:
-//   - Slice of IncidentCorrelation results (empty slice if no matches)
+//   - Slice of Incident results (empty slice if no matches)
 //   - Error if query fails or context is cancelled
 //
 // Performance:
@@ -87,8 +87,8 @@ func (s *LineageStore) RefreshViews(ctx context.Context) error {
 //   - Call RefreshViews() to update data
 func (s *LineageStore) QueryIncidents(
 	ctx context.Context,
-	filter *correlation.IncidentCorrelationFilter,
-) ([]correlation.IncidentCorrelation, error) {
+	filter *correlation.IncidentFilter,
+) ([]correlation.Incident, error) {
 	start := time.Now()
 
 	query, args := buildIncidentCorrelationQuery(filter)
@@ -106,10 +106,10 @@ func (s *LineageStore) QueryIncidents(
 		_ = rows.Close()
 	}()
 
-	var results []correlation.IncidentCorrelation
+	var results []correlation.Incident
 
 	for rows.Next() {
-		var r correlation.IncidentCorrelation
+		var r correlation.Incident
 
 		err := rows.Scan(
 			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
@@ -155,7 +155,7 @@ func (s *LineageStore) QueryIncidents(
 
 // buildIncidentCorrelationQuery constructs SQL query with WHERE clause based on filter.
 // Returns (query, args) for use with QueryContext.
-func buildIncidentCorrelationQuery(filter *correlation.IncidentCorrelationFilter) (string, []interface{}) {
+func buildIncidentCorrelationQuery(filter *correlation.IncidentFilter) (string, []interface{}) {
 	baseQuery := `
 		SELECT
 			test_result_id, test_name, test_type, test_status, test_message,

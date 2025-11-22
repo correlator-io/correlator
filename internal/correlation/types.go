@@ -63,7 +63,7 @@ func FilterImpactResults(results []ImpactResult, jobRunID string, depth int) []I
 	return filtered
 }
 
-// IncidentCorrelation represents a single row from the incident_correlation_view materialized view.
+// Incident represents a single row from the incident_correlation_view materialized view.
 //
 // This domain type maps to the materialized view schema and contains all fields needed
 // for correlating test failures to job runs that produced the failing datasets.
@@ -96,7 +96,7 @@ func FilterImpactResults(results []ImpactResult, jobRunID string, depth int) []I
 // Used by:
 //   - correlation.Store.QueryIncidents() - Returns this type
 //   - API handlers - Should convert to response types
-type IncidentCorrelation struct {
+type Incident struct {
 	TestResultID     int64
 	TestName         string
 	TestType         string
@@ -162,7 +162,7 @@ type RecentIncidentSummary struct {
 	DownstreamAffectedCount int64
 }
 
-// IncidentCorrelationFilter provides filtering options for querying incident_correlation_view.
+// IncidentFilter provides filtering options for querying incident_correlation_view.
 //
 // All fields are optional (pointer types). If a field is nil, it won't be used in the query.
 // Multiple filters are combined with AND logic.
@@ -179,13 +179,13 @@ type RecentIncidentSummary struct {
 // Example:
 //
 //	// Find all failed tests from dbt jobs in the last 24 hours
-//	filter := &correlation.IncidentCorrelationFilter{
+//	filter := &correlation.IncidentFilter{
 //	    TestStatus: strPtr("failed"),
 //	    ProducerName: strPtr("dbt"),
 //	    TestExecutedAfter: timePtr(time.Now().Add(-24 * time.Hour)),
 //	}
 //	incidents, err := store.QueryIncidents(ctx, filter)
-type IncidentCorrelationFilter struct {
+type IncidentFilter struct {
 	TestStatus         *string
 	JobStatus          *string
 	ProducerName       *string

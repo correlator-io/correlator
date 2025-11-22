@@ -124,8 +124,8 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, incidents, 1, "Should return 1 incident (view filters failed/error only)")
 
 	// Test 2: Filter by test status (failed)
-	failedStatus := "failed"
-	filter := &correlation.IncidentCorrelationFilter{
+	failedStatus := "failed" //nolint:goconst
+	filter := &correlation.IncidentFilter{
 		TestStatus: &failedStatus,
 	}
 
@@ -138,7 +138,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	// Test 3: Filter by producer
 	producer := "dbt"
-	filter = &correlation.IncidentCorrelationFilter{
+	filter = &correlation.IncidentFilter{
 		ProducerName: &producer,
 	}
 
@@ -149,7 +149,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Equal(t, "dbt", incidents[0].ProducerName)
 
 	// Test 4: Filter by job_run_id
-	filter = &correlation.IncidentCorrelationFilter{
+	filter = &correlation.IncidentFilter{
 		JobRunID: &jobRunID1,
 	}
 
@@ -161,7 +161,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	// Test 5: Filter by time range (recent tests only)
 	recentTime := now.Add(-30 * time.Minute)
-	filter = &correlation.IncidentCorrelationFilter{
+	filter = &correlation.IncidentFilter{
 		TestExecutedAfter: &recentTime,
 	}
 
