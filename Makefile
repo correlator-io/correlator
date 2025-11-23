@@ -509,8 +509,6 @@ build-prod:
 	$(call get-version-info)
 	@echo "📦 Building correlator..."
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/correlator ./cmd/correlator
-	@echo "📦 Building ingester..."
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/ingester ./cmd/ingester
 	@echo "📦 Building migrator..."
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o build/migrator ./migrations
 	@echo "✅ Production builds complete!"
@@ -520,8 +518,6 @@ build-all:
 	$(call get-version-info)
 	@echo "📦 Building correlator..."
 	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/correlator ./cmd/correlator
-	@echo "📦 Building ingester..."
-	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/ingester ./cmd/ingester
 	@echo "📦 Building migrator..."
 	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
 	@echo "✅ All builds complete!"
@@ -549,7 +545,6 @@ deploy: ensure-not-in-dev-container
 	@echo ""
 	@echo "Deployment artifacts:"
 	@echo "  build/correlator    # Production correlator binary"
-	@echo "  build/ingester      # Production ingester binary"
 	@echo "  build/migrator      # Production migrator binary"
 	@echo "  $(DOCKER_TAG)       # Docker image"
 
