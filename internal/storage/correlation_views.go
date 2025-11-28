@@ -22,6 +22,8 @@ var (
 	ErrCorrelationQueryFailed = errors.New("correlation query failed")
 )
 
+const statusFailed = "failed"
+
 // RefreshViews implements correlation.Store.
 // Refreshes all correlation materialized views in dependency order.
 //

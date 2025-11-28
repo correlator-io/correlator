@@ -124,7 +124,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, incidents, 1, "Should return 1 incident (view filters failed/error only)")
 
 	// Test 2: Filter by test status (failed)
-	failedStatus := "failed" //nolint:goconst
+	failedStatus := statusFailed
 	filter := &correlation.IncidentFilter{
 		TestStatus: &failedStatus,
 	}
@@ -133,7 +133,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, incidents, 1, "Should return 1 failed test")
-	assert.Equal(t, "failed", incidents[0].TestStatus)
+	assert.Equal(t, statusFailed, incidents[0].TestStatus)
 	assert.Equal(t, "not_null_customers_id", incidents[0].TestName)
 
 	// Test 3: Filter by producer
