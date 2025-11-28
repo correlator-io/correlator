@@ -3,6 +3,9 @@
 package ingestion
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
@@ -242,4 +245,239 @@ func (e *RunEvent) IdempotencyKey() string {
 // Returns: URN string.
 func (d *Dataset) URN() string {
 	return canonicalization.GenerateDatasetURN(d.Namespace, d.Name)
+}
+
+// ============================================================================
+// Test Result Domain Models
+// ============================================================================
+
+type (
+	// TestResult represents a data quality test execution result (domain model).
+	// This is the domain representation, distinct from the API contract (TestResultRequest).
+	//
+	// Test results link test failures to the job runs that produced the tested datasets,
+	// enabling incident correlation and root cause analysis.
+	//
+	// Design: Follows same pattern as RunEvent (pure domain model, not API contract).
+	// Review Note: No constructor function - struct literals are idiomatic Go. Add constructor
+	// only if needed for complex initialization/invariants.
+	TestResult struct {
+		// TestName uniquely identifies the test within the testing framework.
+		// Examples: "test_column_not_null", "assert_unique_user_id", "row_count_threshold"
+		// Max length: 750 chars (validated)
+		TestName string
+
+		// TestType categorizes the test for filtering and analysis.
+		// Common values: "data_quality", "schema", "freshness", "volume", "distribution"
+		// Review Note: No validation on TestType (no enum) - flexibility preferred over strictness
+		// for MVP. Allows custom test types without breaking changes. API layer can apply
+		// default if needed.
+		TestType string
+
+		// DatasetURN identifies the tested dataset (FK to datasets table).
+		// Format: "<namespace>://<authority>/<path>"
+		// Example: "postgres://prod-db:5432/analytics.users"
+		// Must exist in datasets table (validated by storage layer).
+		// Review Note: Basic URN validation (contains ":") is intentional. Complex validation
+		// belongs in canonicalization package. Storage FK provides safety net.
+		DatasetURN string
+
+		// JobRunID is the canonical job run identifier (FK to job_runs table).
+		// Format: Canonical ID from canonicalization service
+		// Examples: "dbt:abc-123-def", "airflow:manual__2025-01-01T12:00:00"
+		// CRITICAL: This is the correlation key linking test failures to producing jobs.
+		JobRunID string
+
+		// Status indicates the test outcome.
+		// Valid values: "passed", "failed", "error", "skipped", "warning"
+		// Only "failed" and "error" contribute to incident correlation.
+		Status TestStatus
+
+		// Message provides human-readable test failure details (optional).
+		// Example: "Column 'user_id' contains 5 NULL values".
+		Message string
+
+		// Metadata stores test framework-specific context (optional, JSONB).
+		// Structure varies by test framework:
+		//   - dbt: {"assertion_type": "not_null", "column_name": "user_id", "row_count": 15743, "failed_rows": 0}
+		//   - Great Expectations: {"expectation_type": "expect_column_values_to_be_unique", "unexpected_count": 2}
+		//   - pytest: {"test_function": "test_user_validation", "assertions": [...]}
+		//
+		// Design: Single flexible field instead of expected_value/actual_value separation.
+		// Rationale: Test frameworks don't have standardized expected/actual structure.
+		// Different frameworks embed these concepts differently within their metadata.
+		// A single flexible metadata field allows each framework to use its native format.
+		Metadata map[string]interface{}
+
+		// ExecutedAt is when the test was executed (not when ingested).
+		// Used for temporal correlation and time-series analysis.
+		ExecutedAt time.Time
+
+		// DurationMs is the test execution time in milliseconds (optional).
+		// Used for performance analysis and regression detection.
+		DurationMs int
+	}
+
+	// TestStatus represents valid test execution outcomes.
+	// Only "failed" and "error" are considered incidents for correlation.
+	TestStatus string
+)
+
+const (
+	// TestStatusPassed indicates successful test validation.
+	TestStatusPassed TestStatus = "passed"
+
+	// TestStatusFailed indicates test assertion failed (data quality issue).
+	TestStatusFailed TestStatus = "failed"
+
+	// TestStatusError indicates test execution error (technical issue).
+	TestStatusError TestStatus = "error"
+
+	// TestStatusSkipped indicates test was not executed.
+	TestStatusSkipped TestStatus = "skipped"
+
+	// TestStatusWarning indicates test passed but with warnings.
+	TestStatusWarning TestStatus = "warning"
+
+	maxTestNameLength = 750
+)
+
+// Test result validation errors (static sentinel errors for errors.Is() checks).
+var (
+	// ErrTestNameEmpty indicates test_name is required.
+	ErrTestNameEmpty = errors.New("test_name cannot be empty")
+
+	// ErrTestNameTooLong indicates test_name exceeds max length (750 chars).
+	ErrTestNameTooLong = errors.New("test_name cannot exceed 750 characters")
+
+	// ErrDatasetURNEmpty indicates dataset_urn is required.
+	ErrDatasetURNEmpty = errors.New("dataset_urn cannot be empty")
+
+	// ErrDatasetURNInvalid indicates dataset_urn has invalid format.
+	ErrDatasetURNInvalid = errors.New("dataset_urn must contain ':' separator")
+
+	// ErrJobRunIDEmpty indicates job_run_id is required.
+	ErrJobRunIDEmpty = errors.New("job_run_id cannot be empty")
+
+	// ErrStatusInvalid indicates status is not a valid TestStatus.
+	ErrStatusInvalid = errors.New("status must be one of: passed, failed, error, skipped, warning")
+
+	// ErrExecutedAtZero indicates executed_at timestamp is required.
+	ErrExecutedAtZero = errors.New("executed_at cannot be zero")
+
+	// ErrDurationMsNegative indicates duration_ms cannot be negative.
+	ErrDurationMsNegative = errors.New("duration_ms cannot be negative")
+)
+
+// Validate performs domain validation on the TestResult.
+// Returns validation errors (not storage errors like FK violations).
+//
+// Validation rules:
+//   - test_name: required, ≤750 chars
+//   - dataset_urn: required, valid URN format (contains ":")
+//   - job_run_id: required
+//   - status: must be valid TestStatus
+//   - executed_at: required (not zero)
+//   - duration_ms: ≥0 if provided
+//
+// Storage-level validations (FK constraints, etc.) are handled by the storage layer.
+func (tr *TestResult) Validate() error {
+	// Validate test_name
+	if strings.TrimSpace(tr.TestName) == "" {
+		return ErrTestNameEmpty
+	}
+
+	if len(tr.TestName) > maxTestNameLength {
+		return fmt.Errorf("%w: got %d characters", ErrTestNameTooLong, len(tr.TestName))
+	}
+
+	// Validate dataset_urn
+	if strings.TrimSpace(tr.DatasetURN) == "" {
+		return ErrDatasetURNEmpty
+	}
+
+	// Basic URN format check (must contain ":")
+	if !strings.Contains(tr.DatasetURN, ":") {
+		return fmt.Errorf("%w: '%s'", ErrDatasetURNInvalid, tr.DatasetURN)
+	}
+
+	// Validate job_run_id
+	if strings.TrimSpace(tr.JobRunID) == "" {
+		return ErrJobRunIDEmpty
+	}
+
+	// Validate status
+	if !tr.Status.IsValid() {
+		return fmt.Errorf("%w: got '%s'", ErrStatusInvalid, tr.Status)
+	}
+
+	// Validate executed_at
+	if tr.ExecutedAt.IsZero() {
+		return ErrExecutedAtZero
+	}
+
+	// Validate duration_ms
+	if tr.DurationMs < 0 {
+		return fmt.Errorf("%w: got %d", ErrDurationMsNegative, tr.DurationMs)
+	}
+
+	return nil
+}
+
+// String returns the string representation of TestStatus.
+func (ts TestStatus) String() string {
+	return string(ts)
+}
+
+// IsValid checks if the TestStatus is a valid enum value.
+func (ts TestStatus) IsValid() bool {
+	switch ts {
+	case TestStatusPassed, TestStatusFailed, TestStatusError, TestStatusSkipped, TestStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsIncident returns true if the test status represents an incident (failed or error).
+// Only incident statuses are included in correlation analysis.
+func (ts TestStatus) IsIncident() bool {
+	return ts == TestStatusFailed || ts == TestStatusError
+}
+
+// ParseTestStatus converts a case-insensitive status string to TestStatus.
+//
+// Real-world test frameworks emit inconsistent status casing:
+//   - dbt: "PASS", "FAIL", "ERROR", "WARN"
+//   - pytest: "passed", "failed", "error", "skipped"
+//   - Great Expectations: "success", "failed"
+//   - Custom tools: any variation
+//
+// This function normalizes all variations to canonical TestStatus constants.
+//
+// Returns ErrStatusInvalid if the status string doesn't match any known value.
+//
+// Example:
+//
+//	status, err := ParseTestStatus("FAILED")  // Returns TestStatusFailed
+//	status, err := ParseTestStatus("Failed")  // Returns TestStatusFailed
+//	status, err := ParseTestStatus("failed")  // Returns TestStatusFailed
+//	status, err := ParseTestStatus("invalid") // Returns error
+func ParseTestStatus(status string) (TestStatus, error) {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+
+	switch normalized {
+	case "passed", "pass", "success", "ok":
+		return TestStatusPassed, nil
+	case "failed", "fail", "failure":
+		return TestStatusFailed, nil
+	case "error", "err":
+		return TestStatusError, nil
+	case "skipped", "skip":
+		return TestStatusSkipped, nil
+	case "warning", "warn":
+		return TestStatusWarning, nil
+	default:
+		return "", fmt.Errorf("%w: got '%s'", ErrStatusInvalid, status)
+	}
 }

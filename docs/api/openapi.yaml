@@ -193,15 +193,72 @@ paths:
                 $ref: '#/components/examples/bulk_test_results'
       responses:
         '200':
-          description: Test result(s) ingested successfully
+          description: All test results stored successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngestionResponse'
+                $ref: '#/components/schemas/TestResultResponse'
+              examples:
+                all_stored:
+                  summary: All test results stored successfully
+                  value:
+                    correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+                    timestamp: "2024-01-01T12:05:30Z"
+                    stored: 3
+                    failed: 0
+                    results:
+                      - index: 0
+                        status: 200
+                        message: "stored"
+                      - index: 1
+                        status: 200
+                        message: "stored"
+                      - index: 2
+                        status: 200
+                        message: "stored"
+        '207':
+          description: Partial success - some test results stored, some failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResultResponse'
+              example:
+                correlation_id: "234e5678-e89b-12d3-a456-426614174001"
+                timestamp: "2024-01-01T12:05:31Z"
+                stored: 2
+                failed: 1
+                results:
+                  - index: 0
+                    status: 200
+                    message: "stored"
+                  - index: 1
+                    status: 200
+                    message: "stored"
+                  - index: 2
+                    status: 422
+                    error: "foreign key violation: dataset_urn does not exist"
         '400':
           $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: All test results failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestResultResponse'
+              example:
+                correlation_id: "345e6789-e89b-12d3-a456-426614174002"
+                timestamp: "2024-01-01T12:05:32Z"
+                stored: 0
+                failed: 2
+                results:
+                  - index: 0
+                    status: 422
+                    error: "test_name cannot be empty"
+                  - index: 1
+                    status: 422
+                    error: "dataset_urn must contain ':' separator"
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -517,18 +574,21 @@ components:
           type: string
           description: Name of the data quality test
           example: "not_null_user_id"
+          maxLength: 750
         dataset_urn:
           type: string
           description: Dataset URN being tested
           example: "postgres://prod.db/clean.users"
+          maxLength: 500
         job_run_id:
           type: string
           description: Canonical job run ID (correlation key)
           example: "dbt:abc123-def456"
+          maxLength: 255
         status:
           type: string
           enum: [passed, failed, error, warning, skipped]
-          description: Test execution status
+          description: Test execution status (case-insensitive)
         message:
           type: string
           description: Test result message or error details
@@ -536,16 +596,96 @@ components:
         executed_at:
           type: string
           format: date-time
-          description: When the test was executed
+          description: When the test was executed (NOT when ingested - critical for temporal correlation)
+        duration_ms:
+          type: integer
+          minimum: 0
+          description: Test execution time in milliseconds (optional)
+          example: 150
+        test_type:
+          type: string
+          description: Test categorization (optional, defaults to "data_quality")
+          example: "data_quality"
+          maxLength: 100
         metadata:
           type: object
           additionalProperties: true
-          description: Additional test metadata
+          description: |
+            Framework-specific test metadata (optional). Structure varies by framework:
+            - dbt: assertion_type, column_name, row_count, failed_rows
+            - Great Expectations: expectation_type, unexpected_count, unexpected_percent
+            - Custom frameworks: any structure
           example:
             assertion_type: "not_null"
             column_name: "user_id"
             row_count: 1000
             failed_rows: 3
+
+    # Test Results Response Schemas
+    TestResultResponse:
+      type: object
+      required:
+        - correlation_id
+        - timestamp
+        - stored
+        - failed
+        - results
+      description: |
+        Response from test results ingestion with per-result status.
+        Follows same pattern as LineageResponse for consistency.
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+          description: Request correlation ID for tracking
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        timestamp:
+          type: string
+          format: date-time
+          description: Response timestamp in ISO 8601 format
+          example: "2024-01-01T12:05:30Z"
+        stored:
+          type: integer
+          minimum: 0
+          description: Number of test results successfully stored (includes UPSERTs)
+          example: 5
+        failed:
+          type: integer
+          minimum: 0
+          description: Number of test results that failed validation or storage
+          example: 0
+        results:
+          type: array
+          description: Per-result processing status
+          items:
+            $ref: '#/components/schemas/TestResultStatus'
+
+    TestResultStatus:
+      type: object
+      required:
+        - index
+        - status
+        - message
+      description: Processing result for a single test result in a batch
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: Zero-based index of the test result in the request array
+          example: 0
+        status:
+          type: integer
+          description: HTTP status code for this specific test result (200 or 422)
+          enum: [200, 422]
+          example: 200
+        message:
+          type: string
+          description: Success message ("stored" for new/updated)
+          example: "stored"
+        error:
+          type: string
+          description: Error message if validation or storage failed (only present on 422)
+          example: "foreign key violation: dataset_urn or job_run_id does not exist"
 
     # Correlation Response Schemas (reference to external file)
     IncidentListResponse:
