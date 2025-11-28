@@ -193,19 +193,26 @@ func (et EventType) IsTerminal() bool {
 // JobRunID returns the canonical job run ID for this event.
 //
 // This ID correlates all events from the same job run (START, COMPLETE, etc.).
-// The ID is deterministic and collision-resistant (SHA256 hash).
+// The ID format is human-readable: "tool:runID"
 //
-// Formula: SHA256(job.namespace + job.name + run.runId)
+// Formula: "{tool}:{run.runId}" where tool is extracted from job.namespace
+//
+// Tool extraction from namespace:
+//   - "dbt://analytics" → "dbt"
+//   - "airflow://production" → "airflow"
+//   - "spark://cluster" → "spark"
+//   - Unknown tools → "custom"
 //
 // Example:
 //
-//	event1 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "run-1"}}
-//	event2 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "run-1"}}
+//	event1 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "abc-123"}}
+//	event2 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "abc-123"}}
 //	event1.JobRunID() == event2.JobRunID()  // true (same run)
+//	// Returns: "dbt:abc-123"
 //
-// Returns: 64-character lowercase hex string (SHA256 output).
+// Returns: Canonical job run ID in format "tool:runID".
 func (e *RunEvent) JobRunID() string {
-	return canonicalization.GenerateJobRunID(e.Job.Namespace, e.Job.Name, e.Run.ID)
+	return canonicalization.GenerateJobRunID(e.Job.Namespace, e.Run.ID)
 }
 
 // IdempotencyKey returns the idempotency key for this event.

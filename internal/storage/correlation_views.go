@@ -22,6 +22,8 @@ var (
 	ErrCorrelationQueryFailed = errors.New("correlation query failed")
 )
 
+const statusFailed = "failed"
+
 // RefreshViews implements correlation.Store.
 // Refreshes all correlation materialized views in dependency order.
 //
@@ -205,6 +207,14 @@ func buildIncidentCorrelationQuery(filter *correlation.IncidentFilter) (string, 
 	if filter.JobRunID != nil {
 		conditions = append(conditions, fmt.Sprintf("job_run_id = $%d", paramIndex))
 		args = append(args, *filter.JobRunID)
+		paramIndex++
+	}
+
+	if filter.Tool != nil {
+		// Filter by tool extracted from canonical job_run_id
+		// Format: "dbt:abc-123" → matches "dbt:%"
+		conditions = append(conditions, fmt.Sprintf("job_run_id LIKE $%d", paramIndex))
+		args = append(args, *filter.Tool+":%")
 		paramIndex++
 	}
 

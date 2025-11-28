@@ -2,6 +2,8 @@
 package canonicalization
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -15,20 +17,17 @@ func TestGenerateJobRunID_DBT(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	id := GenerateJobRunID("dbt://analytics", "transform_orders", "550e8400-e29b-41d4-a716-446655440000")
+	id := GenerateJobRunID("dbt://analytics", "550e8400-e29b-41d4-a716-446655440000")
 
-	// Should return a non-empty hex string (SHA256 = 64 hex chars)
-	if id == "" {
-		t.Error("GenerateJobRunID() returned empty string")
+	// Should return format "dbt:runID"
+	expected := "dbt:550e8400-e29b-41d4-a716-446655440000"
+	if id != expected {
+		t.Errorf("GenerateJobRunID() = %q, expected %q", id, expected)
 	}
 
-	if len(id) != 64 {
-		t.Errorf("GenerateJobRunID() returned %d chars, expected 64 (SHA256 hex)", len(id))
-	}
-
-	// Should be lowercase hex
-	if !isHexString(id) {
-		t.Errorf("GenerateJobRunID() returned non-hex string: %s", id)
+	// Should start with "dbt:"
+	if !strings.HasPrefix(id, "dbt:") {
+		t.Errorf("GenerateJobRunID() should start with 'dbt:', got %q", id)
 	}
 }
 
@@ -37,14 +36,17 @@ func TestGenerateJobRunID_Airflow(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	id := GenerateJobRunID("airflow://production", "daily_etl.load_users", "airflow-run-id")
+	id := GenerateJobRunID("airflow://production", "manual__2025-01-01T12:00:00")
 
-	if id == "" {
-		t.Error("GenerateJobRunID() returned empty string")
+	// Should return format "airflow:runID"
+	expected := "airflow:manual__2025-01-01T12:00:00"
+	if id != expected {
+		t.Errorf("GenerateJobRunID() = %q, expected %q", id, expected)
 	}
 
-	if len(id) != 64 {
-		t.Errorf("GenerateJobRunID() returned %d chars, expected 64", len(id))
+	// Should start with "airflow:"
+	if !strings.HasPrefix(id, "airflow:") {
+		t.Errorf("GenerateJobRunID() should start with 'airflow:', got %q", id)
 	}
 }
 
@@ -53,14 +55,17 @@ func TestGenerateJobRunID_Spark(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	id := GenerateJobRunID("spark://prod-cluster", "recommendation.train_model", "spark-run-id")
+	id := GenerateJobRunID("spark://prod-cluster", "application_123456")
 
-	if id == "" {
-		t.Error("GenerateJobRunID() returned empty string")
+	// Should return format "spark:application_id"
+	expected := "spark:application_123456"
+	if id != expected {
+		t.Errorf("GenerateJobRunID() = %q, expected %q", id, expected)
 	}
 
-	if len(id) != 64 {
-		t.Errorf("GenerateJobRunID() returned %d chars, expected 64", len(id))
+	// Should start with "spark:"
+	if !strings.HasPrefix(id, "spark:") {
+		t.Errorf("GenerateJobRunID() should start with 'spark:', got %q", id)
 	}
 }
 
@@ -70,8 +75,8 @@ func TestGenerateJobRunID_SameRunDifferentEvents(t *testing.T) {
 	}
 
 	// Same run parameters should produce same ID regardless of other factors
-	id1 := GenerateJobRunID("dbt://analytics", "transform_orders", "550e8400-e29b-41d4-a716-446655440000")
-	id2 := GenerateJobRunID("dbt://analytics", "transform_orders", "550e8400-e29b-41d4-a716-446655440000")
+	id1 := GenerateJobRunID("dbt://analytics", "550e8400-e29b-41d4-a716-446655440000")
+	id2 := GenerateJobRunID("dbt://analytics", "550e8400-e29b-41d4-a716-446655440000")
 
 	if id1 != id2 {
 		t.Errorf("GenerateJobRunID() returned different IDs for same run: %s vs %s", id1, id2)
@@ -84,8 +89,8 @@ func TestGenerateJobRunID_DifferentRunsSameJob(t *testing.T) {
 	}
 
 	// Same job, different runs should produce different IDs
-	id1 := GenerateJobRunID("dbt://analytics", "transform_orders", "run-1")
-	id2 := GenerateJobRunID("dbt://analytics", "transform_orders", "run-2")
+	id1 := GenerateJobRunID("dbt://analytics", "run-1")
+	id2 := GenerateJobRunID("dbt://analytics", "run-2")
 
 	if id1 == id2 {
 		t.Error("GenerateJobRunID() returned same ID for different runs")
@@ -98,9 +103,9 @@ func TestGenerateJobRunID_Deterministic(t *testing.T) {
 	}
 
 	// Call multiple times - should always return same ID
-	id1 := GenerateJobRunID("test://namespace", "test_job", "test-run-id")
-	id2 := GenerateJobRunID("test://namespace", "test_job", "test-run-id")
-	id3 := GenerateJobRunID("test://namespace", "test_job", "test-run-id")
+	id1 := GenerateJobRunID("test://namespace", "test-run-id")
+	id2 := GenerateJobRunID("test://namespace", "test-run-id")
+	id3 := GenerateJobRunID("test://namespace", "test-run-id")
 
 	if id1 != id2 || id2 != id3 {
 		t.Error("GenerateJobRunID() is not deterministic")
@@ -365,11 +370,12 @@ func TestGenerateJobRunID_EmptyFields(t *testing.T) {
 	}
 
 	// Event with empty required fields (validator should catch this, but canonicalizer should handle it)
-	id := GenerateJobRunID("", "", "")
+	id := GenerateJobRunID("", "")
 
-	// Should still generate a hash (even if inputs are empty)
-	if len(id) != 64 {
-		t.Errorf("GenerateJobRunID() should return 64-char hash even for empty fields, got %d chars", len(id))
+	// Should return "unknown:" for empty namespace
+	expected := "unknown:"
+	if id != expected {
+		t.Errorf("GenerateJobRunID() = %q, expected %q for empty fields", id, expected)
 	}
 }
 
@@ -398,76 +404,312 @@ func TestGenerateJobRunID_SpecialCharacters(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Job names with special characters, spaces, unicode
-	testCases := []string{
-		"job with spaces",
-		"job/with/slashes",
-		"job_with_underscores",
-		"job-with-dashes",
-		"job.with.dots",
-		"job:with:colons",
-		"job#with#hashes",
-		"job@with@ats",
-		"job$with$dollars",
-		"job%with%percents",
-		"job&with&ampersands",
-		"job*with*asterisks",
-		"job(with)parens",
-		"job[with]brackets",
-		"job{with}braces",
-		"job<with>angles",
-		"job?with?questions",
-		"job!with!bangs",
-		"job~with~tildes",
-		"job`with`backticks",
-		"job'with'quotes",
-		"job\"with\"doublequotes",
-		"job\\with\\backslashes",
-		"job|with|pipes",
-		"job,with,commas",
-		"job;with;semicolons",
-		"job=with=equals",
-		"job+with+plus",
-		"中文作业名",     //nolint:gosmopolitan
-		"作業名称日本語", //nolint:gosmopolitan
-		"작업이름한국어",
-		"عمل_بالعربية",      // Arabic
-		"работа_на_русском", // Russian
-		"τόπος_εργασίας",    // Greek
-		"jöb_nåme_ñîçé",     // Accented characters
-		"🚀_emoji_job",       // Emoji
+	// RunIDs with special characters, spaces, unicode should be preserved
+	testCases := []struct {
+		name      string
+		namespace string
+		runID     string
+		expected  string
+	}{
+		{"spaces in runID", "dbt://test", "run with spaces", "dbt:run with spaces"},
+		{"slashes in runID", "airflow://test", "dag/task/2025-01-01", "airflow:dag/task/2025-01-01"},
+		{"colons in runID", "spark://test", "app:123:456", "spark:app:123:456"},
+		{"unicode in runID", "dbt://test", "测试-run-123", "dbt:测试-run-123"}, //nolint:gosmopolitan
+		{"emoji in runID", "custom://test", "🚀-deploy-v1", "custom:🚀-deploy-v1"},
 	}
 
-	for _, jobName := range testCases {
-		t.Run(jobName, func(t *testing.T) {
-			id := GenerateJobRunID("test://namespace", jobName, "test-run-id")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := GenerateJobRunID(tc.namespace, tc.runID)
 
-			if len(id) != 64 {
-				t.Errorf("GenerateJobRunID() returned %d chars for job name %q", len(id), jobName)
+			if id != tc.expected {
+				t.Errorf("GenerateJobRunID() = %q, expected %q", id, tc.expected)
 			}
 
-			// Should be valid hex
-			if !isHexString(id) {
-				t.Errorf("GenerateJobRunID() returned non-hex string for job name %q: %s", jobName, id)
+			// Should contain colon separator
+			if !strings.Contains(id, ":") {
+				t.Errorf("GenerateJobRunID() should contain colon separator: %q", id)
 			}
 		})
 	}
 }
 
 // ==============================================================================
-// Helper Functions
+// Unit Tests: Parse Canonical Job Run ID
 // ==============================================================================
 
-func isHexString(s string) bool {
-	if len(s) == 0 {
-		return false
+func TestParseCanonicalJobRunID_ValidFormats(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
 	}
 
-	for _, c := range strings.ToLower(s) {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
+	testCases := []struct {
+		name          string
+		canonical     string
+		expectedTool  string
+		expectedRunID string
+	}{
+		{
+			name:          "dbt with UUID",
+			canonical:     "dbt:550e8400-e29b-41d4-a716-446655440000",
+			expectedTool:  "dbt",
+			expectedRunID: "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{
+			name:          "airflow with timestamp",
+			canonical:     "airflow:manual__2025-01-01T12:00:00",
+			expectedTool:  "airflow",
+			expectedRunID: "manual__2025-01-01T12:00:00",
+		},
+		{
+			name:          "spark with application ID",
+			canonical:     "spark:application_123456",
+			expectedTool:  "spark",
+			expectedRunID: "application_123456",
+		},
+		{
+			name:          "runID with multiple colons",
+			canonical:     "spark:app:123:456",
+			expectedTool:  "spark",
+			expectedRunID: "app:123:456",
+		},
+		{
+			name:          "custom tool",
+			canonical:     "custom:my-run-123",
+			expectedTool:  "custom",
+			expectedRunID: "my-run-123",
+		},
 	}
 
-	return true
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tool, runID, err := ParseCanonicalJobRunID(tc.canonical)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			if tool != tc.expectedTool {
+				t.Errorf("Tool = %q, expected %q", tool, tc.expectedTool)
+			}
+
+			if runID != tc.expectedRunID {
+				t.Errorf("RunID = %q, expected %q", runID, tc.expectedRunID)
+			}
+		})
+	}
+}
+
+func TestParseCanonicalJobRunID_InvalidFormats(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		name      string
+		canonical string
+		wantError error
+	}{
+		{
+			name:      "no colon separator",
+			canonical: "invalid-format",
+			wantError: ErrInvalidCanonicalFormat,
+		},
+		{
+			name:      "empty string",
+			canonical: "",
+			wantError: ErrEmptyCanonicalID,
+		},
+		{
+			name:      "whitespace only",
+			canonical: "   ",
+			wantError: ErrEmptyCanonicalID,
+		},
+		{
+			name:      "empty tool prefix",
+			canonical: ":run-123",
+			wantError: ErrInvalidCanonicalFormat,
+		},
+		{
+			name:      "empty runID",
+			canonical: "dbt:",
+			wantError: ErrInvalidCanonicalFormat,
+		},
+		{
+			name:      "only colon",
+			canonical: ":",
+			wantError: ErrInvalidCanonicalFormat,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := ParseCanonicalJobRunID(tc.canonical)
+			if err == nil {
+				t.Errorf("Expected error but got none for input: %q", tc.canonical)
+			}
+
+			if !errors.Is(err, tc.wantError) {
+				t.Errorf("Expected error %v, got %v", tc.wantError, err)
+			}
+		})
+	}
+}
+
+func TestParseCanonicalJobRunID_RoundTrip(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		namespace string
+		runID     string
+	}{
+		{"dbt://analytics", "550e8400-e29b-41d4-a716-446655440000"},
+		{"airflow://production", "manual__2025-01-01T12:00:00"},
+		{"spark://cluster", "application_123456"},
+		{"custom://env", "my-custom-run"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.namespace, func(t *testing.T) {
+			// Generate canonical ID
+			canonical := GenerateJobRunID(tc.namespace, tc.runID)
+
+			// Parse it back
+			_, parsedRunID, err := ParseCanonicalJobRunID(canonical)
+			if err != nil {
+				t.Errorf("ParseCanonicalJobRunID failed: %v", err)
+			}
+
+			if parsedRunID != tc.runID {
+				t.Errorf("Round-trip failed: got runID %q, expected %q", parsedRunID, tc.runID)
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Unit Tests: Length Validation
+// ==============================================================================
+
+func TestGenerateJobRunID_LengthValidation(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		name           string
+		namespace      string
+		runID          string
+		expectTruncate bool
+	}{
+		{
+			name:           "normal length",
+			namespace:      "dbt://analytics",
+			runID:          "550e8400-e29b-41d4-a716-446655440000",
+			expectTruncate: false,
+		},
+		{
+			name:           "maximum length boundary",
+			namespace:      "dbt://analytics",
+			runID:          strings.Repeat("a", 250), // "dbt:" + 250 = 254 chars
+			expectTruncate: false,
+		},
+		{
+			name:           "exceeds maximum length",
+			namespace:      "airflow://production",
+			runID:          strings.Repeat("x", 300), // Will exceed 255
+			expectTruncate: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			canonical := GenerateJobRunID(tc.namespace, tc.runID)
+
+			if len(canonical) > MaxCanonicalIDLength {
+				t.Errorf("Canonical ID length %d exceeds maximum %d", len(canonical), MaxCanonicalIDLength)
+			}
+
+			if tc.expectTruncate {
+				if len(canonical) != MaxCanonicalIDLength {
+					t.Errorf("Expected truncation to %d chars, got %d", MaxCanonicalIDLength, len(canonical))
+				}
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Unit Tests: Additional Edge Cases
+// ==============================================================================
+
+func TestGenerateJobRunID_MalformedNamespaces(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		name      string
+		namespace string
+		runID     string
+		expected  string
+	}{
+		{
+			name:      "no separator",
+			namespace: "dbt",
+			runID:     "run-123",
+			expected:  "dbt:run-123", // Recognized as dbt even without ://
+		},
+		{
+			name:      "trailing separator",
+			namespace: "dbt://",
+			runID:     "run-123",
+			expected:  "dbt:run-123", // Tool extracted correctly
+		},
+		{
+			name:      "uppercase tool",
+			namespace: "DBT://PROD",
+			runID:     "run-123",
+			expected:  "dbt:run-123", // Normalized to lowercase
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := GenerateJobRunID(tc.namespace, tc.runID)
+
+			if result != tc.expected {
+				t.Errorf("GenerateJobRunID() = %q, expected %q", result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestParseCanonicalJobRunID_PreservesColons(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Verify that colons in runID are preserved correctly
+	testCases := []string{
+		"spark:app:123:456",
+		"custom:url:https://example.com:8080",
+		"dbt:::multiple:::colons:::",
+	}
+
+	for _, canonical := range testCases {
+		t.Run(canonical, func(t *testing.T) {
+			tool, runID, err := ParseCanonicalJobRunID(canonical)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// Reconstruct and verify
+			reconstructed := fmt.Sprintf("%s:%s", tool, runID)
+			if reconstructed != canonical {
+				t.Errorf("Colon preservation failed: got %q, expected %q", reconstructed, canonical)
+			}
+		})
+	}
 }

@@ -173,15 +173,20 @@ type RecentIncidentSummary struct {
 //   - ProducerName: Filter by producer (e.g., "dbt", "airflow")
 //   - DatasetURN: Filter by specific dataset URN
 //   - JobRunID: Filter by specific job run ID
+//   - Tool: Filter by tool extracted from canonical job_run_id (e.g., "dbt", "airflow", "spark")
 //   - TestExecutedAfter: Filter tests executed after this timestamp
 //   - TestExecutedBefore: Filter tests executed before this timestamp
+//
+// Tool vs ProducerName:
+//   - Tool: Filters by tool type from canonical ID format "tool:runID" (more reliable, uses LIKE pattern)
+//   - ProducerName: Filters by producer name extracted from producer URL (may vary by version)
 //
 // Example:
 //
 //	// Find all failed tests from dbt jobs in the last 24 hours
 //	filter := &correlation.IncidentFilter{
 //	    TestStatus: strPtr("failed"),
-//	    ProducerName: strPtr("dbt"),
+//	    Tool: strPtr("dbt"),  // Uses job_run_id LIKE 'dbt:%'
 //	    TestExecutedAfter: timePtr(time.Now().Add(-24 * time.Hour)),
 //	}
 //	incidents, err := store.QueryIncidents(ctx, filter)
@@ -191,6 +196,7 @@ type IncidentFilter struct {
 	ProducerName       *string
 	DatasetURN         *string
 	JobRunID           *string
+	Tool               *string
 	TestExecutedAfter  *time.Time
 	TestExecutedBefore *time.Time
 }

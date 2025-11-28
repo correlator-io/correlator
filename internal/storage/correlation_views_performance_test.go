@@ -136,7 +136,7 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 
 	// Test filtered query
 	t.Run("FilteredByStatus", func(t *testing.T) {
-		failedStatus := "failed"
+		failedStatus := statusFailed
 		filter := &correlation.IncidentFilter{
 			TestStatus: &failedStatus,
 		}
@@ -794,7 +794,7 @@ func load50TestResults(ctx context.Context, t *testing.T, db *sql.DB) {
 		// Use existing job run IDs
 		jobRunID := jobRunIDs[i%len(jobRunIDs)]
 
-		status := "failed"
+		status := statusFailed
 		message := fmt.Sprintf("Test failed: found %d issues", i%10)
 		executedAt := now.Add(-time.Duration(i) * time.Minute)
 		durationMs := 100 + (i%50)*10

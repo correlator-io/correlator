@@ -51,6 +51,7 @@ linters:
           - gosec         # Security issues (more lenient in tests)
           - intrange
           - noinlineerr
+          - goconst
 
 issues:
   max-issues-per-linter: 20

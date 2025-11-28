@@ -59,8 +59,9 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	// Setup test data
 	now := time.Now()
-	jobRunID1 := uuid.New().String()
-	jobRunID2 := uuid.New().String()
+	// Use canonical job_run_id format: "tool:runID"
+	jobRunID1 := "dbt:" + uuid.New().String()
+	jobRunID2 := "airflow:" + uuid.New().String()
 	datasetURN1 := "urn:postgres:warehouse:public.customers"
 	datasetURN2 := "urn:postgres:warehouse:public.orders"
 
@@ -124,7 +125,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, incidents, 1, "Should return 1 incident (view filters failed/error only)")
 
 	// Test 2: Filter by test status (failed)
-	failedStatus := "failed" //nolint:goconst
+	failedStatus := statusFailed
 	filter := &correlation.IncidentFilter{
 		TestStatus: &failedStatus,
 	}
@@ -133,7 +134,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, incidents, 1, "Should return 1 failed test")
-	assert.Equal(t, "failed", incidents[0].TestStatus)
+	assert.Equal(t, statusFailed, incidents[0].TestStatus)
 	assert.Equal(t, "not_null_customers_id", incidents[0].TestName)
 
 	// Test 3: Filter by producer
@@ -159,7 +160,32 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, incidents, 1, "Should return 1 incident for job_run_id")
 	assert.Equal(t, jobRunID1, incidents[0].JobRunID)
 
-	// Test 5: Filter by time range (recent tests only)
+	// Test 5: Filter by tool (extracted from canonical job_run_id)
+	toolDBT := "dbt"
+	filter = &correlation.IncidentFilter{
+		Tool: &toolDBT,
+	}
+
+	incidents, err = store.QueryIncidents(ctx, filter)
+	require.NoError(t, err)
+
+	assert.Len(t, incidents, 1, "Should return 1 dbt incident")
+	assert.Equal(t, "dbt", incidents[0].ProducerName)
+	// Verify job_run_id starts with "dbt:"
+	assert.Contains(t, incidents[0].JobRunID, "dbt:", "Job run ID should contain 'dbt:' prefix")
+
+	// Test 5b: Filter by tool that doesn't exist
+	toolSpark := "spark"
+	filter = &correlation.IncidentFilter{
+		Tool: &toolSpark,
+	}
+
+	incidents, err = store.QueryIncidents(ctx, filter)
+	require.NoError(t, err)
+
+	assert.Empty(t, incidents, "Should return 0 spark incidents")
+
+	// Test 6: Filter by time range (recent tests only)
 	recentTime := now.Add(-30 * time.Minute)
 	filter = &correlation.IncidentFilter{
 		TestExecutedAfter: &recentTime,
