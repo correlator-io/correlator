@@ -100,7 +100,7 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, logger *slog.Log
 	}
 
 	// Now write headers and body atomically
-	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Content-Type", contentTypeProblemJSON)
 	w.WriteHeader(problem.Status)
 
 	if _, err := w.Write(body); err != nil {

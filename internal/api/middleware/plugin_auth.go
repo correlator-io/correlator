@@ -45,6 +45,10 @@ type (
 	}
 )
 
+const (
+	contentTypeProblemJSON = "application/problem+json"
+)
+
 // Authentication error types for granular error handling.
 var (
 	// ErrMissingAPIKey is returned when no API key is provided in headers.
@@ -380,7 +384,7 @@ func writeRFC7807Error(
 	}
 
 	// Set proper content type and status code
-	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Content-Type", contentTypeProblemJSON)
 	w.WriteHeader(statusCode)
 
 	// Write response

@@ -46,7 +46,7 @@ func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
 						CorrelationID: correlationID,
 					}
 
-					w.Header().Set("Content-Type", "application/problem+json")
+					w.Header().Set("Content-Type", contentTypeProblemJSON)
 					w.WriteHeader(http.StatusInternalServerError)
 
 					if err := json.NewEncoder(w).Encode(problemDetail); err != nil {

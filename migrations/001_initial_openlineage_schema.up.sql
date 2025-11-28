@@ -4,6 +4,60 @@
 -- 
 -- Standards: OpenLineage v1.0 compliant
 -- =====================================================
+--
+-- TABLE MUTABILITY DESIGN
+-- =====================================================
+--
+-- MUTABLE TABLES (have both created_at AND updated_at):
+-- These tables support UPDATE operations and track modification history.
+--
+-- 1. job_runs - State transitions (START → RUNNING → COMPLETE/FAIL)
+--    - updated_at tracks last state transition
+--    - Trigger: update_job_runs_updated_at
+--
+-- 2. job_id_mappings - Mapping status changes (active → deprecated)
+--    - updated_at tracks mapping confidence updates
+--    - Trigger: update_job_id_mappings_updated_at
+--
+-- 3. datasets - Metadata enrichment over time
+--    - updated_at tracks schema/facet updates
+--    - Trigger: update_datasets_updated_at
+--
+-- 4. test_results - UPSERT behavior (re-ingestion with updated status)
+--    - updated_at tracks when test was last re-ingested
+--    - Trigger: update_test_results_updated_at
+--    - UPSERT key: (test_name, dataset_urn, executed_at)
+--
+-- 5. api_keys - Activation/deactivation, permission updates
+--    - updated_at tracks key lifecycle changes
+--    - Trigger: update_api_keys_updated_at
+--
+-- IMMUTABLE TABLES (have only created_at):
+-- These tables follow event sourcing principles - rows are never updated.
+--
+-- 1. lineage_edges - Immutable lineage facts
+--    - Lineage relationships are historical facts (job A produced dataset B at time T)
+--    - Never updated, only inserted
+--
+-- 2. correlation_events - Immutable audit trail
+--    - Correlation events are append-only for accuracy tracking
+--    - Compliance requirement: audit events must not be mutated
+--
+-- 3. lineage_event_idempotency - TTL-based cleanup
+--    - Rows expire naturally via expires_at timestamp
+--    - Deleted by cleanup job, never updated
+--
+-- 4. api_key_audit_log - Immutable audit trail
+--    - Security requirement: audit logs must not be mutated
+--    - Compliance: tamper-proof event log
+--
+-- WHY THIS MATTERS:
+-- - Mutable tables: Need updated_at for audit trail and debugging
+-- - Immutable tables: updated_at would always equal created_at (waste)
+-- - Event sourcing: Historical facts should not be mutated
+-- - Compliance: Audit trails must be tamper-proof (immutable)
+--
+-- =====================================================
 
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -178,6 +232,11 @@ COMMENT ON COLUMN lineage_edges.dataset_urn IS 'Dataset involved in this lineage
 -- Correlation Key:
 -- - job_run_id links test results to producing job runs
 -- - Core query: "Given a failed test, which job run produced the failing dataset?"
+--
+-- MUTABILITY: Mutable (UPSERT behavior)
+-- - Test results can be re-ingested with updated status/message/metadata
+-- - UPSERT key: (test_name, dataset_urn, executed_at)
+-- - updated_at tracks when test result was last modified
 -- =====================================================
 CREATE TABLE test_results (
     id BIGSERIAL PRIMARY KEY,
@@ -191,19 +250,21 @@ CREATE TABLE test_results (
     status VARCHAR(50) NOT NULL CHECK (status IN ('passed', 'failed', 'error', 'skipped', 'warning')),
     message TEXT,
 
-    expected_value JSONB,
-    actual_value JSONB,
-    test_metadata JSONB DEFAULT '{}',
+    metadata JSONB DEFAULT '{}',
 
     executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
     duration_ms INTEGER,
 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Indexes for test_results
 CREATE INDEX idx_test_results_job_run_correlation ON test_results(job_run_id, status) WHERE status IN ('failed', 'error');
 CREATE INDEX idx_test_results_dataset_lookup ON test_results(dataset_urn, executed_at DESC);
+
+-- UNIQUE constraint for UPSERT behavior (prevents duplicate test results with same name, dataset, and execution time)
+CREATE UNIQUE INDEX idx_test_results_upsert_key ON test_results(test_name, dataset_urn, executed_at);
 
 -- Comments
 COMMENT ON TABLE test_results IS 'Data quality test outcomes with job run correlation for incident analysis';
@@ -673,6 +734,10 @@ CREATE TRIGGER update_datasets_updated_at
 
 CREATE TRIGGER update_api_keys_updated_at
     BEFORE UPDATE ON api_keys
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_test_results_updated_at
+    BEFORE UPDATE ON test_results
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- State transition validation trigger
