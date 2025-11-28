@@ -1218,8 +1218,8 @@ func verifyRFC7807Error(t *testing.T, response *httptest.ResponseRecorder, expec
 
 	// Verify Content-Type header
 	contentType := response.Header().Get("Content-Type")
-	if contentType != "application/problem+json" {
-		t.Errorf("Expected Content-Type 'application/problem+json', got '%s'", contentType)
+	if contentType != contentTypeProblemJSON {
+		t.Errorf("Expected Content-Type '%s', got '%s'", contentTypeProblemJSON, contentType)
 	}
 
 	// Parse JSON response

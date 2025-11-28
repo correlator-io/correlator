@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	healthCheckTimeout = 2 * time.Second
-	expectedURLParts   = 2
+	healthCheckTimeout     = 2 * time.Second
+	expectedURLParts       = 2
+	contentTypeProblemJSON = "application/problem+json"
 )
 
 type (

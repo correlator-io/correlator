@@ -146,7 +146,7 @@ func validateTestResultResponse(t *testing.T, rr *httptest.ResponseRecorder, exp
 	// Check Content-Type (might be RFC 7807 for errors)
 	contentType := rr.Header().Get("Content-Type")
 
-	if contentType == "application/problem+json" { //nolint:goconst
+	if contentType == contentTypeProblemJSON {
 		return nil // RFC 7807 error response
 	}
 

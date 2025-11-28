@@ -463,8 +463,8 @@ func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
 
 	// Verify Content-Type header
 	contentType := rec2.Header().Get("Content-Type")
-	if contentType != "application/problem+json" {
-		t.Errorf("expected Content-Type application/problem+json, got %s", contentType)
+	if contentType != contentTypeProblemJSON {
+		t.Errorf("expected Content-Type %s, got %s", contentTypeProblemJSON, contentType)
 	}
 
 	// Parse response body

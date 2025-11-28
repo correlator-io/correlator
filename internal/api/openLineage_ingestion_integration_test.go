@@ -141,7 +141,7 @@ func validateLineageResponse(t *testing.T, rr *httptest.ResponseRecorder, expect
 	contentType := rr.Header().Get("Content-Type")
 
 	// RFC 7807 error response (request-level errors)
-	if contentType == "application/problem+json" {
+	if contentType == contentTypeProblemJSON {
 		return nil // Don't parse as LineageResponse
 	}
 
@@ -171,9 +171,9 @@ func validateRFC7807Response(t *testing.T, rr *httptest.ResponseRecorder, expect
 	assert.Equal(t, expectedStatus, rr.Code, "Response body: %s", rr.Body.String())
 
 	// Check Content-Type header
-	assert.Equal(
+	assert.Equal( //nolint:testifylint
 		t,
-		"application/problem+json",
+		contentTypeProblemJSON,
 		rr.Header().Get("Content-Type"),
 		"Expected RFC 7807 Content-Type",
 	)
