@@ -210,6 +210,14 @@ func buildIncidentCorrelationQuery(filter *correlation.IncidentFilter) (string, 
 		paramIndex++
 	}
 
+	if filter.Tool != nil {
+		// Filter by tool extracted from canonical job_run_id
+		// Format: "dbt:abc-123" → matches "dbt:%"
+		conditions = append(conditions, fmt.Sprintf("job_run_id LIKE $%d", paramIndex))
+		args = append(args, *filter.Tool+":%")
+		paramIndex++
+	}
+
 	if filter.TestExecutedAfter != nil {
 		conditions = append(conditions, fmt.Sprintf("test_executed_at > $%d", paramIndex))
 		args = append(args, *filter.TestExecutedAfter)
