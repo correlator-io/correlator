@@ -271,7 +271,7 @@ run:
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "migrate" ]; then \
 		$(MAKE) run-migrate-$(wordlist 3,3,$(MAKECMDGOALS)); \
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "smoketest" ]; then \
-		$(MAKE) run-smoketest-$(wordlist 3,3,$(MAKECMDGOALS)); \
+		$(MAKE) run-smoketest; \
 	else \
 		echo "❌ Unknown run target: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "Available targets:"; \
@@ -287,7 +287,7 @@ run:
 		echo "  make run migrate status     # Check migration status"; \
 		echo "  make run migrate version    # Show migration version"; \
 		echo "  make run migrate drop       # Drop all tables (destructive, uses --force)"; \
-		echo "  make run smoketest lineage  # Run lineage ingestion smoke tests"; \
+		echo "  make run smoketest          # Run smoke tests (end-to-end correlation validation)"; \
 		exit 1; \
 	fi
 
@@ -336,9 +336,9 @@ run-migrate-drop:
 	@echo "⚠️ Dropping all database tables..."
 	@$(MAKE) run-migrator ACTION="drop --force"
 
-run-smoketest-lineage: ensure-not-in-dev-container
-	@echo "🧪 Running OpenLineage ingestion smoke tests..."
-	@./scripts/smoketest-lineage.sh
+run-smoketest: ensure-not-in-dev-container
+	@echo "🧪 Running Correlator smoke tests..."
+	@./scripts/smoketest.sh
 
 # Internal helper for environment-aware migrations
 run-migrator:
@@ -613,7 +613,7 @@ help:
 	@echo "        make start                    # Smart setup + enter dev container"
 	@echo "        make run                      # Start development server"
 	@echo "        make run test                 # Run all tests"
-	@echo "        make run smoketest lineage    # Run smoke tests (end-to-end validation)"
+	@echo "        make run smoketest            # Run smoke tests (end-to-end correlation validation)"
 	@echo "        make run benchmark            # Run benchmark tests"
 	@echo "        make run linter               # Run linter"
 	@echo "        make check                    # Check code quality before commit"
