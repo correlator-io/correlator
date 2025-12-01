@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Smoke tests for OpenLineage ingestion endpoint
-# Tests basic functionality of POST /api/v1/lineage/events
+# Smoke tests for Correlator - Incident Correlation Engine
+# Tests end-to-end correlation flow: Lineage ingestion → Test results → Correlation
 #
 # Prerequisites:
 #   - Correlator server running (make run)
@@ -13,19 +13,28 @@
 #
 # Usage:
 #   # Zero-config mode (no cleanup, may show duplicates on re-run)
-#   ./scripts/smoketest-lineage.sh
+#   ./scripts/smoketest.sh
 #
 #   # With auto-cleanup (repeatable tests)
-#   DATABASE_URL=my-database-url ./scripts/smoketest-lineage.sh
+#   DATABASE_URL=my-database-url ./scripts/smoketest.sh
 #
 #   # With authentication
-#   CORRELATOR_AUTH_ENABLED=true API_KEY=my-key ./scripts/smoketest-lineage.sh
+#   CORRELATOR_AUTH_ENABLED=true API_KEY=my-key ./scripts/smoketest.sh
 #
-# Scope: Basic smoke tests (6 scenarios)
-# - Single events (dbt, Airflow, Spark)
-# - Duplicate detection (idempotency)
-# - Invalid input (missing field)
-# - Empty body
+# Test Sections:
+#   Section 1: OpenLineage Ingestion (Tests 1-6)
+#     - Single events (dbt, Airflow, Spark) with canonical job_run_id generation
+#     - Duplicate detection (idempotency)
+#     - Invalid input validation (missing field)
+#     - Empty body rejection
+#
+#   Section 2: Test Results Ingestion (Tests 7-8)
+#     - Test result with canonical job_run_id
+#     - UPSERT behavior verification
+#
+#   Section 3: End-to-End Correlation (Tests 9-10)
+#     - Verify test failure linked to job run via canonical job_run_id
+#     - Verify canonical ID format in correlation view ("tool:runID")
 #
 # Reserved Namespace Convention:
 # - Tests use 'correlator-smoke-test' in all namespaces for automatic cleanup
@@ -36,14 +45,10 @@
 # Note: API expects array format even for single events: [event]
 #
 # Out of Scope (covered by integration tests):
-# - Batch events (207 Multi-Status) - See internal/api/lineage_handler_integration_test.go
+# - Batch events (207 Multi-Status) - See internal/api/*_handler_integration_test.go
 # - Authentication (401) - See internal/api/auth_test.go
 # - Performance baselines (<100ms) - See benchmark tests
-#
-# Future Enhancements to smoke tests (Optional, Not Needed Now):
-# - Add batch test if production reveals batch-specific bugs
-# - Add auth test if middleware changes frequently
-# - Add more smoke tests for correlation endpoints
+# - Complex correlation scenarios - See internal/storage/correlation_views_integration_test.go
 #
 
 set -e
@@ -125,22 +130,29 @@ cleanup_test_data() {
     -- Delete in correct order (respecting foreign key constraints)
     -- Pattern matching on 'correlator-smoke-test' in namespaces
 
-    -- 1. Delete idempotency keys for smoke test job runs
+    -- 1. Delete test results for smoke test job runs
+    DELETE FROM test_results
+    WHERE job_run_id IN (
+        SELECT job_run_id FROM job_runs
+        WHERE job_namespace LIKE '%correlator-smoke-test%'
+    );
+
+    -- 2. Delete idempotency keys for smoke test job runs
     DELETE FROM lineage_event_idempotency
     WHERE event_metadata->>'job_namespace' LIKE '%correlator-smoke-test%';
 
-    -- 2. Delete lineage edges for smoke test job runs
+    -- 3. Delete lineage edges for smoke test job runs
     DELETE FROM lineage_edges
     WHERE job_run_id IN (
         SELECT job_run_id FROM job_runs
         WHERE job_namespace LIKE '%correlator-smoke-test%'
     );
 
-    -- 3. Delete smoke test job runs
+    -- 4. Delete smoke test job runs
     DELETE FROM job_runs
     WHERE job_namespace LIKE '%correlator-smoke-test%';
 
-    -- 4. Delete smoke test datasets (safe with reserved namespace convention)
+    -- 5. Delete smoke test datasets (safe with reserved namespace convention)
     DELETE FROM datasets
     WHERE namespace LIKE '%correlator-smoke-test%';
 SQL
@@ -209,8 +221,16 @@ fi
 echo "✅ Server available at ${SERVER_URL}"
 echo ""
 
-echo "🧪 Running smoke tests for OpenLineage ingestion endpoint"
+echo "🧪 Running Correlator Smoke Tests"
 echo "========================================================="
+echo "Testing: Lineage ingestion → Test results → Correlation"
+echo ""
+
+#===============================================================================
+# SECTION 1: OpenLineage Ingestion (Tests 1-6)
+#===============================================================================
+echo "📦 Section 1: OpenLineage Ingestion"
+echo "-----------------------------------"
 echo ""
 
 #===============================================================================
@@ -420,6 +440,161 @@ if [ "$STATUS" = "400" ]; then
     print_test_result "Test 6" "PASS" "Status: $STATUS, Empty body rejected correctly"
 else
     print_test_result "Test 6" "FAIL" "Expected status 400, got $STATUS"
+fi
+echo ""
+
+#===============================================================================
+# SECTION 2: Test Results Ingestion (Tests 7-8)
+#===============================================================================
+echo "🧪 Section 2: Test Results Ingestion"
+echo "-------------------------------------"
+echo ""
+
+#===============================================================================
+# Test 7: Test result with canonical job_run_id
+#===============================================================================
+echo "Test 7: Test result with canonical job_run_id (200 OK)"
+
+# Extract canonical job_run_id from dbt event (format: "dbt:runID")
+# The canonical ID is generated by the ingestion endpoint
+CANONICAL_JOB_RUN_ID="dbt:550e8400-e29b-41d4-a716-446655440000"
+
+TEST_RESULT='{
+  "test_name": "not_null_orders_id",
+  "test_type": "not_null",
+  "dataset_urn": "postgresql://correlator-smoke-test-db:5432/analytics.public.orders",
+  "job_run_id": "'"$CANONICAL_JOB_RUN_ID"'",
+  "status": "failed",
+  "message": "Found 3 null values in orders.id column",
+  "executed_at": "2025-10-21T10:06:00Z",
+  "duration_ms": 150,
+  "metadata": {
+    "test_framework": "dbt",
+    "test_file": "models/schema.yml"
+  }
+}'
+
+# Update ENDPOINT for test results
+TEST_RESULTS_ENDPOINT="${SERVER_URL}/api/v1/test-results"
+ENDPOINT_BACKUP="$ENDPOINT"
+ENDPOINT="$TEST_RESULTS_ENDPOINT"
+
+RESPONSE=$(make_request "[$TEST_RESULT]")
+STATUS=$(echo "$RESPONSE" | jq -r '.status')
+BODY=$(echo "$RESPONSE" | jq -r '.body')
+
+# Restore original endpoint
+ENDPOINT="$ENDPOINT_BACKUP"
+
+if [ "$STATUS" = "200" ]; then
+    STORED=$(echo "$BODY" | jq -r '.stored')
+    if [ "$STORED" = "1" ]; then
+        print_test_result "Test 7" "PASS" "Status: $STATUS, Test result stored with canonical job_run_id"
+    else
+        print_test_result "Test 7" "FAIL" "Status: $STATUS, but stored=$STORED (expected 1)"
+    fi
+else
+    print_test_result "Test 7" "FAIL" "Expected status 200, got $STATUS. Body: $BODY"
+fi
+echo ""
+
+#===============================================================================
+# Test 8: Test result UPSERT behavior
+#===============================================================================
+echo "Test 8: Test result UPSERT behavior (200 OK)"
+
+# Submit the same test result again (should upsert, not duplicate)
+ENDPOINT="$TEST_RESULTS_ENDPOINT"
+
+RESPONSE=$(make_request "[$TEST_RESULT]")
+STATUS=$(echo "$RESPONSE" | jq -r '.status')
+BODY=$(echo "$RESPONSE" | jq -r '.body')
+
+# Restore original endpoint
+ENDPOINT="$ENDPOINT_BACKUP"
+
+if [ "$STATUS" = "200" ]; then
+    STORED=$(echo "$BODY" | jq -r '.stored')
+    # UPSERT behavior: should still return stored=1 (updated existing record)
+    if [ "$STORED" = "1" ]; then
+        print_test_result "Test 8" "PASS" "Status: $STATUS, UPSERT behavior confirmed"
+    else
+        print_test_result "Test 8" "FAIL" "Status: $STATUS, but stored=$STORED (expected 1)"
+    fi
+else
+    print_test_result "Test 8" "FAIL" "Expected status 200, got $STATUS"
+fi
+echo ""
+
+#===============================================================================
+# SECTION 3: End-to-End Correlation (Tests 9-10)
+#===============================================================================
+echo "🔗 Section 3: End-to-End Correlation"
+echo "-------------------------------------"
+echo ""
+
+#===============================================================================
+# Test 9: Verify test failure linked to job run
+#===============================================================================
+echo "Test 9: Verify test failure linked to job run (database query)"
+
+if [ -z "$DATABASE_URL" ]; then
+    print_test_result "Test 9" "SKIP" "DATABASE_URL not set - cannot query correlation view"
+elif ! command -v psql &> /dev/null; then
+    print_test_result "Test 9" "SKIP" "psql not installed - cannot query database"
+else
+    # Refresh materialized views
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 << 'SQL' >/dev/null 2>&1
+    REFRESH MATERIALIZED VIEW CONCURRENTLY incident_correlation_view;
+SQL
+
+    # Query incident_correlation_view
+    QUERY_RESULT=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
+    SELECT COUNT(*)
+    FROM incident_correlation_view
+    WHERE job_run_id = '$CANONICAL_JOB_RUN_ID'
+      AND test_name = 'not_null_orders_id'
+      AND test_status = 'failed';
+SQL
+    )
+
+    INCIDENT_COUNT=$(echo "$QUERY_RESULT" | tr -d ' ')
+
+    if [ "$INCIDENT_COUNT" = "1" ]; then
+        print_test_result "Test 9" "PASS" "Test failure correctly linked to job run in correlation view"
+    else
+        print_test_result "Test 9" "FAIL" "Expected 1 incident in correlation view, found $INCIDENT_COUNT"
+    fi
+fi
+echo ""
+
+#===============================================================================
+# Test 10: Verify canonical ID format in correlation view
+#===============================================================================
+echo "Test 10: Verify canonical ID format (tool:runID)"
+
+if [ -z "$DATABASE_URL" ]; then
+    print_test_result "Test 10" "SKIP" "DATABASE_URL not set - cannot query database"
+elif ! command -v psql &> /dev/null; then
+    print_test_result "Test 10" "SKIP" "psql not installed - cannot query database"
+else
+    # Query job_run_id format from job_runs table
+    JOB_RUN_ID=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
+    SELECT job_run_id
+    FROM job_runs
+    WHERE job_namespace LIKE '%correlator-smoke-test%'
+    LIMIT 1;
+SQL
+    )
+
+    JOB_RUN_ID=$(echo "$JOB_RUN_ID" | tr -d ' ')
+
+    # Verify format: "tool:runID" (should contain colon and start with known tool)
+    if echo "$JOB_RUN_ID" | grep -qE "^(dbt|airflow|spark|custom|unknown):"; then
+        print_test_result "Test 10" "PASS" "Canonical ID format verified: $JOB_RUN_ID"
+    else
+        print_test_result "Test 10" "FAIL" "Invalid canonical ID format: $JOB_RUN_ID (expected 'tool:runID')"
+    fi
 fi
 echo ""
 
