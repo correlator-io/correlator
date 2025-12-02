@@ -31,7 +31,7 @@ Before submitting a pull request, please ensure that your code adheres to the fo
 - Write clear and concise [commit messages](#commit-message-guidelines)
 - Include tests for any new functionality or bug fixes (use **TDD**)
 - Ensure your changes pass all pre-commit hooks
-- Run `make fmt`, `make lint`, `make test` to verify all checks pass (formatting, linting, tests)
+- Run `make check` to verify all checks pass (linting, tests, formatting)
 
 By contributing to correlator, you agree to license your contributions under the terms of the Apache License 2.0.
 
@@ -45,38 +45,41 @@ To set up the development environment:
 
 ```bash
 # Clone the repository
-git https://github.com/correlator-io/correlator.git
+git clone https://github.com/correlator-io/correlator.git
 cd correlator
 
-# Install development dependencies
-pip install -e ".[dev]"
+# Start development environment (one command setup)
+make start                    # Installs deps, creates dev container, starts database
 
-# Install pre-commit hooks
-pre-commit install
+# You're now inside the dev container, ready to code!
 ```
+
+For detailed setup instructions, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+### Prerequisites
+- **Docker Desktop** (must be running)
+- **Git**
+- **npm**
+
+All other tools (Go, golangci-lint, etc.) are auto-installed inside the dev container.
 
 ## Quality Assurance
 
-The project uses several code quality tools that can be run via Make commands:
+The project uses several code quality tools that can be run via Make commands (inside dev container):
 
 ```bash
-# Format code with golangci
-make fmt
+# Full quality check before committing (recommended)
+make check                    # Runs: lint + tests + vet
 
-# Run linting with golangci
-make lint
+# Auto-fix issues
+make fix                      # Format + tidy + clean artifacts
 
-# Run type checking with vet
-make vet
-
-# Run unit tests
-make test-unit
-
-# Run integration tests
-make test-integration
-
-# Run all tests
-make test
+# Individual checks
+make run test                 # Run all tests (unit + integration)
+make run test unit            # Run unit tests only (fast)
+make run test integration     # Run integration tests only
+make run test race            # Run tests with race detection
+make run benchmark            # Run benchmark tests
 ```
 
 ## Branch Naming Convention and Commit Message Format
@@ -148,15 +151,26 @@ All new features and bug fixes should be accompanied by appropriate tests. We ma
 
 ### Running Tests
 
+All test commands should be run inside the dev container:
+
 ```bash
+# Run all tests (unit + integration)
+make run test
+
 # Run unit tests only (fast feedback loop)
-make test-unit
+make run test unit
 
 # Run integration tests only (slower, with real services)
-make test-integration
+make run test integration
 
-# Run all tests with coverage
-make test
+# Run tests with race detection
+make run test race
+
+# Run benchmark tests
+make run benchmark
+
+# Full quality check before commit (includes all tests)
+make check
 ```
 
 ### Test File Organization
