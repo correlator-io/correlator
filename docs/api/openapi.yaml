@@ -116,7 +116,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/LineageResponse'
               example:
-                status: "success"
+                status: "partial_success"
                 summary:
                   received: 4
                   successful: 3
