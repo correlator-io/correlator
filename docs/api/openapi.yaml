@@ -21,20 +21,7 @@ paths:
       summary: Ingest OpenLineage events
       description: |
         Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant RunEvents
-        from external plugins (correlator-dbt, correlator-airflow, etc.).
-
-        **Correlation Logic**: Extracts canonical `jobRunId` from RunEvent for linking
-        test failures to job runs with >90% accuracy.
-
-        **Performance**: Designed for 1,000 events/second sustained throughput.
-
-        **Batch Processing**: Supports single event or array of events. Returns per-event
-        status with 207 Multi-Status for partial success scenarios.
-
-        **Idempotency**: Duplicate events return 200 OK with "duplicate" status.
-
-        **MVP Scope**: Currently supports RunEvent only. DatasetEvent and JobEvent
-        support deferred to Phase 2+. NDJSON format deferred to Phase 2.
+        from external plugins.
       operationId: ingestLineageEvents
       tags:
         - OpenLineage Ingestion
@@ -99,33 +86,29 @@ paths:
                 all_stored:
                   summary: All events stored successfully
                   value:
+                    status: "success"
+                    summary:
+                      received: 2
+                      successful: 2
+                      failed: 0
+                      retriable: 0
+                      non_retriable: 0
+                    failed_events: []
                     correlation_id: "123e4567-e89b-12d3-a456-426614174000"
                     timestamp: "2024-01-01T12:05:30Z"
-                    stored: 2
-                    duplicates: 0
-                    failed: 0
-                    results:
-                      - index: 0
-                        status: 200
-                        message: "stored"
-                      - index: 1
-                        status: 200
-                        message: "stored"
                 all_duplicates:
-                  summary: All events are duplicates (idempotency)
+                  summary: All events are duplicates (idempotency - OpenLineage treats as successful)
                   value:
+                    status: "success"
+                    summary:
+                      received: 2
+                      successful: 2
+                      failed: 0
+                      retriable: 0
+                      non_retriable: 0
+                    failed_events: []
                     correlation_id: "234e5678-e89b-12d3-a456-426614174001"
                     timestamp: "2024-01-01T12:05:31Z"
-                    stored: 0
-                    duplicates: 2
-                    failed: 0
-                    results:
-                      - index: 0
-                        status: 200
-                        message: "duplicate"
-                      - index: 1
-                        status: 200
-                        message: "duplicate"
         '207':
           description: Partial success - some events stored, some failed validation
           content:
@@ -133,24 +116,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/LineageResponse'
               example:
+                status: "partial_success"
+                summary:
+                  received: 4
+                  successful: 3
+                  failed: 1
+                  retriable: 0
+                  non_retriable: 1
+                failed_events:
+                  - index: 3
+                    reason: "missing required field: run.runId"
+                    retriable: false
                 correlation_id: "345e6789-e89b-12d3-a456-426614174002"
                 timestamp: "2024-01-01T12:05:32Z"
-                stored: 2
-                duplicates: 1
-                failed: 1
-                results:
-                  - index: 0
-                    status: 200
-                    message: "stored"
-                  - index: 1
-                    status: 200
-                    message: "duplicate"
-                  - index: 2
-                    status: 200
-                    message: "stored"
-                  - index: 3
-                    status: 422
-                    error: "missing required field: run.runId"
         '400':
           $ref: '#/components/responses/BadRequest'
         '413':
@@ -899,16 +877,61 @@ components:
     LineageResponse:
       type: object
       required:
+        - status
+        - summary
+        - failed_events
         - correlation_id
         - timestamp
-        - stored
-        - duplicates
-        - failed
-        - results
       description: |
-        Response from OpenLineage event ingestion with per-event status.
-        Provides granular feedback for batch processing and debugging.
+        OpenLineage-compliant response from event ingestion.
+        Follows OpenLineage specification for batch event responses.
+        Spec: https://openlineage.io/apidocs/openapi/#tag/OpenLineage/operation/postEventBatch
       properties:
+        status:
+          type: string
+          enum: [success, error]
+          description: Overall request status (success if any events processed, error if all failed)
+          example: "success"
+        summary:
+          type: object
+          required:
+            - received
+            - successful
+            - failed
+            - retriable
+            - non_retriable
+          description: Summary statistics for the batch
+          properties:
+            received:
+              type: integer
+              minimum: 0
+              description: Total number of events received in the request
+              example: 3
+            successful:
+              type: integer
+              minimum: 0
+              description: Number of events successfully processed (includes stored and duplicates)
+              example: 2
+            failed:
+              type: integer
+              minimum: 0
+              description: Number of events that failed processing
+              example: 1
+            retriable:
+              type: integer
+              minimum: 0
+              description: Number of failed events that can be retried
+              example: 0
+            non_retriable:
+              type: integer
+              minimum: 0
+              description: Number of failed events that cannot be retried (validation errors)
+              example: 1
+        failed_events:
+          type: array
+          description: Details of events that failed processing (empty if all successful)
+          items:
+            $ref: '#/components/schemas/FailedEvent'
         correlation_id:
           type: string
           format: uuid
@@ -919,53 +942,28 @@ components:
           format: date-time
           description: Response timestamp in ISO 8601 format
           example: "2024-01-01T12:05:30Z"
-        stored:
-          type: integer
-          minimum: 0
-          description: Number of events successfully stored
-          example: 2
-        duplicates:
-          type: integer
-          minimum: 0
-          description: Number of duplicate events (idempotency)
-          example: 0
-        failed:
-          type: integer
-          minimum: 0
-          description: Number of events that failed validation or storage
-          example: 0
-        results:
-          type: array
-          description: Per-event processing results
-          items:
-            $ref: '#/components/schemas/EventResult'
 
-    EventResult:
+    FailedEvent:
       type: object
       required:
         - index
-        - status
-      description: Processing result for a single event in a batch
+        - reason
+        - retriable
+      description: Details of a single failed event in the batch
       properties:
         index:
           type: integer
           minimum: 0
-          description: Zero-based index of the event in the request array
-          example: 0
-        status:
-          type: integer
-          description: HTTP status code for this specific event (200 or 422)
-          enum: [200, 422]
-          example: 200
-        message:
+          description: Zero-based index of the failed event in the request array
+          example: 2
+        reason:
           type: string
-          description: Success message ("stored" or "duplicate")
-          enum: ["stored", "duplicate"]
-          example: "stored"
-        error:
-          type: string
-          description: Error message if validation or storage failed
+          description: Detailed error message explaining why the event failed
           example: "missing required field: run.runId"
+        retriable:
+          type: boolean
+          description: Whether this failure is retriable (false for validation errors)
+          example: false
 
     # Error Response Schemas (reference to external file)
     Error:

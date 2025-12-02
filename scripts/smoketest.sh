@@ -91,7 +91,7 @@ print_test_result() {
 }
 
 # Helper function to cleanup previous test data
-# TODO(Week 16): Remove this function once CLI tool has dedicated cleanup command
+# TODO: Remove this function once CLI tool has dedicated cleanup command
 # Future: correlator test cleanup --namespace "dbt://analytics,airflow://production,spark://prod-cluster"
 cleanup_test_data() {
     if [ -z "$DATABASE_URL" ]; then
@@ -191,6 +191,63 @@ make_request() {
     echo "{\"status\": $http_code, \"body\": $body}"
 }
 
+# Helper function to validate OpenLineage response format
+# Enforces strict compliance with OpenLineage batch response specification
+# Reference: https://openlineage.io/apidocs/openapi/#tag/OpenLineage/operation/postEventBatch
+validate_openlineage_response() {
+    local body="$1"
+    local expected_status="$2"  # Expected status field value: "success" or "error"
+    local expected_received="$3"
+    local expected_successful="$4"
+    local expected_failed="$5"
+
+    # Extract all response fields
+    local status_field=$(echo "$body" | jq -r '.status')
+    local received=$(echo "$body" | jq -r '.summary.received')
+    local successful=$(echo "$body" | jq -r '.summary.successful')
+    local failed=$(echo "$body" | jq -r '.summary.failed')
+    local retriable=$(echo "$body" | jq -r '.summary.retriable')
+    local non_retriable=$(echo "$body" | jq -r '.summary.non_retriable')
+    local failed_events_count=$(echo "$body" | jq '.failed_events | length')
+
+    # Validate all fields match expected values
+    if [ "$status_field" = "$expected_status" ] && \
+       [ "$received" = "$expected_received" ] && \
+       [ "$successful" = "$expected_successful" ] && \
+       [ "$failed" = "$expected_failed" ]; then
+
+        # Validate invariants (consistency checks)
+        local sum=$((successful + failed))
+        if [ "$sum" != "$received" ]; then
+            echo "FAIL: Invariant violation - received ($received) != successful ($successful) + failed ($failed)"
+            return 1
+        fi
+
+        # Validate failed_events array consistency
+        if [ "$failed" != "$failed_events_count" ]; then
+            echo "FAIL: failed_events count mismatch - failed=$failed but array length=$failed_events_count"
+            return 1
+        fi
+
+        # Validate status field consistency
+        if [ "$expected_status" = "success" ] && [ "$failed" != "0" ]; then
+            echo "FAIL: Status 'success' but failed=$failed (should be 0)"
+            return 1
+        fi
+
+        if [ "$expected_status" = "error" ] && [ "$successful" != "0" ]; then
+            echo "FAIL: Status 'error' but successful=$successful (should be 0)"
+            return 1
+        fi
+
+        echo "PASS: status=$status_field, received=$received, successful=$successful, failed=$failed, retriable=$retriable, non_retriable=$non_retriable"
+        return 0
+    else
+        echo "FAIL: status=$status_field (expected $expected_status), received=$received (expected $expected_received), successful=$successful (expected $expected_successful), failed=$failed (expected $expected_failed)"
+        return 1
+    fi
+}
+
 # Check dependencies
 echo "🔍 Checking dependencies..."
 if ! command -v jq &> /dev/null; then
@@ -272,20 +329,15 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    # Validate response structure
-    RESULT_COUNT=$(echo "$BODY" | jq -r '.results | length')
-    if [ "$RESULT_COUNT" = "1" ]; then
-        MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-        if [ "$MESSAGE" = "stored" ]; then
-            print_test_result "Test 1" "PASS" "Status: $STATUS, Event stored successfully"
-        else
-            print_test_result "Test 1" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
-        fi
+    # Validate OpenLineage compliance (strict validation)
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "success" 1 1 0)
+    if [ $? -eq 0 ]; then
+        print_test_result "Test 1" "PASS" "OpenLineage compliant - $VALIDATION_RESULT"
     else
-        print_test_result "Test 1" "FAIL" "Status: $STATUS, but expected 1 result, got $RESULT_COUNT"
+        print_test_result "Test 1" "FAIL" "$VALIDATION_RESULT"
     fi
 else
-    print_test_result "Test 1" "FAIL" "Expected status 200, got $STATUS"
+    print_test_result "Test 1" "FAIL" "Expected HTTP 200, got $STATUS"
 fi
 echo ""
 
@@ -316,14 +368,15 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "stored" ]; then
-        print_test_result "Test 2" "PASS" "Status: $STATUS, Event stored successfully"
+    # Validate OpenLineage compliance (strict validation)
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "success" 1 1 0)
+    if [ $? -eq 0 ]; then
+        print_test_result "Test 2" "PASS" "OpenLineage compliant - $VALIDATION_RESULT"
     else
-        print_test_result "Test 2" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
+        print_test_result "Test 2" "FAIL" "$VALIDATION_RESULT"
     fi
 else
-    print_test_result "Test 2" "FAIL" "Expected status 200, got $STATUS"
+    print_test_result "Test 2" "FAIL" "Expected HTTP 200, got $STATUS"
 fi
 echo ""
 
@@ -359,14 +412,15 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "stored" ]; then
-        print_test_result "Test 3" "PASS" "Status: $STATUS, Event stored successfully"
+    # Validate OpenLineage compliance (strict validation)
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "success" 1 1 0)
+    if [ $? -eq 0 ]; then
+        print_test_result "Test 3" "PASS" "OpenLineage compliant - $VALIDATION_RESULT"
     else
-        print_test_result "Test 3" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
+        print_test_result "Test 3" "FAIL" "$VALIDATION_RESULT"
     fi
 else
-    print_test_result "Test 3" "FAIL" "Expected status 200, got $STATUS"
+    print_test_result "Test 3" "FAIL" "Expected HTTP 200, got $STATUS"
 fi
 echo ""
 
@@ -381,14 +435,15 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "duplicate" ]; then
-        print_test_result "Test 4" "PASS" "Status: $STATUS, Duplicate detected correctly"
+    # OpenLineage spec: duplicates are considered successful (idempotency)
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "success" 1 1 0)
+    if [ $? -eq 0 ]; then
+        print_test_result "Test 4" "PASS" "OpenLineage idempotency - $VALIDATION_RESULT"
     else
-        print_test_result "Test 4" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'duplicate')"
+        print_test_result "Test 4" "FAIL" "$VALIDATION_RESULT"
     fi
 else
-    print_test_result "Test 4" "FAIL" "Expected status 200, got $STATUS"
+    print_test_result "Test 4" "FAIL" "Expected HTTP 200, got $STATUS"
 fi
 echo ""
 
@@ -416,15 +471,21 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "422" ]; then
-    # Check if error message mentions eventTime (in results[0].error field)
-    ERROR_MSG=$(echo "$BODY" | jq -r '.results[0].error' 2>/dev/null || echo "")
-    if echo "$ERROR_MSG" | grep -iq "eventTime"; then
-        print_test_result "Test 5" "PASS" "Status: $STATUS, Validation error detected correctly"
+    # Validate OpenLineage error response (status="error", all events failed)
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "error" 1 0 1)
+    if [ $? -eq 0 ]; then
+        # Additionally check error message mentions eventTime
+        ERROR_MSG=$(echo "$BODY" | jq -r '.failed_events[0].reason' 2>/dev/null || echo "")
+        if echo "$ERROR_MSG" | grep -iq "eventTime"; then
+            print_test_result "Test 5" "PASS" "OpenLineage compliant - $VALIDATION_RESULT, error mentions 'eventTime'"
+        else
+            print_test_result "Test 5" "FAIL" "OpenLineage format OK but error doesn't mention 'eventTime': $ERROR_MSG"
+        fi
     else
-        print_test_result "Test 5" "FAIL" "Status: $STATUS, but error='$ERROR_MSG' (doesn't mention eventTime)"
+        print_test_result "Test 5" "FAIL" "$VALIDATION_RESULT"
     fi
 else
-    print_test_result "Test 5" "FAIL" "Expected status 422, got $STATUS"
+    print_test_result "Test 5" "FAIL" "Expected HTTP 422, got $STATUS"
 fi
 echo ""
 

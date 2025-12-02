@@ -12,42 +12,45 @@ import (
 )
 
 type (
-	// RunEvent represents an OpenLineage RunEvent (runtime lineage).
+	// RunEvent represents an OpenLineage RunEvent (runtime lineage) - Domain Model.
 	// RunEvents describe the execution of a job and are emitted at runtime when jobs
 	// start, run, or complete. Each RunEvent can include details about the Job, the Run,
 	// and the input and output Datasets involved in the run.
+	//
+	// This is a pure domain model without JSON tags. The API layer uses LineageEventRequest
+	// for JSON marshaling and maps to this domain type.
 	//
 	// Spec: https://openlineage.io/docs/spec/object-model#job-run-state-update
 	RunEvent struct {
 		// EventTime is the timestamp when this event occurred (RFC3339 format).
 		// Use for ordering events, not arrival time (handles out-of-order events).
-		EventTime time.Time `json:"eventTime"`
+		EventTime time.Time
 
 		// EventType is the run state: START, RUNNING, COMPLETE, FAIL, ABORT, or OTHER.
 		// Terminal states (COMPLETE, FAIL, ABORT) are idempotent.
-		EventType EventType `json:"eventType"`
+		EventType EventType
 
 		// Producer identifies the tool that generated this event.
 		// Format: URL with version (e.g., "https://github.com/dbt-labs/dbt-core/tree/1.5.0")
-		Producer string `json:"producer"`
+		Producer string
 
 		// SchemaURL is the OpenLineage spec version URL.
 		// Example: "https://openlineage.io/spec/2-0-2/OpenLineage.json"
-		SchemaURL string `json:"schemaUrl"`
+		SchemaURL string
 
 		// Run contains metadata about this specific run instance.
-		Run Run `json:"run"`
+		Run Run
 
 		// Job contains metadata about the job definition.
-		Job Job `json:"job"`
+		Job Job
 
 		// Inputs are datasets consumed by this run (optional).
 		// Can be specified in START, COMPLETE, or both (events are accumulative).
-		Inputs []Dataset `json:"inputs,omitempty"`
+		Inputs []Dataset
 
 		// Outputs are datasets produced by this run (optional).
 		// Typically specified in COMPLETE event.
-		Outputs []Dataset `json:"outputs,omitempty"`
+		Outputs []Dataset
 	}
 
 	// EventType represents OpenLineage run states.
@@ -59,7 +62,7 @@ type (
 	// Spec: https://openlineage.io/docs/spec/facets/dataset-facets
 	Facets map[string]interface{}
 
-	// Run represents a single execution instance of a Job.
+	// Run represents a single execution instance of a Job - Domain Model.
 	// Each run has a uniquely identifiable runId (client-generated UUID).
 	// The client is responsible for maintaining the runId between different run state updates.
 	//
@@ -68,15 +71,15 @@ type (
 		// ID is a client-generated UUID that uniquely identifies this run.
 		// Must be maintained throughout the run lifecycle (START → COMPLETE).
 		// Recommended format: UUIDv7 (https://datatracker.ietf.org/doc/draft-ietf-uuidrev-rfc4122bis/)
-		ID string `json:"runId"`
+		ID string
 
 		// Facets are extensible metadata about this run instance.
 		// Standard facets: nominalTime, parent, errorMessage, sql
 		// Spec: https://openlineage.io/docs/spec/facets/run-facets
-		Facets Facets `json:"facets"`
+		Facets Facets
 	}
 
-	// Job represents a recurring data transformation process with inputs and outputs.
+	// Job represents a recurring data transformation process with inputs and outputs - Domain Model.
 	// Examples: dbt model, Airflow task, Spark job, SQL query.
 	//
 	// Jobs are identified by a unique name within a namespace. They are expected to
@@ -87,19 +90,19 @@ type (
 		// Namespace identifies the scheduler/orchestrator.
 		// Format: Typically a URL (e.g., "airflow://production", "dbt://analytics")
 		// Spec: https://openlineage.io/docs/spec/naming#job-naming
-		Namespace string `json:"namespace"`
+		Namespace string
 
 		// Name is unique within the namespace.
 		// Examples: "daily_etl.load_orders" (Airflow), "transform_orders" (dbt)
-		Name string `json:"name"`
+		Name string
 
 		// Facets are extensible metadata about the job definition.
 		// Standard facets: sourceCodeLocation, sourceCode, sql, jobType
 		// Spec: https://openlineage.io/docs/spec/facets/job-facets
-		Facets Facets `json:"facets"`
+		Facets Facets
 	}
 
-	// Dataset represents an abstract data artifact: a table, file, topic, or directory.
+	// Dataset represents an abstract data artifact: a table, file, topic, or directory - Domain Model.
 	// Datasets have a unique name within a namespace derived from their physical location.
 	//
 	// The combined namespace and name should be enough to uniquely identify a dataset
@@ -111,26 +114,26 @@ type (
 		// Format: {protocol}://{host}:{port} or {protocol}://{service_identifier}
 		// Examples: "postgres://prod-db:5432", "s3://raw-data", "bigquery"
 		// Spec: https://openlineage.io/docs/spec/naming#dataset-naming
-		Namespace string `json:"namespace"`
+		Namespace string
 
 		// Name is the hierarchical path to the dataset.
 		// Examples: "analytics.public.orders" (PostgreSQL), "/orders/2025-10-18.parquet" (S3)
-		Name string `json:"name"`
+		Name string
 
 		// Facets are extensible metadata common to inputs and outputs.
 		// Standard facets: schema, dataSource, lifecycleStateChange, version
 		// Spec: https://openlineage.io/docs/spec/facets/dataset-facets
-		Facets Facets `json:"facets,omitempty"`
+		Facets Facets
 
 		// InputFacets are metadata specific to input datasets.
 		// Standard facets: dataQualityMetrics, dataQualityAssertions
 		// Only populated when this dataset is an input.
-		InputFacets Facets `json:"inputFacets,omitempty"`
+		InputFacets Facets
 
 		// OutputFacets are metadata specific to output datasets.
 		// Standard facets: outputStatistics
 		// Only populated when this dataset is an output.
-		OutputFacets Facets `json:"outputFacets,omitempty"`
+		OutputFacets Facets
 	}
 )
 
