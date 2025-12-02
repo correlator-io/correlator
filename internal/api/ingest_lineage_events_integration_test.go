@@ -111,9 +111,11 @@ func validateLineageResponse(t *testing.T, rr *httptest.ResponseRecorder, expect
 	require.NoError(t, err, "Failed to parse response JSON")
 
 	// Validate required fields (OpenLineage format)
+	assert.NotNil(t, response.FailedEvents, "Failed_events should be array (not nil)")
+
+	// Validate additional required fields (Correlator)
 	assert.NotEmpty(t, response.CorrelationID, "Missing correlation_id")
 	assert.NotEmpty(t, response.Timestamp, "Missing timestamp")
-	assert.NotNil(t, response.FailedEvents, "Failed_events should be array (not nil)")
 
 	return &response
 }
@@ -351,6 +353,7 @@ func TestLineageHandler_BatchPartialSuccess(t *testing.T) {
 	response := validateLineageResponse(t, rr, http.StatusMultiStatus)
 	require.NotNil(t, response, "Failed to validate response")
 
+	assert.Equal(t, "partial_success", response.Status, "Expected partial success status")
 	assert.Equal(t, 3, response.Summary.Received, "Expected 3 received events")
 	assert.Equal(t, 2, response.Summary.Successful, "Expected 2 successful events")
 	assert.Equal(t, 1, response.Summary.Failed, "Expected 1 failed event")

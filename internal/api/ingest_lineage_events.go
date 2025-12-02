@@ -344,6 +344,8 @@ func determineStatusCode(response *LineageResponse) int {
 		return http.StatusOK
 	} else if response.Summary.Successful > 0 {
 		// Partial success
+		response.Status = "partial_success" // set to partial_success as per openlineage api specification
+
 		return http.StatusMultiStatus
 	}
 
