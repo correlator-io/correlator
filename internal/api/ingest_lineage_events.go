@@ -7,9 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
@@ -71,10 +73,12 @@ func (s *Server) handleLineageEvents(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(startTime)
 	s.logger.Info("Lineage events processed",
 		slog.String("correlation_id", response.CorrelationID),
-		slog.Int("total", len(response.Results)),
-		slog.Int("stored", response.Stored),
-		slog.Int("duplicates", response.Duplicates),
-		slog.Int("failed", response.Failed),
+		slog.String("status", response.Status),
+		slog.Int("received", response.Summary.Received),
+		slog.Int("successful", response.Summary.Successful),
+		slog.Int("failed", response.Summary.Failed),
+		slog.Int("retriable", response.Summary.Retriable),
+		slog.Int("non_retriable", response.Summary.NonRetriable),
 		slog.Int("status_code", statusCode),
 		slog.Duration("duration", duration),
 	)
@@ -97,49 +101,9 @@ func isSingleRunBatch(events []*ingestion.RunEvent) bool {
 	return true
 }
 
-// normalizeNilSlices converts event values to pointers and normalizes nil slices to empty slices.
-//
-// JSON unmarshaling has a quirk where omitted array fields become nil instead of empty arrays.
-// For example, if an OpenLineage event doesn't include "inputs" field, json.Unmarshal creates:
-//
-//	event.Inputs = nil  (not []Dataset{})
-//
-// The storage layer's defensive validation explicitly checks for nil slices:
-//
-//	if event.Inputs == nil {
-//	    return fmt.Errorf("event.Inputs is nil")
-//	}
-//
-// This normalization ensures that:
-//   - Omitted fields become empty arrays []Dataset{} (not nil)
-//   - Storage layer receives consistent input (never nil slices)
-//   - No panic risk from nil pointer dereference
-//
-// Example transformation:
-//
-//	Input:  RunEvent{Inputs: nil, Outputs: nil}
-//	Output: &RunEvent{Inputs: []Dataset{}, Outputs: []Dataset{}}
-//
-// Returns slice of event pointers with normalized slices (never nil).
-func (s *Server) normalizeNilSlices(events []ingestion.RunEvent) []*ingestion.RunEvent {
-	eventPointers := make([]*ingestion.RunEvent, len(events))
-	for i := range events {
-		if events[i].Inputs == nil {
-			events[i].Inputs = []ingestion.Dataset{}
-		}
-
-		if events[i].Outputs == nil {
-			events[i].Outputs = []ingestion.Dataset{}
-		}
-
-		eventPointers[i] = &events[i]
-	}
-
-	return eventPointers
-}
-
 // parseLineageRequest parses and validates the HTTP request body.
-// Returns parsed events or a ProblemDetail if validation fails.
+// Decodes API request types and maps them to domain models.
+// Returns parsed events or a ProblemDetail if parsing fails.
 //
 // Validates:
 //   - Request size (optimization for known oversized requests)
@@ -160,22 +124,44 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		return nil, BadRequest("Request body cannot be empty")
 	}
 
-	// Parse JSON array (with size limit - ultimate protection)
-	var events []ingestion.RunEvent
+	var events []LineageEvent
 
 	decoder := json.NewDecoder(io.LimitReader(r.Body, s.config.MaxRequestSize))
 	if err := decoder.Decode(&events); err != nil {
 		return nil, BadRequest("Invalid JSON: " + err.Error())
 	}
 
-	// Empty array check
+	// Empty request check
 	if len(events) == 0 {
 		return nil, BadRequest("Event array cannot be empty")
 	}
 
-	// Convert to pointers and normalize nil slices (JSON decoding quirk)
+	// Map API requests to domain models
+	runEvents := make([]*ingestion.RunEvent, len(events))
+
+	for i := range events {
+		runEvents[i] = mapLineageRequest(&events[i])
+	}
+
+	// Normalize nil slices (JSON decoding quirk)
 	// Storage layer expects non-nil slices for Inputs/Outputs
-	return s.normalizeNilSlices(events), nil
+	return normalizeInputsAndOutputs(runEvents), nil
+}
+
+// normalizeInputsAndOutputs ensures all Inputs/Outputs slices are non-nil.
+// JSON un-marshaling may produce nil slices for omitted fields.
+func normalizeInputsAndOutputs(events []*ingestion.RunEvent) []*ingestion.RunEvent {
+	for i := range events {
+		if events[i].Inputs == nil {
+			events[i].Inputs = []ingestion.Dataset{}
+		}
+
+		if events[i].Outputs == nil {
+			events[i].Outputs = []ingestion.Dataset{}
+		}
+	}
+
+	return events
 }
 
 // validateEvents validates event sequence and individual events.
@@ -184,7 +170,7 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 // Performs:
 //   - Event sequence validation (for single-run batches only)
 //   - Sorting by eventTime
-//   - Individual event validation
+//   - Individual event validation using domain validator
 func (s *Server) validateEvents(
 	events []*ingestion.RunEvent,
 ) ([]*ingestion.RunEvent, []error, *ProblemDetail) {
@@ -204,10 +190,11 @@ func (s *Server) validateEvents(
 		sortedEvents = events
 	}
 
-	// Validate individual events using shared validator (created once in constructor)
+	// Validate individual events using domain validator
 	validationErrors := make([]error, len(sortedEvents))
 
 	for i := range sortedEvents {
+		// Validate using shared validator (created once in constructor)
 		if err := s.validator.ValidateRunEvent(sortedEvents[i]); err != nil {
 			validationErrors[i] = err
 		}
@@ -262,29 +249,31 @@ func (s *Server) storeValidEvents(
 	return storeResults, nil
 }
 
-// buildLineageResponse aggregates per-event results into a LineageResponse.
-// This helper method combines validation errors and storage results to build
-// the final HTTP response with detailed per-event status.
+// buildLineageResponse builds OpenLineage-compliant batch response.
+// Only includes failed events (OpenLineage spec), not successful ones.
 //
-// Uses early returns (continue) to reduce nesting and improve readability.
+// Classifies errors as retriable vs non-retriable:
+//   - Non-retriable: Validation errors, missing required fields
+//   - Retriable: Storage errors (transient failures)
 func (s *Server) buildLineageResponse(
 	correlationID string,
 	events []*ingestion.RunEvent,
 	validationErrors []error,
 	storeResults []*ingestion.EventStoreResult,
 ) *LineageResponse {
-	results := make([]EventResult, len(events))
-	stored, duplicates, failed := 0, 0, 0
+	failedEvents := make([]FailedEvent, 0)
+	successful, failed, retriable, nonRetriable := 0, 0, 0, 0
 
 	for i := range events {
-		// Check validation error first (early return)
+		// Check validation error first
 		if validationErrors[i] != nil {
-			results[i] = EventResult{
-				Index:  i,
-				Status: http.StatusUnprocessableEntity,
-				Error:  validationErrors[i].Error(),
-			}
+			failedEvents = append(failedEvents, FailedEvent{
+				Index:     i,
+				Reason:    validationErrors[i].Error(),
+				Retriable: false, // Validation errors are permanent (bad request)
+			})
 			failed++
+			nonRetriable++
 
 			continue
 		}
@@ -293,70 +282,67 @@ func (s *Server) buildLineageResponse(
 		storeResult := storeResults[i]
 		if storeResult == nil {
 			// Shouldn't happen, but handle gracefully
-			results[i] = EventResult{
-				Index:  i,
-				Status: http.StatusUnprocessableEntity,
-				Error:  "storage result missing",
-			}
+			failedEvents = append(failedEvents, FailedEvent{
+				Index:     i,
+				Reason:    "storage result missing",
+				Retriable: false,
+			})
 			failed++
+			nonRetriable++
 
 			continue
 		}
 
-		// Check storage error (early return)
+		// Check storage error
 		if storeResult.Error != nil {
-			results[i] = EventResult{
-				Index:  i,
-				Status: http.StatusUnprocessableEntity,
-				Error:  storeResult.Error.Error(),
-			}
+			failedEvents = append(failedEvents, FailedEvent{
+				Index:     i,
+				Reason:    storeResult.Error.Error(),
+				Retriable: false, // Storage errors are typically constraint violations (non-retriable)
+			})
 			failed++
+			nonRetriable++
 
 			continue
 		}
 
-		// Check duplicate (early return)
-		if storeResult.Duplicate {
-			results[i] = EventResult{
-				Index:   i,
-				Status:  http.StatusOK,
-				Message: "duplicate",
-			}
-			duplicates++
+		// Success (stored or duplicate)
+		// OpenLineage spec: duplicates are idempotent success (not failures)
+		successful++
+	}
 
-			continue
-		}
-
-		// Must be stored successfully (happy path at the end)
-		results[i] = EventResult{
-			Index:   i,
-			Status:  http.StatusOK,
-			Message: "stored",
-		}
-		stored++
+	// Determine overall status
+	status := "success"
+	if failed > 0 && successful == 0 {
+		status = "error" // All failed
 	}
 
 	return &LineageResponse{
+		Status: status,
+		Summary: ResponseSummary{
+			Received:     len(events),
+			Successful:   successful,
+			Failed:       failed,
+			Retriable:    retriable,
+			NonRetriable: nonRetriable,
+		},
+		FailedEvents:  failedEvents,
 		CorrelationID: correlationID,
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-		Stored:        stored,
-		Duplicates:    duplicates,
-		Failed:        failed,
-		Results:       results,
 	}
 }
 
-// determineStatusCode determines the HTTP status code based on the response.
+// determineStatusCode determines HTTP status code from OpenLineage response.
 //
 // Status code logic:
-//   - 200 OK: All events succeeded (stored or duplicate)
-//   - 207 Multi-Status: Partial success (some stored/duplicate, some failed)
-//   - 422 Unprocessable Entity: All events failed validation
+//   - 200 OK: All events succeeded
+//   - 207 Multi-Status: Partial success (some succeeded, some failed)
+//   - 422 Unprocessable Entity: All events failed
 func determineStatusCode(response *LineageResponse) int {
-	if response.Failed == 0 {
-		// All success (stored or duplicates)
+	if response.Summary.Failed == 0 {
+		// All success
 		return http.StatusOK
-	} else if response.Stored > 0 || response.Duplicates > 0 {
+	} else if response.Summary.Successful > 0 {
 		// Partial success
 		return http.StatusMultiStatus
 	}
@@ -404,4 +390,122 @@ func (s *Server) sendLineageResponse(
 	}
 
 	return statusCode
+}
+
+// mapLineageRequest maps an API request type to the domain model.
+// This explicit mapping layer decouples the API contract from internal domain types.
+//
+// The mapping performs:
+//   - Whitespace trimming on string fields
+//   - Dataset URN normalization (critical for multi-tool correlation)
+//   - Nil facets initialization to empty maps
+//
+// Validation is delegated to the domain layer (ingestion.Validator.ValidateRunEvent)
+// following Clean Architecture principles: domain owns its invariants.
+func mapLineageRequest(req *LineageEvent) *ingestion.RunEvent {
+	return &ingestion.RunEvent{
+		EventTime: req.EventTime,
+		EventType: ingestion.EventType(strings.TrimSpace(req.EventType)),
+		Producer:  strings.TrimSpace(req.Producer),
+		SchemaURL: strings.TrimSpace(req.SchemaURL),
+		Run:       mapRunRequest(&req.Run),
+		Job:       mapJobRequest(&req.Job),
+		Inputs:    mapDatasets(req.Inputs),
+		Outputs:   mapDatasets(req.Outputs),
+	}
+}
+
+// mapRunRequest maps API Run model to domain Run model.
+// Trims whitespace from run ID and initializes nil facets to empty map.
+func mapRunRequest(req *Run) ingestion.Run {
+	facets := req.Facets
+	if facets == nil {
+		facets = make(map[string]interface{})
+	}
+
+	return ingestion.Run{
+		ID:     strings.TrimSpace(req.ID),
+		Facets: facets,
+	}
+}
+
+// mapJobRequest maps API Job model to domain Job model.
+// Trims whitespace from namespace and name, initializes nil facets to empty map.
+func mapJobRequest(req *Job) ingestion.Job {
+	facets := req.Facets
+	if facets == nil {
+		facets = make(map[string]interface{})
+	}
+
+	return ingestion.Job{
+		Namespace: strings.TrimSpace(req.Namespace),
+		Name:      strings.TrimSpace(req.Name),
+		Facets:    facets,
+	}
+}
+
+// mapDatasets maps API Dataset slice to domain Dataset slice.
+// Normalizes dataset URNs (namespace + name) and initializes nil facets to empty maps.
+//
+// URN normalization is critical for multi-tool correlation:
+//   - postgres:// → postgresql:// (dbt vs Great Expectations)
+//   - Removes default ports (postgres://db:5432 → postgres://db)
+//   - Normalizes S3 schemes (s3a:// → s3://)
+//
+// Returns empty slice if input is nil.
+func mapDatasets(requests []Dataset) []ingestion.Dataset {
+	if requests == nil {
+		return []ingestion.Dataset{}
+	}
+
+	datasets := make([]ingestion.Dataset, len(requests))
+
+	for i, req := range requests {
+		// Trim whitespace
+		namespace := strings.TrimSpace(req.Namespace)
+		name := strings.TrimSpace(req.Name)
+
+		// Normalize namespace + name to canonical URN
+		// This prevents correlation failures when different tools use different URI schemes
+		// Example: ParseDatasetURN extracts parts, GenerateDatasetURN normalizes and recombines
+		if namespace != "" && name != "" {
+			// Parse and regenerate to normalize (handles postgres→postgresql, removes default ports)
+			normalizedURN := canonicalization.GenerateDatasetURN(namespace, name)
+
+			// Extract normalized components back
+			normalizedNamespace, normalizedName, err := canonicalization.ParseDatasetURN(normalizedURN)
+			if err == nil {
+				namespace = normalizedNamespace
+				name = normalizedName
+			}
+			// If parsing fails, use original values (graceful degradation)
+			// consider adding logging or metrics here.
+		}
+
+		// Initialize nil facets to empty maps
+		facets := req.Facets
+		if facets == nil {
+			facets = make(map[string]interface{})
+		}
+
+		inputFacets := req.InputFacets
+		if inputFacets == nil {
+			inputFacets = make(map[string]interface{})
+		}
+
+		outputFacets := req.OutputFacets
+		if outputFacets == nil {
+			outputFacets = make(map[string]interface{})
+		}
+
+		datasets[i] = ingestion.Dataset{
+			Namespace:    namespace,
+			Name:         name,
+			Facets:       facets,
+			InputFacets:  inputFacets,
+			OutputFacets: outputFacets,
+		}
+	}
+
+	return datasets
 }

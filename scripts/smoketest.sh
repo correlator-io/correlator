@@ -91,7 +91,7 @@ print_test_result() {
 }
 
 # Helper function to cleanup previous test data
-# TODO(Week 16): Remove this function once CLI tool has dedicated cleanup command
+# TODO: Remove this function once CLI tool has dedicated cleanup command
 # Future: correlator test cleanup --namespace "dbt://analytics,airflow://production,spark://prod-cluster"
 cleanup_test_data() {
     if [ -z "$DATABASE_URL" ]; then
@@ -272,17 +272,15 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    # Validate response structure
-    RESULT_COUNT=$(echo "$BODY" | jq -r '.results | length')
-    if [ "$RESULT_COUNT" = "1" ]; then
-        MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-        if [ "$MESSAGE" = "stored" ]; then
-            print_test_result "Test 1" "PASS" "Status: $STATUS, Event stored successfully"
-        else
-            print_test_result "Test 1" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
-        fi
+    # Validate response structure (OpenLineage format)
+    RECEIVED=$(echo "$BODY" | jq -r '.summary.received')
+    SUCCESSFUL=$(echo "$BODY" | jq -r '.summary.successful')
+    FAILED=$(echo "$BODY" | jq -r '.summary.failed')
+
+    if [ "$RECEIVED" = "1" ] && [ "$SUCCESSFUL" = "1" ] && [ "$FAILED" = "0" ]; then
+        print_test_result "Test 1" "PASS" "Status: $STATUS, Event stored successfully (received=$RECEIVED, successful=$SUCCESSFUL)"
     else
-        print_test_result "Test 1" "FAIL" "Status: $STATUS, but expected 1 result, got $RESULT_COUNT"
+        print_test_result "Test 1" "FAIL" "Status: $STATUS, but received=$RECEIVED, successful=$SUCCESSFUL, failed=$FAILED"
     fi
 else
     print_test_result "Test 1" "FAIL" "Expected status 200, got $STATUS"
@@ -316,11 +314,13 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "stored" ]; then
+    SUCCESSFUL=$(echo "$BODY" | jq -r '.summary.successful')
+    FAILED=$(echo "$BODY" | jq -r '.summary.failed')
+
+    if [ "$SUCCESSFUL" = "1" ] && [ "$FAILED" = "0" ]; then
         print_test_result "Test 2" "PASS" "Status: $STATUS, Event stored successfully"
     else
-        print_test_result "Test 2" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
+        print_test_result "Test 2" "FAIL" "Status: $STATUS, but successful=$SUCCESSFUL, failed=$FAILED"
     fi
 else
     print_test_result "Test 2" "FAIL" "Expected status 200, got $STATUS"
@@ -359,11 +359,13 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "stored" ]; then
+    SUCCESSFUL=$(echo "$BODY" | jq -r '.summary.successful')
+    FAILED=$(echo "$BODY" | jq -r '.summary.failed')
+
+    if [ "$SUCCESSFUL" = "1" ] && [ "$FAILED" = "0" ]; then
         print_test_result "Test 3" "PASS" "Status: $STATUS, Event stored successfully"
     else
-        print_test_result "Test 3" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'stored')"
+        print_test_result "Test 3" "FAIL" "Status: $STATUS, but successful=$SUCCESSFUL, failed=$FAILED"
     fi
 else
     print_test_result "Test 3" "FAIL" "Expected status 200, got $STATUS"
@@ -381,11 +383,14 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "200" ]; then
-    MESSAGE=$(echo "$BODY" | jq -r '.results[0].message')
-    if [ "$MESSAGE" = "duplicate" ]; then
-        print_test_result "Test 4" "PASS" "Status: $STATUS, Duplicate detected correctly"
+    # OpenLineage spec: duplicates are considered successful (idempotency)
+    SUCCESSFUL=$(echo "$BODY" | jq -r '.summary.successful')
+    FAILED=$(echo "$BODY" | jq -r '.summary.failed')
+
+    if [ "$SUCCESSFUL" = "1" ] && [ "$FAILED" = "0" ]; then
+        print_test_result "Test 4" "PASS" "Status: $STATUS, Duplicate handled correctly (OpenLineage idempotency)"
     else
-        print_test_result "Test 4" "FAIL" "Status: $STATUS, but message='$MESSAGE' (expected 'duplicate')"
+        print_test_result "Test 4" "FAIL" "Status: $STATUS, but successful=$SUCCESSFUL, failed=$FAILED"
     fi
 else
     print_test_result "Test 4" "FAIL" "Expected status 200, got $STATUS"
@@ -416,9 +421,11 @@ STATUS=$(echo "$RESPONSE" | jq -r '.status')
 BODY=$(echo "$RESPONSE" | jq -r '.body')
 
 if [ "$STATUS" = "422" ]; then
-    # Check if error message mentions eventTime (in results[0].error field)
-    ERROR_MSG=$(echo "$BODY" | jq -r '.results[0].error' 2>/dev/null || echo "")
-    if echo "$ERROR_MSG" | grep -iq "eventTime"; then
+    # Check if error message mentions eventTime (in failed_events[0].reason field)
+    FAILED_COUNT=$(echo "$BODY" | jq -r '.summary.failed')
+    ERROR_MSG=$(echo "$BODY" | jq -r '.failed_events[0].reason' 2>/dev/null || echo "")
+
+    if [ "$FAILED_COUNT" = "1" ] && echo "$ERROR_MSG" | grep -iq "eventTime"; then
         print_test_result "Test 5" "PASS" "Status: $STATUS, Validation error detected correctly"
     else
         print_test_result "Test 5" "FAIL" "Status: $STATUS, but error='$ERROR_MSG' (doesn't mention eventTime)"

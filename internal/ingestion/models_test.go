@@ -1,10 +1,7 @@
 package ingestion
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,166 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunEvent_DBTExample(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	// Load from testdata
-	data, err := os.ReadFile(filepath.Join("testdata", "dbt_complete_event.json"))
-	if err != nil {
-		t.Fatalf("Failed to read testdata file: %v", err)
-	}
-
-	var event RunEvent
-
-	err = json.Unmarshal(data, &event)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal dbt event: %v", err)
-	}
-
-	// Validate it's a dbt event
-	if event.Job.Namespace != "dbt://analytics" {
-		t.Errorf("Expected dbt namespace, got %s", event.Job.Namespace)
-	}
-
-	// Validate event type
-	if event.EventType != EventTypeComplete {
-		t.Errorf("Expected eventType COMPLETE, got %s", event.EventType)
-	}
-
-	// Validate inputs
-	if len(event.Inputs) != 1 {
-		t.Errorf("Expected 1 input, got %d", len(event.Inputs))
-	}
-
-	if len(event.Inputs) > 0 {
-		if event.Inputs[0].Namespace != "postgres://prod-db:5432" {
-			t.Errorf("Expected input namespace postgres://prod-db:5432, got %s", event.Inputs[0].Namespace)
-		}
-
-		if event.Inputs[0].Name != "raw.public.orders" {
-			t.Errorf("Expected input name raw.public.orders, got %s", event.Inputs[0].Name)
-		}
-	}
-
-	// Validate outputs
-	if len(event.Outputs) != 1 {
-		t.Errorf("Expected 1 output, got %d", len(event.Outputs))
-	}
-
-	if len(event.Outputs) > 0 {
-		if event.Outputs[0].Namespace != "postgres://prod-db:5432" {
-			t.Errorf("Expected output namespace postgres://prod-db:5432, got %s", event.Outputs[0].Namespace)
-		}
-
-		if event.Outputs[0].Name != "analytics.public.orders" {
-			t.Errorf("Expected output name analytics.public.orders, got %s", event.Outputs[0].Name)
-		}
-		// Validate output facets
-		if event.Outputs[0].OutputFacets == nil {
-			t.Error("Expected outputFacets to be present")
-		}
-	}
-
-	// Validate run facets
-	if event.Run.Facets == nil {
-		t.Error("Expected run facets to be present")
-	}
-
-	if sqlFacet, ok := event.Run.Facets["sql"]; ok {
-		sqlMap, ok := sqlFacet.(map[string]interface{})
-		if !ok {
-			t.Error("Expected sql facet to be a map")
-		}
-
-		if query, ok := sqlMap["query"]; ok {
-			if query != "SELECT * FROM raw.orders WHERE amount > 100" {
-				t.Errorf("Expected SQL query, got %v", query)
-			}
-		}
-	}
-
-	// Validate eventTime parsing
-	expectedTime, _ := time.Parse(time.RFC3339, "2025-10-21T10:05:00Z")
-	if !event.EventTime.Equal(expectedTime) {
-		t.Errorf("Expected eventTime %v, got %v", expectedTime, event.EventTime)
-	}
-}
-
-func TestRunEvent_AirflowExample(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	// Load from testdata
-	data, err := os.ReadFile(filepath.Join("testdata", "airflow_start_event.json"))
-	if err != nil {
-		t.Fatalf("Failed to read testdata file: %v", err)
-	}
-
-	var event RunEvent
-
-	err = json.Unmarshal(data, &event)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal airflow event: %v", err)
-	}
-
-	// Validate it's an Airflow event
-	if event.Job.Namespace != "airflow://production" {
-		t.Errorf("Expected airflow namespace, got %s", event.Job.Namespace)
-	}
-
-	if event.EventType != EventTypeStart {
-		t.Errorf("Expected START event, got %s", event.EventType)
-	}
-
-	// Validate parent facet exists
-	if event.Run.Facets == nil {
-		t.Error("Expected run facets to contain parent facet")
-	} else {
-		if _, ok := event.Run.Facets["parent"]; !ok {
-			t.Error("Expected parent facet in Airflow event")
-		}
-	}
-}
-
-func TestRunEvent_SparkExample(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	// Load from testdata
-	data, err := os.ReadFile(filepath.Join("testdata", "spark_fail_event.json"))
-	if err != nil {
-		t.Fatalf("Failed to read testdata file: %v", err)
-	}
-
-	var event RunEvent
-
-	err = json.Unmarshal(data, &event)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal spark event: %v", err)
-	}
-
-	// Validate it's a Spark event
-	if event.Job.Namespace != "spark://prod-cluster" {
-		t.Errorf("Expected spark namespace, got %s", event.Job.Namespace)
-	}
-
-	if event.EventType != EventTypeFail {
-		t.Errorf("Expected FAIL event, got %s", event.EventType)
-	}
-
-	// Validate error message facet exists
-	if event.Run.Facets == nil {
-		t.Error("Expected run facets to contain errorMessage facet")
-	} else {
-		if _, ok := event.Run.Facets["errorMessage"]; !ok {
-			t.Error("Expected errorMessage facet in Spark FAIL event")
-		}
-	}
-}
+// Note: JSON deserialization tests (dbt, airflow, spark examples) have been removed.
+// These tests are now redundant after Task 1.0 (Domain/API separation).
+// Domain models no longer have JSON tags (pure domain logic).
+// API layer tests handle JSON deserialization using API types with JSON tags.
+// See: internal/api/ingest_lineage_events_integration_test.go for real OpenLineage event tests.
 
 func TestEventType_IsValid(t *testing.T) {
 	if !testing.Short() {
