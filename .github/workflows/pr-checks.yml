@@ -87,7 +87,7 @@ jobs:
 
           pr_title="${{ github.event.pull_request.title }}"
           echo "PR Title: $pr_title"
-          if ! [[ "$pr_title" =~ ^(feat|fix|patch|minor|major|docs|style|refactor|perf|test|chore|ci|build)(\(.+\))?:\ .+ ]]; then
+          if ! [[ "$pr_title" =~ ^(minor|major|patch|chore)(\(.+\))?:\ .+ ]]; then
             echo "::error::PR title does not follow conventional commits format: '$pr_title'"
             echo "Expected format: type(scope): message"
             echo "Types: feat, fix, patch, minor, major, docs, style, refactor, perf, test, chore, ci, build"

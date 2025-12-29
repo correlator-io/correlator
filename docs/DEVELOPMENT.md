@@ -243,18 +243,6 @@ make reset                    # When things go wrong:
 - **Extensions**: pg_trgm, pg_stat_statements
 - **Optimized configuration** - For correlation workloads
 
-### File Structure
-
-```
-correlator/
-├── .devcontainer/          # Dev container configuration
-├── cmd/                    # Application entry points
-├── deployments/docker/     # Container orchestration
-├── internal/               # Internal packages
-├── migrations/             # Database schema
-└── Makefile               # 8-command interface
-```
-
 ---
 
 ## Testing

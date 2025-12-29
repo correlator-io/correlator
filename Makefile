@@ -273,8 +273,8 @@ run:
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "smoketest" ]; then \
 		$(MAKE) run-smoketest; \
 	else \
-		echo "❌ Unknown run target: $(filter-out $@,$(MAKECMDGOALS))"; \
-		echo "Available targets:"; \
+		echo "❌ Unknown run command: $(filter-out $@,$(MAKECMDGOALS))"; \
+		echo "📖 Available run commands:"; \
 		echo "  make run                    # Start development server"; \
 		echo "  make run test               # Run all tests"; \
 		echo "  make run test unit          # Run unit tests only"; \
