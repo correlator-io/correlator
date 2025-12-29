@@ -94,7 +94,6 @@ The `type` can be one of the following:
 - `minor`: Minor changes or a new feature
 - `major`: Major changes or breaking change
 - `patch`: A bug fix
-- `test`: Adding tests
 - `chore`: Maintenance tasks such as updating dependencies or configuration files or bootstrap code
 
 ### Commit Message Guidelines
