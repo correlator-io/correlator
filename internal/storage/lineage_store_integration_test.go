@@ -9,11 +9,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
 const defaultTestProducer = "https://github.com/dbt-labs/dbt-core/tree/1.5.0"
+
+type (
+	// assertionData holds test data for creating assertions.
+	assertionData struct {
+		assertion string
+		success   bool
+		column    string
+	}
+
+	// testResultRow holds query results for test result verification.
+	testResultRow struct {
+		testName   string
+		status     string
+		datasetURN string
+		jobRunID   string
+	}
+)
 
 // TestLineageStoreIntegration runs all integration tests for LineageStore.
 func TestLineageStoreIntegration(t *testing.T) {
@@ -1466,4 +1485,244 @@ func idempotencyKeyExists(ctx context.Context, t *testing.T, conn *Connection, k
 	}
 
 	return count > 0
+}
+
+// ============================================================================
+// dataQualityAssertions Facet Extraction Tests
+// ============================================================================
+
+// TestExtractDataQualityAssertions tests extraction of test results from
+// dataQualityAssertions facets in OpenLineage events.
+func TestExtractDataQualityAssertions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	container, conn := setupTestDatabase(ctx, t)
+
+	defer func() {
+		_ = conn.Close()
+		_ = container.Terminate(ctx)
+	}()
+
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("NewLineageStore() error = %v", err)
+	}
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Run all facet extraction tests using the shared store
+	t.Run("SingleAssertion", func(t *testing.T) {
+		testExtractSingleAssertion(ctx, t, store, conn)
+	})
+	t.Run("MultipleAssertions", func(t *testing.T) {
+		testExtractMultipleAssertions(ctx, t, store, conn)
+	})
+	t.Run("NoFacet", func(t *testing.T) {
+		testExtractNoFacet(ctx, t, store, conn)
+	})
+	t.Run("MalformedFacet", func(t *testing.T) {
+		testExtractMalformedFacet(ctx, t, store, conn)
+	})
+}
+
+// testExtractSingleAssertion verifies extraction of a single assertion
+// from the dataQualityAssertions facet in an OpenLineage event.
+func testExtractSingleAssertion(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	// Create event with dataQualityAssertions facet
+	event := createEventWithAssertions(
+		"single-assertion-test",
+		[]assertionData{
+			{
+				assertion: "not_null_orders_order_id",
+				success:   true,
+				column:    "order_id",
+			},
+		},
+	)
+
+	// Store event
+	stored, duplicate, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored, "Event should be stored")
+	assert.False(t, duplicate, "Event should not be duplicate")
+
+	// Verify test_results table
+	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	assert.Equal(t, 1, count, "Should have 1 test result extracted from facet")
+
+	// Verify test result details
+	testResult := getTestResultByTestName(ctx, t, conn, "not_null_orders_order_id")
+	assert.Equal(t, "passed", testResult.status, "Assertion success=true should map to 'passed'")
+	assert.Equal(t, event.JobRunID(), testResult.jobRunID, "Job run ID should match")
+
+	// Issue 6 fix: Use exact URN match instead of Contains
+	// Note: URN() method normalizes by removing default PostgreSQL port (5432)
+	expectedDatasetURN := "postgresql://prod-db/analytics.public.input_single-assertion-test_a"
+	assert.Equal(t, expectedDatasetURN, testResult.datasetURN, "Dataset URN should match exactly")
+}
+
+// testExtractMultipleAssertions verifies extraction of multiple assertions
+// from a single dataQualityAssertions facet.
+func testExtractMultipleAssertions(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	// Create event with 5 assertions on same dataset
+	event := createEventWithAssertions(
+		"multi-assertion-test",
+		[]assertionData{
+			{assertion: "not_null_orders_order_id", success: true, column: "order_id"},
+			{assertion: "unique_orders_order_id", success: true, column: "order_id"},
+			{assertion: "not_null_orders_customer_id", success: false, column: "customer_id"},
+			{assertion: "accepted_values_orders_status", success: true, column: "status"},
+			{assertion: "relationships_orders_customer", success: false, column: "customer_id"},
+		},
+	)
+
+	// Store event
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	// Verify all 5 assertions extracted
+	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	assert.Equal(t, 5, count, "Should have 5 test results extracted")
+
+	// Verify status mapping
+	passedCount := countTestResultsByStatus(ctx, t, conn, event.JobRunID(), "passed")
+	failedCount := countTestResultsByStatus(ctx, t, conn, event.JobRunID(), "failed")
+	assert.Equal(t, 3, passedCount, "Should have 3 passed tests")
+	assert.Equal(t, 2, failedCount, "Should have 2 failed tests")
+}
+
+// testExtractNoFacet verifies graceful handling when dataQualityAssertions
+// facet is not present.
+func testExtractNoFacet(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	// Create event WITHOUT dataQualityAssertions facet
+	event := createTestEvent("no-facet-test", ingestion.EventTypeComplete, 1, 1)
+
+	// Store event
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored, "Event should be stored even without facet")
+
+	// Verify no test_results created
+	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	assert.Equal(t, 0, count, "Should have 0 test results (no facet)")
+}
+
+// testExtractMalformedFacet verifies non-blocking handling of malformed
+// dataQualityAssertions facet.
+func testExtractMalformedFacet(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	// Create event with malformed facet (assertions is not an array)
+	event := createTestEvent("malformed-facet-test", ingestion.EventTypeComplete, 1, 1)
+	event.Inputs[0].InputFacets = ingestion.Facets{
+		"dataQualityAssertions": map[string]interface{}{
+			"_producer":  "test",
+			"assertions": "not-an-array", // Invalid: should be []
+		},
+	}
+
+	// Store event - should succeed (non-blocking extraction)
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err, "Event storage should succeed even with malformed facet")
+	assert.True(t, stored, "Event should be stored")
+
+	// Verify no test_results created (graceful failure)
+	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	assert.Equal(t, 0, count, "Should have 0 test results (malformed facet)")
+}
+
+// ============================================================================
+// Facet Extraction Helper Types and Functions
+// ============================================================================
+
+// createEventWithAssertions creates an OpenLineage event with dataQualityAssertions facet.
+func createEventWithAssertions(runID string, assertions []assertionData) *ingestion.RunEvent {
+	event := createTestEvent(runID, ingestion.EventTypeComplete, 1, 1)
+
+	// Build assertions array
+	assertionsArray := make([]interface{}, len(assertions))
+	for i, a := range assertions {
+		assertion := map[string]interface{}{
+			"assertion": a.assertion,
+			"success":   a.success,
+		}
+		if a.column != "" {
+			assertion["column"] = a.column
+		}
+
+		assertionsArray[i] = assertion
+	}
+
+	// Add dataQualityAssertions facet to input
+	event.Inputs[0].InputFacets = ingestion.Facets{
+		"dataQualityAssertions": map[string]interface{}{
+			"_producer":  "https://github.com/correlator-io/dbt-correlator/0.1.0",
+			"_schemaURL": "https://openlineage.io/spec/facets/1-0-1/DataQualityAssertionsDatasetFacet.json",
+			"assertions": assertionsArray,
+		},
+	}
+
+	return event
+}
+
+// countTestResultsForJobRun counts test_results rows for a job_run_id.
+func countTestResultsForJobRun(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) int {
+	t.Helper()
+
+	var count int
+
+	query := "SELECT COUNT(*) FROM test_results WHERE job_run_id = $1"
+
+	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count test_results: %v", err)
+	}
+
+	return count
+}
+
+// countTestResultsByStatus counts test_results by status for a job_run_id.
+func countTestResultsByStatus(ctx context.Context, t *testing.T, conn *Connection, jobRunID, status string) int {
+	t.Helper()
+
+	var count int
+
+	query := "SELECT COUNT(*) FROM test_results WHERE job_run_id = $1 AND status = $2"
+
+	err := conn.QueryRowContext(ctx, query, jobRunID, status).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count test_results by status: %v", err)
+	}
+
+	return count
+}
+
+// getTestResultByTestName retrieves a test result by test name.
+func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection, testName string) testResultRow {
+	t.Helper()
+
+	var result testResultRow
+
+	query := "SELECT test_name, status, dataset_urn, job_run_id FROM test_results WHERE test_name = $1"
+
+	err := conn.QueryRowContext(ctx, query, testName).Scan(
+		&result.testName, &result.status, &result.datasetURN, &result.jobRunID,
+	)
+	if err != nil {
+		t.Fatalf("Failed to get test result: %v", err)
+	}
+
+	return result
 }
