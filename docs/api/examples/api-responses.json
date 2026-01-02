@@ -31,20 +31,6 @@
       }
     },
 
-    "test_results_success": {
-      "_endpoint": "POST /api/v1/test-results",
-      "_status": 200,
-      "response": {
-        "message": "Test results processed successfully",
-        "events_processed": 3,
-        "correlation_id": "345e6789-e89b-12d3-a456-426614174002",
-        "processing_time_ms": 78.2,
-        "correlations_created": 2,
-        "incidents_triggered": 1,
-        "incident_ids": ["456e789a-e89b-12d3-a456-426614174003"]
-      }
-    },
-
     "lineage_validation_error": {
       "_endpoint": "POST /api/v1/lineage/events",
       "_status": 422,

@@ -4,7 +4,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,9 +16,84 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
+	"github.com/correlator-io/correlator/internal/config"
+	"github.com/correlator-io/correlator/internal/storage"
 )
+
+// testServer encapsulates test server dependencies for lineage integration tests.
+// Only stores fields used by helper methods - cleanup dependencies captured in t.Cleanup closures.
+type testServer struct {
+	server *Server
+	apiKey string
+	db     *sql.DB // For database verification helpers
+}
+
+// setupTestServer creates a fully configured test server with all dependencies.
+// This helper eliminates duplicated setup code per test.
+func setupTestServer(ctx context.Context, t *testing.T) *testServer {
+	t.Helper()
+
+	// Setup database with migrations (uses shared helper from config package)
+	testDB := config.SetupTestDatabase(ctx, t)
+	storageConn := &storage.Connection{DB: testDB.Connection}
+
+	// Create stores
+	keyStore, err := storage.NewPersistentKeyStore(storageConn)
+	require.NoError(t, err, "Failed to create key store")
+
+	lineageStore, err := storage.NewLineageStore(storageConn, 1*time.Hour) //nolint:contextcheck
+	require.NoError(t, err, "Failed to create lineage store")
+
+	// Create and register API key
+	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	require.NoError(t, err, "Failed to generate API key")
+
+	err = keyStore.Add(ctx, &storage.APIKey{
+		ID:          "test-key-id",
+		Key:         testAPIKey,
+		PluginID:    "test-plugin",
+		Name:        "Test Plugin",
+		Permissions: []string{"lineage:write", "lineage:read"},
+		CreatedAt:   time.Now(),
+		Active:      true,
+	})
+	require.NoError(t, err, "Failed to add API key")
+
+	// Create server config
+	config := &ServerConfig{
+		Port:               8080,
+		Host:               "localhost",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ShutdownTimeout:    30 * time.Second,
+		LogLevel:           slog.LevelInfo,
+		MaxRequestSize:     defaultMaxRequestSize,
+		CORSAllowedOrigins: []string{"*"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSMaxAge:         86400,
+	}
+
+	// Create server with dependencies (no rate limiter for lineage tests)
+	server := NewServer(config, keyStore, nil, lineageStore)
+
+	// Register cleanup (closure captures dependencies)
+	t.Cleanup(func() {
+		_ = keyStore.Close()
+		_ = lineageStore.Close()
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	return &testServer{
+		server: server,
+		apiKey: testAPIKey,
+		db:     testDB.Connection,
+	}
+}
 
 // postLineageEvents is a helper to POST OpenLineage events to the lineage endpoint.
 // Accepts API contract types (LineageEvent), not domain types (ingestion.RunEvent).

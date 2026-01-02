@@ -179,8 +179,9 @@ func (s *LineageStore) HealthCheck(ctx context.Context) error {
 //  3. Begins transaction with deferred FK constraints
 //  4. Upserts job_run record (handles out-of-order via eventTime comparison)
 //  5. Upserts datasets and creates lineage edges (separate row per input/output)
-//  6. Records idempotency key with 24-hour expiration
-//  7. Commits transaction
+//  6. Extracts dataQualityAssertions from input facets and stores test results
+//  7. Records idempotency key with 24-hour expiration
+//  8. Commits transaction
 //
 // Out-of-order handling: Events are compared by eventTime in SQL using CASE statements.
 // Older events cannot overwrite newer state, but are recorded in state_history JSONB.
@@ -231,12 +232,17 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 		return false, false, fmt.Errorf("%w: %w", ErrLineageStoreFailed, err)
 	}
 
-	// 5. Record idempotency key (24-hour TTL)
+	// 5. Extract test results from dataQualityAssertions facets (non-blocking)
+	// This extracts test assertions from input datasets and stores them in test_results table
+	// for correlation. Errors are logged but don't fail the event storage.
+	s.extractDataQualityAssertions(ctx, tx, event)
+
+	// 6. Record idempotency key (24-hour TTL)
 	if err := s.recordIdempotency(ctx, tx, idempotencyKey, event); err != nil {
 		return false, false, fmt.Errorf("%w: %w", ErrIdempotencyCheckFailed, err)
 	}
 
-	// 6. Commit transaction
+	// 7. Commit transaction
 	if err := tx.Commit(); err != nil {
 		return false, false, fmt.Errorf("%w: %w", ErrLineageStoreFailed, err)
 	}
@@ -883,4 +889,223 @@ func (s *LineageStore) cleanupExpiredIdempotencyKeys(ctx context.Context) {
 			slog.Duration("duration", duration),
 			slog.String("status", "success"))
 	}
+}
+
+// extractDataQualityAssertions extracts test results from dataQualityAssertions facets
+// in input datasets and stores them in the test_results table.
+//
+// This enables correlation between test failures and job runs via the OpenLineage
+// dataQualityAssertions facet (per OpenLineage specification).
+//
+// Facet location: inputs[].inputFacets.dataQualityAssertions
+//
+// Facet structure (OpenLineage spec):
+//
+//	{
+//	  "_producer": "https://github.com/...",
+//	  "_schemaURL": "https://openlineage.io/spec/facets/...",
+//	  "assertions": [
+//	    {"assertion": "test_name", "success": true/false, "column": "optional"}
+//	  ]
+//	}
+//
+// Behavior:
+//   - Non-blocking: Errors are logged but don't fail the event storage
+//   - Same transaction: Test results are stored atomically with the event
+//   - Maps success=true to "passed", success=false to "failed"
+//   - Stores optional column in metadata.column
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - tx: Transaction to use (same as event storage for atomicity)
+//   - event: OpenLineage event containing input datasets with facets
+//
+//nolint:gocognit,funlen,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
+func (s *LineageStore) extractDataQualityAssertions(
+	ctx context.Context,
+	tx *sql.Tx,
+	event *ingestion.RunEvent,
+) {
+	jobRunID := event.JobRunID()
+	eventTime := event.EventTime
+
+	for _, input := range event.Inputs {
+		// Check for dataQualityAssertions facet
+		facet, ok := input.InputFacets["dataQualityAssertions"]
+		if !ok {
+			continue
+		}
+
+		// Type assert facet to map
+		facetMap, ok := facet.(map[string]interface{})
+		if !ok {
+			s.logger.Warn("dataQualityAssertions facet is not a map",
+				slog.String("job_run_id", jobRunID),
+				slog.String("dataset_urn", input.URN()),
+			)
+
+			continue
+		}
+
+		// Extract assertions array
+		assertionsRaw, ok := facetMap["assertions"]
+		if !ok {
+			s.logger.Warn("dataQualityAssertions facet missing assertions field",
+				slog.String("job_run_id", jobRunID),
+				slog.String("dataset_urn", input.URN()),
+			)
+
+			continue
+		}
+
+		assertions, ok := assertionsRaw.([]interface{})
+		if !ok {
+			s.logger.Warn("dataQualityAssertions assertions is not an array",
+				slog.String("job_run_id", jobRunID),
+				slog.String("dataset_urn", input.URN()),
+			)
+
+			continue
+		}
+
+		// Process each assertion
+		for _, assertionRaw := range assertions {
+			assertion, ok := assertionRaw.(map[string]interface{})
+			if !ok {
+				s.logger.Warn("assertion is not a map",
+					slog.String("job_run_id", jobRunID),
+				)
+
+				continue
+			}
+
+			// Extract required fields
+			testName, _ := assertion["assertion"].(string)
+			if testName == "" {
+				s.logger.Warn("assertion missing name",
+					slog.String("job_run_id", jobRunID),
+				)
+
+				continue
+			}
+
+			// Map success boolean to status (default to failed if missing/malformed - safer for correlation)
+			status := ingestion.TestStatusFailed
+
+			successVal, hasSuccess := assertion["success"]
+			if !hasSuccess {
+				s.logger.Warn("assertion missing success field, defaulting to failed",
+					slog.String("job_run_id", jobRunID),
+					slog.String("test_name", testName),
+				)
+			} else if success, ok := successVal.(bool); ok && success {
+				status = ingestion.TestStatusPassed
+			} else if !ok {
+				s.logger.Warn("assertion success is not a boolean, defaulting to failed",
+					slog.String("job_run_id", jobRunID),
+					slog.String("test_name", testName),
+				)
+			}
+
+			// Extract optional column into metadata
+			var metadata map[string]interface{}
+			if column, ok := assertion["column"].(string); ok && column != "" {
+				metadata = map[string]interface{}{"column": column}
+			}
+
+			// Store the test result
+			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
+				TestName:   testName,
+				TestType:   "dataQualityAssertion",
+				DatasetURN: input.URN(),
+				JobRunID:   jobRunID,
+				Status:     status,
+				Metadata:   metadata,
+				ExecutedAt: eventTime,
+			}); err != nil {
+				s.logger.Warn("failed to store test result from facet",
+					slog.String("job_run_id", jobRunID),
+					slog.String("test_name", testName),
+					slog.String("error", err.Error()),
+				)
+				// Non-blocking: continue processing other assertions
+			}
+		}
+	}
+}
+
+// storeTestResult stores a single test result within an existing transaction.
+// Used by extractDataQualityAssertions to store test results atomically with event storage.
+//
+// Behavior:
+//   - Uses existing transaction (same as event storage for atomicity)
+//   - Skips validation (facet data is already semi-validated)
+//   - UPSERT on (test_name, dataset_urn, executed_at)
+func (s *LineageStore) storeTestResult(
+	ctx context.Context,
+	tx *sql.Tx,
+	testResult *ingestion.TestResult,
+) error {
+	// Marshal metadata to JSONB
+	metadataJSON, err := marshalJSONB(testResult.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO test_results (
+			test_name,
+			test_type,
+			dataset_urn,
+			job_run_id,
+			status,
+			message,
+			metadata,
+			executed_at,
+			duration_ms
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (test_name, dataset_urn, executed_at)
+		DO UPDATE SET
+			test_type = EXCLUDED.test_type,
+			job_run_id = EXCLUDED.job_run_id,
+			status = EXCLUDED.status,
+			message = EXCLUDED.message,
+			metadata = EXCLUDED.metadata,
+			duration_ms = EXCLUDED.duration_ms,
+			updated_at = CURRENT_TIMESTAMP
+	`
+
+	_, err = tx.ExecContext(
+		ctx,
+		query,
+		testResult.TestName,
+		testResult.TestType,
+		testResult.DatasetURN,
+		testResult.JobRunID,
+		testResult.Status.String(),
+		testResult.Message,
+		metadataJSON,
+		testResult.ExecutedAt,
+		testResult.DurationMs,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert test result: %w", err)
+	}
+
+	return nil
+}
+
+// marshalJSONB marshals a map to JSONB, returning NULL-safe value for database.
+// Returns nil (SQL NULL) for nil/empty maps to avoid "invalid input syntax for type json" error.
+func marshalJSONB(data map[string]interface{}) (sql.NullString, error) {
+	if len(data) == 0 {
+		return sql.NullString{Valid: false}, nil // SQL NULL
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return sql.NullString{Valid: false}, err
+	}
+
+	return sql.NullString{String: string(jsonBytes), Valid: true}, nil
 }

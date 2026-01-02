@@ -3,44 +3,21 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file" // Import file source driver
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/storage"
 )
-
-// testDatabase encapsulates a PostgreSQL testcontainer and its database connection
-// for use in integration tests.
-//
-// Fields:
-//   - container: The testcontainers PostgreSQL container instance
-//   - connection: The active database connection (*sql.DB)
-//
-// Usage:
-//
-//	testDB := setupTestDatabase(ctx, t)
-//	defer testDB.connection.Close()
-//	defer testcontainers.TerminateContainer(testDB.container)
-type testDatabase struct {
-	container  *postgres.PostgresContainer
-	connection *sql.DB
-}
 
 // middlewareTestServer encapsulates test server dependencies for middleware integration tests.
 // Only stores fields used by helper methods (server, testAPIKey, rateLimiter).
@@ -65,8 +42,8 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 	t.Helper()
 
 	// Setup database with migrations
-	testDB := setupTestDatabase(ctx, t)
-	storageConn := &storage.Connection{DB: testDB.connection}
+	testDB := config.SetupTestDatabase(ctx, t)
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	// Create stores
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -122,8 +99,8 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	return &middlewareTestServer{
@@ -141,8 +118,8 @@ func TestAuthenticationIntegration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	testDB := setupTestDatabase(ctx, t)
-	storageConn := &storage.Connection{DB: testDB.connection}
+	testDB := config.SetupTestDatabase(ctx, t)
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
@@ -153,8 +130,8 @@ func TestAuthenticationIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	// Create test API key
@@ -353,10 +330,10 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 
 	ctx := context.Background()
 
-	testDB := setupTestDatabase(ctx, t)
+	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.connection}
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -368,8 +345,8 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	// Create a test API key for protected endpoint verification
@@ -538,10 +515,10 @@ func TestReadyEndpoint(t *testing.T) {
 
 	ctx := context.Background()
 
-	testDB := setupTestDatabase(ctx, t)
+	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.connection}
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -558,8 +535,8 @@ func TestReadyEndpoint(t *testing.T) {
 		rateLimiter.Close()
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	// Create server config
@@ -648,7 +625,7 @@ func TestReadyEndpoint(t *testing.T) {
 
 	t.Run("Ready Endpoint Returns 503 When Database Unavailable", func(t *testing.T) {
 		// Close the database connection to simulate database outage
-		if err := testDB.connection.Close(); err != nil {
+		if err := testDB.Connection.Close(); err != nil {
 			t.Fatalf("Failed to close database connection: %v", err)
 		}
 
@@ -681,10 +658,10 @@ func TestRateLimitingIntegration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	testDB := setupTestDatabase(ctx, t)
+	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.connection}
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -696,8 +673,8 @@ func TestRateLimitingIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	// Create test API keys for plugin-1 and plugin-2
@@ -962,10 +939,10 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
-	testDB := setupTestDatabase(ctx, t)
+	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.connection}
+	storageConn := &storage.Connection{DB: testDB.Connection}
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -977,8 +954,8 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_ = keyStore.Close()
 		_ = lineageStore.Close()
-		_ = testDB.connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.container)
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
 	// Create test API key for authenticated requests
@@ -1123,30 +1100,6 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	})
 }
 
-// runTestMigrations runs database migrations for testing.
-// Uses golang-migrate for single source of truth.
-func runTestMigrations(db *sql.DB) error {
-	driver, err := migratepg.WithInstance(db, &migratepg.Config{})
-	if err != nil {
-		return err
-	}
-
-	m, err := migrate.NewWithDatabaseInstance(
-		"file://../../migrations",
-		"postgres",
-		driver,
-	)
-	if err != nil {
-		return err
-	}
-
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return err
-	}
-
-	return nil
-}
-
 // Helper functions for rate limiting integration tests
 
 // createTestRateLimiter creates a rate limiter with explicit configuration for testing.
@@ -1288,75 +1241,5 @@ func verifyCorrelationID(t *testing.T, response *httptest.ResponseRecorder) {
 
 	if len(correlationID) != 16 { // Correlation IDs are 16 hex chars
 		t.Errorf("Expected correlation ID length 16, got %d", len(correlationID))
-	}
-}
-
-// setupTestDatabase creates a PostgreSQL testcontainer with migrations applied.
-// This helper function provides a ready-to-use test database for integration tests.
-//
-// The function:
-//   - Creates a PostgreSQL 16-alpine testcontainer
-//   - Configures test database credentials (correlator_test/test/test)
-//   - Waits for database to be ready (120s timeout for dev containers)
-//   - Opens a database connection
-//   - Applies all migrations from the migrations/ directory
-//
-// Returns:
-//   - *testDatabase containing the container and database connection
-//
-// Callers are responsible for cleanup:
-//
-//	testDB := setupTestDatabase(ctx, t)
-//	t.Cleanup(func() {
-//	    _ = testDB.connection.Close()
-//	    _ = testcontainers.TerminateContainer(testDB.container)
-//	})
-//
-// Parameters:
-//   - ctx: Context for container operations
-//   - t: Testing instance for error reporting and t.Helper()
-func setupTestDatabase(ctx context.Context, t *testing.T) *testDatabase {
-	t.Helper()
-
-	// Create PostgreSQL container
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("correlator_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(120*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("Failed to start postgres container: %v", err)
-	}
-
-	if pgContainer == nil {
-		t.Fatalf("postgres container is nil")
-	}
-
-	// Get connection string
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
-
-	// Create storage connection
-	conn, err := sql.Open("postgres", connStr)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-
-	// Run migrations
-	if err := runTestMigrations(conn); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-
-	return &testDatabase{
-		container:  pgContainer,
-		connection: conn,
 	}
 }

@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	defaultMaxOpenConns       = 25
-	defaultMaxIdleConns       = 5
-	defaultConnMaxLifetime    = 30 * time.Minute
-	defaultConnMaxIdleTime    = 10 * time.Minute
-	defaultCleanupInterval    = 1 * time.Hour // Default cleanup interval for idempotency table
+	defaultMaxOpenConns    = 25
+	defaultMaxIdleConns    = 5
+	defaultConnMaxLifetime = 30 * time.Minute
+	defaultConnMaxIdleTime = 10 * time.Minute
+	defaultCleanupInterval = 1 * time.Hour // Default cleanup interval for idempotency table
 )
 
 var (

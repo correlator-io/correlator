@@ -20,7 +20,7 @@
 --    - Trigger: update_job_id_mappings_updated_at
 --
 -- 3. datasets - Metadata enrichment over time
---    - updated_at tracks schema/facet updates
+--    - updated_at tracks facet updates from OpenLineage events
 --    - Trigger: update_datasets_updated_at
 --
 -- 4. test_results - UPSERT behavior (re-ingestion with updated status)
@@ -156,23 +156,18 @@ CREATE TABLE datasets (
     name VARCHAR(255) NOT NULL,
     namespace VARCHAR(255) NOT NULL DEFAULT 'default',
 
-    owner VARCHAR(255),
-    team VARCHAR(100),
-
-    tags TEXT[] DEFAULT ARRAY[]::TEXT[],
-    description TEXT,
-
+    -- OpenLineage facets (schema, statistics, documentation, ownership, etc.)
+    -- Flexible JSONB allows storing any facet without schema changes
     facets JSONB DEFAULT '{}',
-    correlation_stats JSONB DEFAULT '{}',
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Comments
-COMMENT ON TABLE datasets IS 'Dataset registry with OpenLineage facets and correlation statistics';
+COMMENT ON TABLE datasets IS 'Dataset registry with OpenLineage facets';
 COMMENT ON COLUMN datasets.dataset_urn IS 'OpenLineage dataset URN: namespace/name format (supports : or / delimiter)';
-COMMENT ON COLUMN datasets.facets IS 'OpenLineage dataset facets: schema, statistics, documentation';
+COMMENT ON COLUMN datasets.facets IS 'OpenLineage dataset facets: schema, statistics, documentation, ownership (all metadata in JSONB)';
 
 -- =====================================================
 -- 4. LINEAGE EDGES - OpenLineage lineage relationships
@@ -680,7 +675,7 @@ COMMENT ON FUNCTION refresh_correlation_views() IS
 -- =====================================================
 --
 -- Manual Refresh (MVP):
---   - POST /api/v1/test-results triggers refresh after batch insert
+--   - POST /api/v1/lineage/events extracts test results from dataQualityAssertions facets
 --   - Dashboard queries check view freshness, refresh if stale (>5 min)
 --   - Manual refresh: SELECT * FROM refresh_correlation_views();
 --

@@ -68,38 +68,6 @@ type (
 		Retriable bool   `json:"retriable"` // True if transient failure (can retry)
 	}
 
-	// TestResultRequest represents a single test result submission.
-	// This matches the expected API contract for POST /api/v1/test-results.
-	TestResultRequest struct {
-		TestName   string                 `json:"test_name"`   //nolint: tagliatelle
-		DatasetURN string                 `json:"dataset_urn"` //nolint: tagliatelle
-		JobRunID   string                 `json:"job_run_id"`  //nolint: tagliatelle
-		Status     string                 `json:"status"`
-		Message    string                 `json:"message,omitempty"`
-		ExecutedAt time.Time              `json:"executed_at"`           //nolint: tagliatelle
-		DurationMs int                    `json:"duration_ms,omitempty"` //nolint: tagliatelle
-		TestType   string                 `json:"test_type,omitempty"`   //nolint: tagliatelle
-		Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	}
-
-	// TestResultResponse represents the API response for test results ingestion.
-	// Follows same pattern as LineageResponse (stored, failed, results).
-	TestResultResponse struct {
-		CorrelationID string             `json:"correlation_id"` //nolint: tagliatelle
-		Timestamp     string             `json:"timestamp"`
-		Stored        int                `json:"stored"`
-		Failed        int                `json:"failed"`
-		Results       []TestResultStatus `json:"results"`
-	}
-
-	// TestResultStatus represents per-result status in batch operations.
-	TestResultStatus struct {
-		Index   int    `json:"index"`
-		Status  int    `json:"status"`
-		Message string `json:"message"`
-		Error   string `json:"error,omitempty"`
-	}
-
 	// LineageEvent model represents an event in the payload of an API request to ingest OpenLineage events.
 	// This is separate from the domain model (ingestion.RunEvent) to decouple
 	// the API contract from internal domain types.
@@ -165,9 +133,6 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// Lineage endpoints
 	mux.HandleFunc("POST /api/v1/lineage/events", s.handleLineageEvents)
-
-	// Test results endpoints
-	mux.HandleFunc("POST /api/v1/test-results", s.handleTestResults)
 }
 
 // registerPublicRoutes registers HTTP routes that bypass authentication and rate limiting.
