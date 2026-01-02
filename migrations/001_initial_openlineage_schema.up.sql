@@ -680,7 +680,7 @@ COMMENT ON FUNCTION refresh_correlation_views() IS
 -- =====================================================
 --
 -- Manual Refresh (MVP):
---   - POST /api/v1/test-results triggers refresh after batch insert
+--   - POST /api/v1/lineage/events extracts test results from dataQualityAssertions facets
 --   - Dashboard queries check view freshness, refresh if stale (>5 min)
 --   - Manual refresh: SELECT * FROM refresh_correlation_views();
 --

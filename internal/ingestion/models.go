@@ -263,7 +263,7 @@ func (d *Dataset) URN() string {
 
 type (
 	// TestResult represents a data quality test execution result (domain model).
-	// This is the domain representation, distinct from the API contract (TestResultRequest).
+	// This is the domain representation extracted from dataQualityAssertions facets during OpenLineage event ingestion.
 	//
 	// Test results link test failures to the job runs that produced the tested datasets,
 	// enabling incident correlation and root cause analysis.
@@ -453,41 +453,4 @@ func (ts TestStatus) IsValid() bool {
 // Only incident statuses are included in correlation analysis.
 func (ts TestStatus) IsIncident() bool {
 	return ts == TestStatusFailed || ts == TestStatusError
-}
-
-// ParseTestStatus converts a case-insensitive status string to TestStatus.
-//
-// Real-world test frameworks emit inconsistent status casing:
-//   - dbt: "PASS", "FAIL", "ERROR", "WARN"
-//   - pytest: "passed", "failed", "error", "skipped"
-//   - Great Expectations: "success", "failed"
-//   - Custom tools: any variation
-//
-// This function normalizes all variations to canonical TestStatus constants.
-//
-// Returns ErrStatusInvalid if the status string doesn't match any known value.
-//
-// Example:
-//
-//	status, err := ParseTestStatus("FAILED")  // Returns TestStatusFailed
-//	status, err := ParseTestStatus("Failed")  // Returns TestStatusFailed
-//	status, err := ParseTestStatus("failed")  // Returns TestStatusFailed
-//	status, err := ParseTestStatus("invalid") // Returns error
-func ParseTestStatus(status string) (TestStatus, error) {
-	normalized := strings.ToLower(strings.TrimSpace(status))
-
-	switch normalized {
-	case "passed", "pass", "success", "ok":
-		return TestStatusPassed, nil
-	case "failed", "fail", "failure":
-		return TestStatusFailed, nil
-	case "error", "err":
-		return TestStatusError, nil
-	case "skipped", "skip":
-		return TestStatusSkipped, nil
-	case "warning", "warn":
-		return TestStatusWarning, nil
-	default:
-		return "", fmt.Errorf("%w: got '%s'", ErrStatusInvalid, status)
-	}
 }

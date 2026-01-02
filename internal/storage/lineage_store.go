@@ -179,8 +179,9 @@ func (s *LineageStore) HealthCheck(ctx context.Context) error {
 //  3. Begins transaction with deferred FK constraints
 //  4. Upserts job_run record (handles out-of-order via eventTime comparison)
 //  5. Upserts datasets and creates lineage edges (separate row per input/output)
-//  6. Records idempotency key with 24-hour expiration
-//  7. Commits transaction
+//  6. Extracts dataQualityAssertions from input facets and stores test results
+//  7. Records idempotency key with 24-hour expiration
+//  8. Commits transaction
 //
 // Out-of-order handling: Events are compared by eventTime in SQL using CASE statements.
 // Older events cannot overwrite newer state, but are recorded in state_history JSONB.
@@ -1013,7 +1014,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 			}
 
 			// Store the test result
-			if err := s.storeTestResultInTx(ctx, tx, &ingestion.TestResult{
+			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
 				TestName:   testName,
 				TestType:   "dataQualityAssertion",
 				DatasetURN: input.URN(),
@@ -1033,14 +1034,14 @@ func (s *LineageStore) extractDataQualityAssertions(
 	}
 }
 
-// storeTestResultInTx stores a single test result within an existing transaction.
+// storeTestResult stores a single test result within an existing transaction.
 // Used by extractDataQualityAssertions to store test results atomically with event storage.
 //
-// This is a simplified version of StoreTestResult that:
-//   - Uses an existing transaction (no new transaction)
+// Behavior:
+//   - Uses existing transaction (same as event storage for atomicity)
 //   - Skips validation (facet data is already semi-validated)
-//   - Returns error instead of (stored, duplicate, error)
-func (s *LineageStore) storeTestResultInTx(
+//   - UPSERT on (test_name, dataset_urn, executed_at)
+func (s *LineageStore) storeTestResult(
 	ctx context.Context,
 	tx *sql.Tx,
 	testResult *ingestion.TestResult,
@@ -1092,4 +1093,19 @@ func (s *LineageStore) storeTestResultInTx(
 	}
 
 	return nil
+}
+
+// marshalJSONB marshals a map to JSONB, returning NULL-safe value for database.
+// Returns nil (SQL NULL) for nil/empty maps to avoid "invalid input syntax for type json" error.
+func marshalJSONB(data map[string]interface{}) (sql.NullString, error) {
+	if len(data) == 0 {
+		return sql.NullString{Valid: false}, nil // SQL NULL
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return sql.NullString{Valid: false}, err
+	}
+
+	return sql.NullString{String: string(jsonBytes), Valid: true}, nil
 }
