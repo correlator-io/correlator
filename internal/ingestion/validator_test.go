@@ -349,6 +349,22 @@ func TestValidateRunEvent_InvalidSchemaURL(t *testing.T) {
 			schemaURL: "https://openlineage.io/spec/0-9-0/OpenLineage.json",
 			wantError: false,
 		},
+		// JSON Schema fragment tests (official OpenLineage Python client format)
+		{
+			name:      "valid OpenLineage 2.0.2 with RunEvent fragment",
+			schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+			wantError: false,
+		},
+		{
+			name:      "valid OpenLineage 2.0.2 with DatasetEvent fragment",
+			schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetEvent",
+			wantError: false,
+		},
+		{
+			name:      "valid OpenLineage 2.0.2 with JobEvent fragment",
+			schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/JobEvent",
+			wantError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -920,6 +936,27 @@ func TestIsValidOpenLineageSchemaURL(t *testing.T) {
 			url:   "https://openlineage.io/spec/10-20-30/OpenLineage.json",
 			valid: true,
 		},
+		// JSON Schema fragment tests (official OpenLineage Python client format)
+		{
+			name:  "valid with RunEvent fragment",
+			url:   "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+			valid: true,
+		},
+		{
+			name:  "valid with DatasetEvent fragment",
+			url:   "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/DatasetEvent",
+			valid: true,
+		},
+		{
+			name:  "valid with JobEvent fragment",
+			url:   "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/JobEvent",
+			valid: true,
+		},
+		{
+			name:  "valid with fragment and different version",
+			url:   "https://openlineage.io/spec/1-8-0/OpenLineage.json#/$defs/RunEvent",
+			valid: true,
+		},
 		{
 			name:  "invalid - not OpenLineage domain",
 			url:   "https://example.com/spec/2-0-2/OpenLineage.json",
@@ -1017,6 +1054,22 @@ func TestExtractOpenLineageVersion(t *testing.T) {
 			name:            "version 3.0.0 (future)",
 			schemaURL:       "https://openlineage.io/spec/3-0-0/OpenLineage.json",
 			expectedVersion: "3.0.0",
+		},
+		// JSON Schema fragment tests (official OpenLineage Python client format)
+		{
+			name:            "version 2.0.2 with RunEvent fragment",
+			schemaURL:       "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+			expectedVersion: "2.0.2",
+		},
+		{
+			name:            "version 1.8.0 with DatasetEvent fragment",
+			schemaURL:       "https://openlineage.io/spec/1-8-0/OpenLineage.json#/$defs/DatasetEvent",
+			expectedVersion: "1.8.0",
+		},
+		{
+			name:            "version 2.0.2 with JobEvent fragment",
+			schemaURL:       "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/JobEvent",
+			expectedVersion: "2.0.2",
 		},
 		{
 			name:            "invalid URL",
