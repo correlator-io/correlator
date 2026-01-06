@@ -735,39 +735,6 @@ CREATE TRIGGER update_test_results_updated_at
     BEFORE UPDATE ON test_results
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- State transition validation trigger
-CREATE OR REPLACE FUNCTION validate_job_run_state_transition()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF OLD.current_state IN ('COMPLETE', 'FAIL', 'ABORT') THEN
-    IF NEW.current_state != OLD.current_state THEN
-      RAISE EXCEPTION 'Invalid state transition: % -> % (terminal states are immutable)',
-        OLD.current_state, NEW.current_state
-        USING HINT = 'Terminal states (COMPLETE/FAIL/ABORT) can only transition to themselves (idempotent). Check application logic for state ordering.';
-    END IF;
-  END IF;
-
-  NEW.state_history = jsonb_set(
-    NEW.state_history,
-    '{transitions}',
-    (NEW.state_history->'transitions') || jsonb_build_object(
-      'from', OLD.current_state,
-      'to', NEW.current_state,
-      'event_time', NEW.event_time,
-      'updated_at', NOW()
-    )
-  );
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER job_run_state_validation
-  BEFORE UPDATE ON job_runs
-  FOR EACH ROW EXECUTE FUNCTION validate_job_run_state_transition();
-
-COMMENT ON FUNCTION validate_job_run_state_transition() IS 'OpenLineage state machine enforcement: protects terminal states, tracks transition history';
-
 -- =====================================================
 -- VALIDATION
 -- =====================================================
