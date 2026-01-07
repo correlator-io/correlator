@@ -33,17 +33,19 @@ var (
 
 	// ErrInvalidCleanupInterval is returned when an invalid cleanup interval is provided.
 	ErrInvalidCleanupInterval = errors.New("cleanup interval must be greater than zero")
-)
 
-// Compile-time interface assertions to ensure LineageStore implements both interfaces.
-// This provides early compile-time errors if interface contracts change.
-var (
+	// Compile-time interface assertions to ensure LineageStore implements both interfaces.
+	// This provides early compile-time errors if interface contracts change.
+
 	// LineageStore implements ingestion.Store (write interface for lineage events).
 	_ ingestion.Store = (*LineageStore)(nil)
 
 	// LineageStore implements correlation.Store (read interface for correlation queries)
 	// Methods defined in correlation_views.go file (same package, same type).
 	_ correlation.Store = (*LineageStore)(nil)
+
+	// ErrInvalidStateTransition is returned when attempting an invalid state transition.
+	ErrInvalidStateTransition = errors.New("invalid state transition from terminal state")
 )
 
 // Cleanup configuration constants.
@@ -58,22 +60,40 @@ const (
 	batchSleepDuration = 100 * time.Millisecond
 )
 
-// LineageStore implements ingestion.Store interface with PostgreSQL backend.
-//
-// This implementation provides production-ready OpenLineage event storage with:
-//   - Idempotency: Prevents duplicate event processing (24-hour TTL)
-//   - Out-of-order handling: Events sorted by eventTime before state transitions
-//   - Partial success: Per-event transactions for batch operations
-//   - Deferred FK constraints: Handles concurrent event races
-//   - Background cleanup: Automatic TTL cleanup of expired idempotency keys
-type LineageStore struct {
-	conn            *Connection
-	logger          *slog.Logger
-	cleanupInterval time.Duration
-	cleanupStop     chan struct{} // Signal to stop cleanup goroutine
-	cleanupDone     chan struct{} // Signal cleanup has stopped
-	closeOnce       sync.Once
-}
+type (
+	// LineageStore implements ingestion.Store interface with PostgreSQL backend.
+	//
+	// This implementation provides production-ready OpenLineage event storage with:
+	//   - Idempotency: Prevents duplicate event processing (24-hour TTL)
+	//   - Out-of-order handling: Events sorted by eventTime before state transitions
+	//   - Partial success: Per-event transactions for batch operations
+	//   - Deferred FK constraints: Handles concurrent event races
+	//   - Background cleanup: Automatic TTL cleanup of expired idempotency keys
+	LineageStore struct {
+		conn            *Connection
+		logger          *slog.Logger
+		cleanupInterval time.Duration
+		cleanupStop     chan struct{} // Signal to stop cleanup goroutine
+		cleanupDone     chan struct{} // Signal cleanup has stopped
+		closeOnce       sync.Once
+	}
+
+	// stateTransition represents a single state transition entry in state_history.
+	stateTransition struct {
+		From      interface{} `json:"from"` // nil for initial state, string otherwise
+		To        string      `json:"to"`
+		EventTime string      `json:"event_time"` //nolint: tagliatelle
+		UpdatedAt string      `json:"updated_at"` //nolint: tagliatelle
+	}
+
+	// jobRunState holds the current state of an existing job run fetched from the database.
+	jobRunState struct {
+		exists       bool
+		currentState string
+		eventTime    time.Time
+		stateHistory []byte
+	}
+)
 
 // NewLineageStore creates a PostgreSQL-backed OpenLineage event store with background cleanup.
 // Returns error if connection is nil (ErrNoDatabaseConnection).
@@ -105,8 +125,7 @@ func NewLineageStore(conn *Connection, cleanupInterval time.Duration) (*LineageS
 	// Start cleanup goroutine
 	go store.runCleanup()
 
-	store.logger.Info("Started idempotency cleanup goroutine",
-		slog.Duration("interval", cleanupInterval))
+	store.logger.Info("Started idempotency cleanup goroutine", slog.Duration("interval", cleanupInterval))
 
 	return store, nil
 }
@@ -439,60 +458,203 @@ func (s *LineageStore) checkIdempotency(ctx context.Context, idempotencyKey stri
 	return true, nil
 }
 
-// upsertJobRun inserts or updates a job_run record.
-// Handles out-of-order events by only updating if new event has later eventTime.
+// fetchJobRunState retrieves the current state of a job run with a row lock.
+// Returns jobRunState with exists=false if the job run doesn't exist.
+func fetchJobRunState(ctx context.Context, tx *sql.Tx, jobRunID string) (jobRunState, error) {
+	var (
+		state             jobRunState
+		existingState     sql.NullString
+		existingEventTime sql.NullTime
+	)
+
+	//nolint: dupword
+	// The FOR UPDATE clause in the query below is a PostgreSQL row-level lock that:
+	// 1. Locks the row for the duration of the transaction
+	// 2. Blocks other transactions attempting to SELECT ... FOR UPDATE, UPDATE, or DELETE the same row
+	// 3. Prevents race conditions where two concurrent events for the same job_run_id could both read the same state
+	// and both try to record a transition.
+	//
+	// This ensures that when we:
+	// 1. Read the current state
+	// 2. Validate the transition
+	// 3. Build state_history
+	// 4. Execute the upsert
+	//
+	// ...no other transaction can modify the job run between steps 1 and 4.
+	// The lock is automatically released when the transaction commits or rolls back in StoreEvent.
+	//
+	query := `
+		SELECT current_state, event_time, state_history
+		FROM job_runs
+		WHERE job_run_id = $1
+		FOR UPDATE
+	`
+
+	err := tx.QueryRowContext(ctx, query, jobRunID).Scan(
+		&existingState, &existingEventTime, &state.stateHistory,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return jobRunState{exists: false}, nil
+	}
+
+	if err != nil {
+		return state, fmt.Errorf("failed to fetch job run state: %w", err)
+	}
+
+	state.exists = true
+	state.currentState = existingState.String
+	state.eventTime = existingEventTime.Time
+
+	return state, nil
+}
+
+// validateStateTransition checks if transitioning from oldState to newState is allowed.
+// Returns an error if transitioning from a terminal state to a different state.
+func validateStateTransition(oldState, newState string) error {
+	// terminalStates defines OpenLineage states that cannot transition to other states.
+	var terminalStates = map[string]bool{
+		"COMPLETE": true,
+		"FAIL":     true,
+		"ABORT":    true,
+	}
+
+	if terminalStates[oldState] && oldState != newState {
+		return fmt.Errorf("%w: cannot transition from %s to %s",
+			ErrInvalidStateTransition, oldState, newState)
+	}
+
+	return nil
+}
+
+// buildInitialStateHistory creates state_history JSON for a new job run.
+func buildInitialStateHistory(newState string, eventTime time.Time) ([]byte, error) {
+	history := map[string]interface{}{
+		"transitions": []stateTransition{
+			{
+				From:      nil,
+				To:        newState,
+				EventTime: eventTime.Format(time.RFC3339Nano),
+				UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		},
+	}
+
+	return json.Marshal(history)
+}
+
+// buildUpdatedStateHistory appends a transition to existing state_history if the state changed.
+// Returns the original history unchanged if no state change occurred.
+func buildUpdatedStateHistory(
+	existingHistory []byte,
+	oldState, newState string,
+	eventTime time.Time,
+	stateChanged bool,
+) ([]byte, error) {
+	var history map[string]interface{}
+	if err := json.Unmarshal(existingHistory, &history); err != nil {
+		history = map[string]interface{}{"transitions": []interface{}{}}
+	}
+
+	if !stateChanged {
+		return json.Marshal(history)
+	}
+
+	transitions, ok := history["transitions"].([]interface{})
+	if !ok {
+		transitions = []interface{}{}
+	}
+
+	transitions = append(transitions, map[string]interface{}{
+		"from":       oldState,
+		"to":         newState,
+		"event_time": eventTime.Format(time.RFC3339Nano),
+		"updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	history["transitions"] = transitions
+
+	return json.Marshal(history)
+}
+
+// buildJobRunMetadata creates the metadata JSONB for a job run event.
+func buildJobRunMetadata(event *ingestion.RunEvent) ([]byte, error) {
+	metadata := map[string]interface{}{
+		"job_facets": event.Job.Facets,
+		"run_facets": event.Run.Facets,
+		"producer":   event.Producer,
+		"schema_url": event.SchemaURL,
+	}
+
+	return json.Marshal(metadata)
+}
+
+// upsertJobRun inserts or updates a job_run record with state transition tracking.
 //
-// Database Trigger Integration:
-// This method triggers the job_run_state_validation database trigger (migration 005)
-// which runs BEFORE UPDATE and provides two critical functions:
+// This method orchestrates:
+//  1. Fetching existing state (with row lock for concurrency safety)
+//  2. Validating state transitions (terminal state protection)
+//  3. Building state_history (only records actual state changes)
+//  4. Upserting the job run record
 //
-//  1. Terminal State Protection: Prevents invalid transitions from terminal states
-//     (COMPLETE, FAIL, ABORT) to non-terminal states. Returns error if violated.
-//
-//  2. State History Tracking: Automatically records state transitions in the
-//     state_history JSONB column with schema: {from, to, event_time, updated_at}.
-//     This happens automatically on every UPDATE that changes current_state.
-//
-// Example state_history after START → RUNNING → COMPLETE:
-//
-//	{
-//	  "transitions": [
-//	    {"from": "START", "to": "RUNNING", "event_time": "...", "updated_at": "..."},
-//	    {"from": "RUNNING", "to": "COMPLETE", "event_time": "...", "updated_at": "..."}
-//	  ]
-//	}
-//
-// Out-of-order Handling:
-// Uses CASE statements with eventTime comparison to prevent older events from
-// overwriting newer state. Only events with eventTime > existing eventTime update
-// current_state and event_type fields.
+// Out-of-order events are handled via eventTime comparison in the SQL upsert.
 func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *ingestion.RunEvent) error {
 	jobRunID := event.JobRunID()
-	producerName := extractProducerName(event.Producer)
+	newState := string(event.EventType)
 
-	// Combine job and run facets into metadata JSONB
-	metadata := make(map[string]interface{})
-	metadata["job_facets"] = event.Job.Facets
-	metadata["run_facets"] = event.Run.Facets
-	metadata["producer"] = event.Producer
-	metadata["schema_url"] = event.SchemaURL
-
-	metadataJSON, err := json.Marshal(metadata)
+	// Build metadata
+	metadataJSON, err := buildJobRunMetadata(event)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return fmt.Errorf("failed to build metadata: %w", err)
 	}
 
-	// Initialize state_history for new job runs
-	stateHistory := map[string]interface{}{
-		"transitions": []interface{}{},
-	}
-
-	stateHistoryJSON, err := json.Marshal(stateHistory)
+	// Fetch existing state (with row lock)
+	existing, err := fetchJobRunState(ctx, tx, jobRunID)
 	if err != nil {
-		return fmt.Errorf("failed to marshal state history: %w", err)
+		return err
 	}
 
-	// Upsert job_run with eventTime comparison to handle out-of-order events
+	// Build state history based on whether job run exists
+	var stateHistoryJSON []byte
+
+	if !existing.exists {
+		stateHistoryJSON, err = buildInitialStateHistory(newState, event.EventTime)
+	} else {
+		// Determine if state will change (newer event with different state)
+		isNewerEvent := event.EventTime.After(existing.eventTime)
+		stateWillChange := isNewerEvent && existing.currentState != newState
+
+		// Validate transition before proceeding
+		if stateWillChange {
+			if err := validateStateTransition(existing.currentState, newState); err != nil {
+				return err
+			}
+		}
+
+		stateHistoryJSON, err = buildUpdatedStateHistory(
+			existing.stateHistory,
+			existing.currentState,
+			newState,
+			event.EventTime,
+			stateWillChange,
+		)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to build state history: %w", err)
+	}
+
+	// Execute upsert
+	return s.executeJobRunUpsert(ctx, tx, event, newState, stateHistoryJSON, metadataJSON)
+}
+
+// executeJobRunUpsert performs the actual SQL upsert for a job run.
+func (s *LineageStore) executeJobRunUpsert(
+	ctx context.Context,
+	tx *sql.Tx,
+	event *ingestion.RunEvent,
+	newState string,
+	stateHistoryJSON, metadataJSON []byte,
+) error {
 	query := `
 		INSERT INTO job_runs (
 			job_run_id,
@@ -520,8 +682,7 @@ func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *inge
 				ELSE job_runs.event_type
 			END,
 			event_time = GREATEST(job_runs.event_time, EXCLUDED.event_time),
-			-- Note: state_history is updated by the job_run_state_validation trigger (migration 005)
-			-- The trigger runs BEFORE UPDATE and records: {from, to, event_time, updated_at}
+			state_history = EXCLUDED.state_history,
 			metadata = CASE
 				WHEN EXCLUDED.event_time > job_runs.event_time THEN EXCLUDED.metadata
 				ELSE job_runs.metadata
@@ -529,20 +690,20 @@ func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *inge
 			updated_at = NOW()
 	`
 
-	_, err = tx.ExecContext(
+	_, err := tx.ExecContext(
 		ctx,
 		query,
-		jobRunID,
+		event.JobRunID(),
 		event.Run.ID,
 		event.Job.Name,
 		event.Job.Namespace,
-		string(event.EventType), // current_state
-		string(event.EventType), // event_type
+		newState,
+		newState,
 		event.EventTime,
 		stateHistoryJSON,
 		metadataJSON,
-		producerName,
-		event.EventTime, // Use eventTime as started_at for first event
+		extractProducerName(event.Producer),
+		event.EventTime,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)

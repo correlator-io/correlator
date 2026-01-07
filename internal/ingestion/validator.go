@@ -185,20 +185,30 @@ func (v *Validator) ValidateDataset(dataset *Dataset) error {
 //	ExtractOpenLineageVersion("https://openlineage.io/spec/2-0-2/OpenLineage.json")
 //	// Returns: "2.0.2"
 //
+//	ExtractOpenLineageVersion("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent")
+//	// Returns: "2.0.2"
+//
 // This function is useful for:
 //   - Logging/metrics: Track which OpenLineage versions are being used
 //   - Debugging: Identify version-specific behavior in production
 //   - Observability: Alert when new major versions appear
 //
 // The version is extracted by parsing the URL path and converting hyphens to dots.
+// JSON Schema fragments are stripped before extraction.
 func ExtractOpenLineageVersion(schemaURL string) string {
 	// Validate it's a valid OpenLineage spec URL
 	if !IsValidOpenLineageSchemaURL(schemaURL) {
 		return ""
 	}
 
+	// Strip JSON Schema fragment before extraction
+	baseURL := schemaURL
+	if idx := strings.Index(schemaURL, "#"); idx != -1 {
+		baseURL = schemaURL[:idx]
+	}
+
 	// Remove prefix and suffix to get version: "2-0-2/OpenLineage.json" -> "2-0-2"
-	remainder := strings.TrimPrefix(schemaURL, "https://openlineage.io/spec/")
+	remainder := strings.TrimPrefix(baseURL, "https://openlineage.io/spec/")
 	versionWithHyphens := strings.TrimSuffix(remainder, "/OpenLineage.json")
 
 	// Convert hyphens to dots: "2-0-2" -> "2.0.2"
@@ -216,13 +226,27 @@ func ExtractOpenLineageVersion(schemaURL string) string {
 // This function uses a pre-compiled regex pattern for performance, avoiding
 // regex compilation overhead on every validation call.
 //
+// JSON Schema fragment references (e.g., #/$defs/RunEvent) are stripped before
+// validation, as they reference definitions within the schema document and are
+// valid per RFC 3986. The official OpenLineage Python library produces URLs with
+// these fragments.
+//
 // Examples:
 //
-//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/2-0-2/OpenLineage.json")  // true
-//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/1-8-0/OpenLineage.json")  // true
-//	IsValidOpenLineageSchemaURL("https://example.com/schema.json")                     // false
-//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/")                        // false
-//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/garbage")                 // false
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/2-0-2/OpenLineage.json")                    // true
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent")    // true
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/1-8-0/OpenLineage.json")                    // true
+//	IsValidOpenLineageSchemaURL("https://example.com/schema.json")                                       // false
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/")                                          // false
+//	IsValidOpenLineageSchemaURL("https://openlineage.io/spec/garbage")                                   // false
 func IsValidOpenLineageSchemaURL(url string) bool {
-	return openLineageSchemaURLPattern.MatchString(url)
+	// Strip JSON Schema fragment (everything after #) before validation.
+	// Fragments like #/$defs/RunEvent reference definitions within the schema
+	// and are produced by the official OpenLineage Python client library.
+	baseURL := url
+	if idx := strings.Index(url, "#"); idx != -1 {
+		baseURL = url[:idx]
+	}
+
+	return openLineageSchemaURLPattern.MatchString(baseURL)
 }

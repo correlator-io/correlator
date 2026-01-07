@@ -267,13 +267,20 @@ func (s *Server) buildLineageResponse(
 	for i := range events {
 		// Check validation error first
 		if validationErrors[i] != nil {
+			reason := validationErrors[i].Error()
 			failedEvents = append(failedEvents, FailedEvent{
 				Index:     i,
-				Reason:    validationErrors[i].Error(),
+				Reason:    reason,
 				Retriable: false, // Validation errors are permanent (bad request)
 			})
 			failed++
 			nonRetriable++
+
+			s.logger.Warn("Event validation failed",
+				slog.String("correlation_id", correlationID),
+				slog.Int("event_index", i),
+				slog.String("reason", reason),
+			)
 
 			continue
 		}
@@ -290,18 +297,30 @@ func (s *Server) buildLineageResponse(
 			failed++
 			nonRetriable++
 
+			s.logger.Error("Storage result missing for valid event",
+				slog.String("correlation_id", correlationID),
+				slog.Int("event_index", i),
+			)
+
 			continue
 		}
 
 		// Check storage error
 		if storeResult.Error != nil {
+			reason := storeResult.Error.Error()
 			failedEvents = append(failedEvents, FailedEvent{
 				Index:     i,
-				Reason:    storeResult.Error.Error(),
+				Reason:    reason,
 				Retriable: false, // Storage errors are typically constraint violations (non-retriable)
 			})
 			failed++
 			nonRetriable++
+
+			s.logger.Warn("Event storage failed",
+				slog.String("correlation_id", correlationID),
+				slog.Int("event_index", i),
+				slog.String("reason", reason),
+			)
 
 			continue
 		}

@@ -28,9 +28,12 @@
 #     - Invalid input validation (missing field)
 #     - Empty body rejection
 #
-#   Section 2: End-to-End Correlation (Tests 7-8)
-#     - Verify canonical ID format in correlation view ("tool:runID")
-#     - Test results extracted from dataQualityAssertions facet
+#   Section 2: End-to-End Correlation (Tests 7-10)
+#     - Verify canonical ID format in job_runs table ("tool:runID")
+#     - Event with dataQualityAssertions facet (realistic dbt-correlator format)
+#     - Test results extracted and stored in test_results table
+#     - Failed test status correctly identified
+#     - Note: Incident correlation view queries deferred to Week 3 (UI sprint)
 #
 # Reserved Namespace Convention:
 # - Tests use 'correlator-smoke-test' in all namespaces for automatic cleanup
@@ -536,6 +539,129 @@ SQL
         print_test_result "Test 7" "PASS" "Canonical ID format verified: $JOB_RUN_ID"
     else
         print_test_result "Test 7" "FAIL" "Invalid canonical ID format: $JOB_RUN_ID (expected 'tool:runID')"
+    fi
+fi
+echo ""
+
+#===============================================================================
+# Test 8: E2E Correlation - dataQualityAssertions extraction
+#===============================================================================
+# This test validates the core correlation feature:
+# - OpenLineage event with dataQualityAssertions facet
+# - Test results extracted and stored in test_results table
+# - Both passing and failing assertions included
+#
+# Note: Incident correlation view query tests deferred to Week 3 (UI sprint)
+#===============================================================================
+echo "Test 8: E2E event with dataQualityAssertions facet (200 OK)"
+
+E2E_CORRELATION_EVENT='{
+  "eventTime": "2025-10-21T10:30:00Z",
+  "eventType": "COMPLETE",
+  "producer": "https://github.com/correlator-io/dbt-correlator/0.1.0",
+  "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+  "run": {
+    "runId": "550e8400-e29b-41d4-a716-446655440003"
+  },
+  "job": {
+    "namespace": "dbt://correlator-smoke-test-analytics",
+    "name": "jaffle_shop.test"
+  },
+  "inputs": [
+    {
+      "namespace": "postgres://correlator-smoke-test-db:5432",
+      "name": "marts.orders",
+      "inputFacets": {
+        "dataQualityAssertions": {
+          "_producer": "https://github.com/correlator-io/dbt-correlator/0.1.0",
+          "_schemaURL": "https://openlineage.io/spec/facets/1-0-1/DataQualityAssertionsDatasetFacet.json",
+          "assertions": [
+            {
+              "assertion": "not_null(order_id)",
+              "success": true,
+              "column": "order_id"
+            },
+            {
+              "assertion": "unique(order_id)",
+              "success": false,
+              "column": "order_id"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": []
+}'
+
+RESPONSE=$(make_request "[$E2E_CORRELATION_EVENT]")
+STATUS=$(echo "$RESPONSE" | jq -r '.status')
+BODY=$(echo "$RESPONSE" | jq -r '.body')
+
+if [ "$STATUS" = "200" ]; then
+    # Validate OpenLineage compliance
+    VALIDATION_RESULT=$(validate_openlineage_response "$BODY" "success" 1 1 0)
+    if [ $? -eq 0 ]; then
+        print_test_result "Test 8" "PASS" "OpenLineage compliant with dataQualityAssertions - $VALIDATION_RESULT"
+    else
+        print_test_result "Test 8" "FAIL" "$VALIDATION_RESULT"
+    fi
+else
+    print_test_result "Test 8" "FAIL" "Expected HTTP 200, got $STATUS"
+fi
+echo ""
+
+#===============================================================================
+# Test 9: Verify test_results table populated from dataQualityAssertions
+#===============================================================================
+echo "Test 9: Verify test results extracted from facet"
+
+# Canonical job_run_id for E2E test event (format: "dbt:runID")
+E2E_JOB_RUN_ID="dbt:550e8400-e29b-41d4-a716-446655440003"
+
+if [ -z "$DATABASE_URL" ]; then
+    print_test_result "Test 9" "SKIP" "DATABASE_URL not set - cannot query database"
+elif ! command -v psql &> /dev/null; then
+    print_test_result "Test 9" "SKIP" "psql not installed - cannot query database"
+else
+    TEST_COUNT=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
+    SELECT COUNT(*) FROM test_results
+    WHERE job_run_id = '$E2E_JOB_RUN_ID';
+SQL
+    )
+    TEST_COUNT=$(echo "$TEST_COUNT" | tr -d ' ')
+
+    if [ "$TEST_COUNT" -ge 2 ]; then
+        print_test_result "Test 9" "PASS" "Test results extracted: $TEST_COUNT assertions stored in test_results table"
+    else
+        print_test_result "Test 9" "FAIL" "Expected ≥2 test results, got $TEST_COUNT (dataQualityAssertions extraction may have failed)"
+    fi
+fi
+echo ""
+
+#===============================================================================
+# Test 10: Verify failed test status extracted correctly
+#===============================================================================
+echo "Test 10: Verify failed test detected in test_results"
+
+if [ -z "$DATABASE_URL" ]; then
+    print_test_result "Test 10" "SKIP" "DATABASE_URL not set - cannot query database"
+elif ! command -v psql &> /dev/null; then
+    print_test_result "Test 10" "SKIP" "psql not installed - cannot query database"
+else
+    FAILED_TEST=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
+    SELECT test_name FROM test_results
+    WHERE job_run_id = '$E2E_JOB_RUN_ID'
+      AND status = 'failed'
+    LIMIT 1;
+SQL
+    )
+    FAILED_TEST=$(echo "$FAILED_TEST" | xargs)  # Trim whitespace
+
+    if [ -n "$FAILED_TEST" ]; then
+        print_test_result "Test 10" "PASS" "Failed test detected: '$FAILED_TEST' (correlation ready)"
+    else
+        print_test_result "Test 10" "FAIL" "No failed test found in test_results (status mapping may have failed)"
     fi
 fi
 echo ""
