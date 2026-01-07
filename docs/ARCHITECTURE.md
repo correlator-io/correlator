@@ -1,7 +1,7 @@
 # Architecture
 
 This document describes the internal architecture of `Correlator`, the incident correlation engine that processes
-OpenLineage events and correlates test failures with job runs to enable <5 minute incident response.
+OpenLineage events and correlates test failures with job runs to reduce incident response time.
 
 ## High-Level Architecture
 
