@@ -4,6 +4,51 @@
 BINARY_NAME=correlator
 DOCKER_TAG=correlator:latest
 GO_VERSION=1.25
+WEB_DIR=web
+
+# Helper function to ensure PostgreSQL is running
+ensure-postgres: ensure-env-file check-docker-environment
+	@echo "🐘 Checking PostgreSQL..."
+	@cd deployments/docker && \
+	if docker compose ps postgres --format "{{.State}}" 2>/dev/null | grep -q "running"; then \
+		echo "✅ PostgreSQL already running"; \
+	else \
+		echo "🐘 PostgreSQL not running, starting it..."; \
+		if docker compose up -d postgres; then \
+			echo "⏳ Waiting for PostgreSQL to be ready..."; \
+			sleep 3; \
+			if ./health-check.sh; then \
+				echo "✅ PostgreSQL ready"; \
+			else \
+				echo "❌ PostgreSQL failed health check"; \
+				echo "💡 Try: make docker health"; \
+				exit 1; \
+			fi; \
+		else \
+			echo "❌ Failed to start PostgreSQL"; \
+			echo "💡 Check Docker is running: docker info"; \
+			echo "💡 Try: make reset && make docker"; \
+			exit 1; \
+		fi; \
+	fi
+
+# Helper function to check npm availability
+check-npm:
+	@if ! command -v npm >/dev/null 2>&1; then \
+		echo "❌ npm not found. Please install Node.js first:"; \
+		echo "   - macOS: brew install node"; \
+		echo "   - Ubuntu: sudo apt install nodejs npm"; \
+		echo "   - Windows: Download from https://nodejs.org"; \
+		exit 1; \
+	fi
+
+# Helper function to check web dependencies
+check-web-deps: check-npm
+	@if [ ! -d "$(WEB_DIR)/node_modules" ]; then \
+		echo "📦 Installing frontend dependencies..."; \
+		cd $(WEB_DIR) && npm install; \
+		echo "✅ Frontend dependencies installed"; \
+	fi
 
 # Helper function to ensure we're not inside dev container (for host-only commands)
 ensure-not-in-dev-container:
@@ -254,6 +299,7 @@ run:
 			echo "💡 The development server should run on the host for proper network access."; \
 			exit 1; \
 		fi; \
+		$(MAKE) ensure-postgres || exit 1; \
 		echo "🏃 Starting development server..."; \
 		go run ./cmd/correlator; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "test" ]; then \
@@ -272,6 +318,8 @@ run:
 		$(MAKE) run-migrate-$(wordlist 3,3,$(MAKECMDGOALS)); \
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "smoketest" ]; then \
 		$(MAKE) run-smoketest; \
+	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "web" ]; then \
+		$(MAKE) run-web WEBCMD="$(wordlist 3,3,$(MAKECMDGOALS))"; \
 	else \
 		echo "❌ Unknown run command: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "📖 Available run commands:"; \
@@ -288,6 +336,10 @@ run:
 		echo "  make run migrate version    # Show migration version"; \
 		echo "  make run migrate drop       # Drop all tables (destructive, uses --force)"; \
 		echo "  make run smoketest          # Run smoke tests (end-to-end correlation validation)"; \
+		echo "  make run web                # Start frontend dev server"; \
+		echo "  make run web build          # Build frontend for production"; \
+		echo "  make run web lint           # Run frontend linter"; \
+		echo "  make run web test           # Run frontend tests"; \
 		exit 1; \
 	fi
 
@@ -339,6 +391,58 @@ run-migrate-drop:
 run-smoketest: ensure-not-in-dev-container
 	@echo "🧪 Running Correlator smoke tests..."
 	@./scripts/smoketest.sh
+
+# Frontend web commands
+run-web:
+	@if [ -f /.dockerenv ] && [ "$$PWD" = "/workspace" ]; then \
+		echo "❌ Frontend dev server should not run inside dev container"; \
+		echo ""; \
+		echo "🏠 Please run this command from the host machine:"; \
+		echo "   exit              # Exit dev container"; \
+		echo "   make run web      # Start frontend dev server on host"; \
+		echo ""; \
+		echo "💡 The dev container is for backend development."; \
+		echo "💡 The frontend dev server should run on the host for proper HMR."; \
+		exit 1; \
+	fi
+	@$(MAKE) run-web-internal WEBCMD="$(WEBCMD)"
+
+run-web-internal: check-web-deps
+	@if [ -z "$(WEBCMD)" ]; then \
+		echo "🌐 Starting frontend development server..."; \
+		echo "   URL: http://localhost:3000"; \
+		echo ""; \
+		cd $(WEB_DIR) && npm run dev; \
+	elif [ "$(WEBCMD)" = "build" ]; then \
+		$(MAKE) run-web-build; \
+	elif [ "$(WEBCMD)" = "lint" ]; then \
+		$(MAKE) run-web-lint; \
+	elif [ "$(WEBCMD)" = "test" ]; then \
+		$(MAKE) run-web-test; \
+	else \
+		echo "❌ Unknown web command: $(WEBCMD)"; \
+		echo "📖 Available web commands:"; \
+		echo "  make run web                # Start frontend dev server"; \
+		echo "  make run web build          # Build frontend for production"; \
+		echo "  make run web lint           # Run frontend linter"; \
+		echo "  make run web test           # Run frontend tests"; \
+		exit 1; \
+	fi
+
+run-web-build: check-web-deps
+	@echo "🔨 Building frontend for production..."
+	@cd $(WEB_DIR) && npm run build
+	@echo "✅ Frontend build complete!"
+
+run-web-lint: check-web-deps
+	@echo "📝 Running frontend linter..."
+	@cd $(WEB_DIR) && npm run lint
+	@echo "✅ Frontend lint complete!"
+
+run-web-test: check-web-deps
+	@echo "🧪 Running frontend tests..."
+	@cd $(WEB_DIR) && npm test
+	@echo "✅ Frontend tests complete!"
 
 # Internal helper for environment-aware migrations
 run-migrator:
@@ -592,7 +696,7 @@ help:
 	@echo ""
 	@echo "🚀 Getting Started:"
 	@echo "    start   - Begin working (smart setup + exec into dev container)"
-	@echo "    run     - Execute something (run, run test, run migrate up)"
+	@echo "    run     - Execute something (run, run test, run migrate up, run web)"
 	@echo ""
 	@echo "🛠️  Daily Development:"
 	@echo "    check   - Verify code quality (lint + test + vet)"
@@ -609,14 +713,20 @@ help:
 	@echo "    reset   - Start fresh (clean everything + stop services)"
 	@echo ""
 	@echo "📖 Examples:"
-	@echo "    🚀 Development:"
+	@echo "    🚀 Backend Development:"
 	@echo "        make start                    # Smart setup + enter dev container"
-	@echo "        make run                      # Start development server"
+	@echo "        make run                      # Start backend development server"
 	@echo "        make run test                 # Run all tests"
 	@echo "        make run smoketest            # Run smoke tests (end-to-end correlation validation)"
 	@echo "        make run benchmark            # Run benchmark tests"
 	@echo "        make run linter               # Run linter"
 	@echo "        make check                    # Check code quality before commit"
+	@echo ""
+	@echo "    🌐 Frontend Development:"
+	@echo "        make run web                  # Start frontend dev server (localhost:3000)"
+	@echo "        make run web build            # Build frontend for production"
+	@echo "        make run web lint             # Run frontend linter"
+	@echo "        make run web test             # Run frontend tests"
 	@echo ""
 	@echo "    🐳 Environment:"
 	@echo "        make docker                   # Start development environment"
@@ -637,6 +747,7 @@ help:
 	@echo "⚡ Quick Start:"
 	@echo "    🆕 New to this project?          make start"
 	@echo "    💻 Daily development?            make start"
+	@echo "    🌐 Frontend development?         make run web"
 	@echo "    🚀 Ready to deploy?              make check && make deploy"
 	@echo ""
 	@echo "💡 For detailed options: make <command> --help"
