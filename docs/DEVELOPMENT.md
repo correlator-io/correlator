@@ -49,7 +49,9 @@ Our development workflow is built around **8 intent-based commands** that handle
 
 ## Development Workflow
 
-### First Time Setup
+### Backend Development (Inside Dev Container)
+
+#### First Time Setup
 
 ```bash
 # Clone and start (zero configuration)
@@ -60,10 +62,8 @@ make start                    # Complete environment setup + enter dev container
 # You're now inside the dev container, ready to code!
 ```
 
-### Daily Development
-
 ```bash
-# Morning startup (if environment exists)
+# Morning startup
 make start                    # Quick entry into dev container
 
 # Inside dev container - your daily commands:
@@ -72,16 +72,35 @@ make run test unit            # Quick unit tests
 make run benchmark            # Performance benchmarks
 make check                    # Code quality before commit
 
-# Database operations (inside dev container):
+# Database operations:
 make run migrate up           # Apply new migrations
 make run migrate status       # Check migration status
 ```
 
-### From Host Machine
+### Frontend Development (On Host Machine)
+
+Frontend development runs on the host machine, not inside the dev container. This provides better Hot Module Replacement (HMR) and file watching performance.
 
 ```bash
-# Service management (run from host):
-make run                      # Start development server
+# Open a new terminal (don't enter dev container)
+cd correlator
+make run web                  # Start Next.js dev server at localhost:3000
+
+# Other frontend commands (from host):
+make run web build            # Build for production
+make run web lint             # Run ESLint
+make run web test             # Run frontend tests
+```
+
+**Tip:** Run backend and frontend in separate terminals:
+- Terminal 1: `make start` → backend dev container
+- Terminal 2: `make run web` → frontend dev server
+
+### Service Management (From Host)
+
+```bash
+# Run from host (outside dev container):
+make run                      # Start backend development server
 make docker prod              # Run full production stack
 make docker stop              # Stop all services
 make deploy                   # Prepare for production
@@ -93,15 +112,18 @@ make deploy                   # Prepare for production
 
 ### Two Development Contexts
 
-**🏗️ Dev Container** (for coding):
-- All development tools (Go, linters, etc.)
+**🏗️ Dev Container** (for backend development):
+- All Go development tools (Go, linters, etc.)
 - Direct database access via environment variables  
 - Code editing, testing, migrations
 - **Access**: `make start` enters automatically
 
-**🏠 Host Machine** (for services):
-- Development server execution
+**🏠 Host Machine** (for frontend and services):
+- Frontend development server (Next.js)
+- Backend development server execution
 - Docker orchestration
+- Production builds and deployments
+- **Usage**: Exit dev container or open new terminal
 - Production builds and deployments
 - **Usage**: Exit dev container, then run commands
 
@@ -144,6 +166,12 @@ make run benchmark            # Benchmark tests
 make run migrate up           # Apply migrations
 make run migrate down         # Rollback migration
 make run migrate status       # Migration status
+
+# Frontend development (host only)
+make run web                  # Start frontend dev server (localhost:3000)
+make run web build            # Build frontend for production
+make run web lint             # Run frontend linter
+make run web test             # Run frontend tests
 ```
 
 ### 🔍 `make check` - Code Quality
@@ -389,9 +417,16 @@ make docker                   # Shows available docker operations
 make start                    # One command, ready to code
 ```
 
+**Frontend Development**:
+```bash
+# From host machine (not inside dev container)
+make run web                  # Start Next.js dev server at localhost:3000
+```
+
 **Pre-Commit Check**:
 ```bash
-make check                    # Quality gate before commit
+make check                    # Backend quality gate
+make run web lint             # Frontend quality gate
 ```
 
 **Performance Analysis**:
