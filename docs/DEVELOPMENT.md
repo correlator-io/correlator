@@ -252,7 +252,7 @@ make reset                    # When things go wrong:
 **Required**:
 - **Docker Desktop** (must be running)
 - **Git**
-- **npm** (for devcontainer CLI and frontend development)
+- **npm**
 
 **Optional** (auto-installed):
 - devcontainer CLI
