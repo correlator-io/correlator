@@ -69,7 +69,6 @@ function EmptyState({ filter }: { filter: FilterValue }) {
   const filterLabels: Record<FilterValue, string> = {
     all: "incidents",
     failed: "failed tests",
-    passed: "passed tests",
     correlation_issues: "correlation issues",
   };
 

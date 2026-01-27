@@ -9,7 +9,8 @@ import {
 } from "@/components/ui/select";
 import { Filter } from "lucide-react";
 
-export type FilterValue = "all" | "failed" | "passed" | "correlation_issues";
+// MVP: "passed" filter deferred to beta - correlation only matters for failures
+export type FilterValue = "all" | "failed" | "correlation_issues";
 
 interface IncidentFilterProps {
   value: FilterValue;
@@ -19,7 +20,6 @@ interface IncidentFilterProps {
 const filterOptions: { value: FilterValue; label: string }[] = [
   { value: "all", label: "All incidents" },
   { value: "failed", label: "Failed" },
-  { value: "passed", label: "Passed" },
   { value: "correlation_issues", label: "Correlation issues" },
 ];
 

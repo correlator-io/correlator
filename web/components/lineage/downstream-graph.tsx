@@ -1,24 +1,18 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import type { DownstreamDataset } from "@/lib/types";
 import {
   ReactFlow,
   Node,
   Edge,
   Background,
   Controls,
-  MiniMap,
   useNodesState,
   useEdgesState,
   ConnectionMode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-
-export interface DownstreamDataset {
-  urn: string;
-  name: string;
-  depth: number;
-}
 
 interface DownstreamGraphProps {
   sourceDataset: {
@@ -70,28 +64,14 @@ export function DownstreamGraph({
     });
   });
 
-  // Create edges - connect each node to source or parent depth
+  // Create edges using parentUrn for accurate connections
   downstream.forEach((ds) => {
-    if (ds.depth === 1) {
-      // Connect directly to source
-      initialEdges.push({
-        id: `${sourceDataset.urn}-${ds.urn}`,
-        source: sourceDataset.urn,
-        target: ds.urn,
-        animated: true,
-      });
-    } else {
-      // Find a parent at depth - 1 (simplified: connect to first parent)
-      const parents = byDepth.get(ds.depth - 1) || [];
-      if (parents.length > 0) {
-        initialEdges.push({
-          id: `${parents[0].urn}-${ds.urn}`,
-          source: parents[0].urn,
-          target: ds.urn,
-          animated: true,
-        });
-      }
-    }
+    initialEdges.push({
+      id: `${ds.parentUrn}-${ds.urn}`,
+      source: ds.parentUrn,
+      target: ds.urn,
+      animated: true,
+    });
   });
 
   const [nodes] = useNodesState(initialNodes);
