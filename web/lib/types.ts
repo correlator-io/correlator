@@ -51,6 +51,7 @@ export interface DownstreamDataset {
   urn: string;
   name: string;
   depth: number;
+  parentUrn: string; // For building lineage tree
 }
 
 export interface OrphanNamespace {

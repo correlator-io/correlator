@@ -14,7 +14,7 @@ import type {
  */
 export const MOCK_INCIDENTS: Incident[] = [
   {
-    id: "inc-001",
+    id: "1",
     testName: "not_null_orders_customer_id",
     testType: "not_null",
     testStatus: "failed",
@@ -28,7 +28,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T10:30:00Z",
   },
   {
-    id: "inc-002",
+    id: "2",
     testName: "expect_column_values_to_not_be_null",
     testType: "expect_column_values_to_not_be_null",
     testStatus: "failed",
@@ -42,7 +42,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T10:35:00Z",
   },
   {
-    id: "inc-003",
+    id: "3",
     testName: "unique_customers_customer_id",
     testType: "unique",
     testStatus: "passed",
@@ -56,7 +56,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T09:15:00Z",
   },
   {
-    id: "inc-004",
+    id: "4",
     testName: "relationships_orders_customer_id",
     testType: "relationships",
     testStatus: "failed",
@@ -70,7 +70,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T10:30:15Z",
   },
   {
-    id: "inc-005",
+    id: "5",
     testName: "expect_column_values_to_be_between",
     testType: "expect_column_values_to_be_between",
     testStatus: "warning",
@@ -84,7 +84,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T10:36:00Z",
   },
   {
-    id: "inc-006",
+    id: "6",
     testName: "not_null_products_sku",
     testType: "not_null",
     testStatus: "passed",
@@ -98,7 +98,7 @@ export const MOCK_INCIDENTS: Incident[] = [
     executedAt: "2026-01-23T08:00:00Z",
   },
   {
-    id: "inc-007",
+    id: "7",
     testName: "accepted_values_status",
     testType: "accepted_values",
     testStatus: "passed",
@@ -117,8 +117,8 @@ export const MOCK_INCIDENTS: Incident[] = [
  * Mock incident detail with full correlation data
  */
 export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
-  "inc-001": {
-    id: "inc-001",
+  "1": {
+    id: "1",
     test: {
       name: "not_null_orders_customer_id",
       type: "not_null",
@@ -142,24 +142,24 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       startedAt: "2026-01-23T10:25:00Z",
       completedAt: "2026-01-23T10:28:45Z",
     },
-    // Simplified downstream for mockup: linear chain where depth-based inference works correctly
-    // Real API will provide parentUrn for accurate edge connections (see Task 3.10)
     downstream: [
       {
         urn: "postgresql://prod/public.fct_daily_revenue",
         name: "fct_daily_revenue",
         depth: 1,
+        parentUrn: "postgresql://prod/public.orders",
       },
       {
         urn: "postgresql://prod/public.exec_dashboard",
         name: "exec_dashboard",
-        depth: 2, // Connects to fct_daily_revenue (only depth-1 node)
+        depth: 2,
+        parentUrn: "postgresql://prod/public.fct_daily_revenue",
       },
     ],
     correlationStatus: "correlated",
   },
-  "inc-002": {
-    id: "inc-002",
+  "2": {
+    id: "2",
     test: {
       name: "expect_column_values_to_not_be_null",
       type: "expect_column_values_to_not_be_null",
@@ -178,8 +178,8 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
     downstream: [],
     correlationStatus: "orphan",
   },
-  "inc-003": {
-    id: "inc-003",
+  "3": {
+    id: "3",
     test: {
       name: "unique_customers_customer_id",
       type: "unique",
@@ -207,16 +207,19 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
         urn: "postgresql://prod/public.fct_customer_ltv",
         name: "fct_customer_ltv",
         depth: 1,
+        parentUrn: "postgresql://prod/public.customers",
       },
       {
         urn: "postgresql://prod/public.customer_segments",
         name: "customer_segments",
         depth: 1,
+        parentUrn: "postgresql://prod/public.customers",
       },
       {
         urn: "postgresql://prod/public.marketing_targets",
         name: "marketing_targets",
         depth: 2,
+        parentUrn: "postgresql://prod/public.fct_customer_ltv",
       },
     ],
     correlationStatus: "correlated",
