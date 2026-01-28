@@ -118,41 +118,59 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 	err = store.RefreshViews(ctx)
 	require.NoError(t, err)
 
-	// Test unfiltered query
+	// Test unfiltered query (no pagination)
 	t.Run("UnfilteredQuery", func(t *testing.T) {
 		start := time.Now()
 
-		incidents, err := store.QueryIncidents(ctx, nil)
+		result, err := store.QueryIncidents(ctx, nil, nil)
 
 		duration := time.Since(start)
 
 		require.NoError(t, err)
-		t.Logf("✅ QueryIncidents returned %d incidents in %v (P95 target: <10ms)", len(incidents), duration)
+		t.Logf("✅ QueryIncidents returned %d incidents in %v (P95 target: <10ms)", len(result.Incidents), duration)
 
 		// P95 target: <10ms for 100 incidents (realistic production target)
 		assert.Less(t, duration, 10*time.Millisecond,
 			"QueryIncidents should complete in <10ms (P95)")
 	})
 
-	// Test filtered query
-	t.Run("FilteredByStatus", func(t *testing.T) {
-		failedStatus := statusFailed
+	// Test filtered query (by producer)
+	t.Run("FilteredByProducer", func(t *testing.T) {
+		producer := "dbt"
 		filter := &correlation.IncidentFilter{
-			TestStatus: &failedStatus,
+			ProducerName: &producer,
 		}
 
 		start := time.Now()
 
-		incidents, err := store.QueryIncidents(ctx, filter)
+		result, err := store.QueryIncidents(ctx, filter, nil)
 
 		duration := time.Since(start)
 
 		require.NoError(t, err)
-		t.Logf("✅ Filtered query returned %d incidents in %v (P50 target: <5ms)", len(incidents), duration)
+		t.Logf("✅ Filtered query returned %d incidents in %v (P50 target: <5ms)", len(result.Incidents), duration)
 
 		// P50 target: <5ms for filtered queries (realistic production target)
 		assert.Less(t, duration, 5*time.Millisecond,
 			"Filtered queries should complete in <5ms (P50)")
+	})
+
+	// Test paginated query
+	t.Run("PaginatedQuery", func(t *testing.T) {
+		pagination := &correlation.Pagination{Limit: 20, Offset: 0}
+
+		start := time.Now()
+
+		result, err := store.QueryIncidents(ctx, nil, pagination)
+
+		duration := time.Since(start)
+
+		require.NoError(t, err)
+		t.Logf("✅ Paginated query returned %d incidents (total: %d) in %v", len(result.Incidents), result.Total, duration)
+
+		// Paginated queries should be faster since they fetch fewer rows
+		assert.Less(t, duration, 10*time.Millisecond,
+			"Paginated queries should complete in <10ms")
 	})
 }
 
