@@ -63,7 +63,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	require.NoError(t, err, "Failed to add API key")
 
 	// Create server config
-	config := &ServerConfig{
+	cfg := &ServerConfig{
 		Port:               8080,
 		Host:               "localhost",
 		ReadTimeout:        30 * time.Second,
@@ -78,7 +78,8 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	}
 
 	// Create server with dependencies (no rate limiter for lineage tests)
-	server := NewServer(config, keyStore, nil, lineageStore)
+	// lineageStore implements both ingestion.Store and correlation.Store
+	server := NewServer(cfg, keyStore, nil, lineageStore, lineageStore)
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {

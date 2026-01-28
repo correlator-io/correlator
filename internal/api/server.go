@@ -14,20 +14,22 @@ import (
 	"time"
 
 	"github.com/correlator-io/correlator/internal/api/middleware"
+	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
 // Server represents the HTTP API server.
 type Server struct {
-	httpServer   *http.Server
-	logger       *slog.Logger
-	config       *ServerConfig
-	startTime    time.Time
-	apiKeyStore  storage.APIKeyStore
-	rateLimiter  middleware.RateLimiter
-	lineageStore ingestion.Store
-	validator    *ingestion.Validator // Shared validator (thread-safe, created once)
+	httpServer       *http.Server
+	logger           *slog.Logger
+	config           *ServerConfig
+	startTime        time.Time
+	apiKeyStore      storage.APIKeyStore
+	rateLimiter      middleware.RateLimiter
+	ingestionStore   ingestion.Store
+	correlationStore correlation.Store    // Optional: enables correlation API endpoints (nil = disabled)
+	validator        *ingestion.Validator // Shared validator (thread-safe, created once)
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
@@ -40,22 +42,23 @@ type Server struct {
 //   - cfg: Pure server configuration (ports, timeouts, CORS settings)
 //   - apiKeyStore: API key storage implementation (nil disables authentication)
 //   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
-//   - lineageStore: Lineage event storage implementation (REQUIRED - panics if nil)
+//   - ingestionStore: open lineage events store (REQUIRED - panics if nil)
+//   - correlationStore: Correlation query implementation (nil disables correlation endpoints)
 func NewServer(
 	cfg *ServerConfig,
 	apiKeyStore storage.APIKeyStore,
 	rateLimiter middleware.RateLimiter,
-	lineageStore ingestion.Store,
+	ingestionStore ingestion.Store,
+	correlationStore correlation.Store,
 ) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
 
-	// Fail-fast: lineageStore is required (OpenLineage ingestion is core functionality)
-	if lineageStore == nil {
+	if ingestionStore == nil || correlationStore == nil {
 		logger.Error("LineageStore is required - cannot start server without core functionality")
-		panic("correlator: lineageStore cannot be nil - this indicates a configuration error")
+		panic("correlator: LineageStore cannot be nil - this indicates a configuration error")
 	}
 
 	// Create base HTTP mux
@@ -66,12 +69,13 @@ func NewServer(
 
 	// Create server instance for route setup
 	server := &Server{
-		logger:       logger,
-		config:       cfg,
-		apiKeyStore:  apiKeyStore,
-		rateLimiter:  rateLimiter,
-		lineageStore: lineageStore,
-		validator:    validator,
+		logger:           logger,
+		config:           cfg,
+		apiKeyStore:      apiKeyStore,
+		rateLimiter:      rateLimiter,
+		ingestionStore:   ingestionStore,
+		correlationStore: correlationStore,
+		validator:        validator,
 	}
 
 	// Set up all API routes
@@ -91,7 +95,7 @@ func NewServer(
 	}
 
 	// LineageStore is always configured (we panic if nil above)
-	logger.Info("Lineage store configured - lineage endpoints enabled")
+	logger.Info("Lineage store configured - all api endpoints enabled")
 
 	// Apply middleware chain using functional options pattern.
 	// Middleware executes in the order listed (top-to-bottom):
@@ -193,7 +197,9 @@ func (s *Server) shutdown() error {
 	// Close all dependencies (best-effort - log failures but continue shutdown)
 	s.closeDependency("API key store", s.apiKeyStore)
 	s.closeDependency("rate limiter", s.rateLimiter)
-	s.closeDependency("lineage store", s.lineageStore)
+	s.closeDependency("ingestion store", s.ingestionStore)
+	// Note: correlationStore is typically the same instance as ingestionStore,
+	// so we don't close it separately to avoid double-close
 
 	s.logger.Info("Server shutdown completed successfully")
 

@@ -122,7 +122,8 @@ func main() {
 		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
 	)
 
-	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore)
+	// lineageStore implements both ingestion.Store and correlation.Store interfaces
+	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore)
 
 	if err := server.Start(); err != nil {
 		logger.Error("Server failed to start",
