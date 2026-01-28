@@ -230,7 +230,7 @@ func (s *Server) storeValidEvents(
 	storeResults := make([]*ingestion.EventStoreResult, len(events))
 
 	if len(validEvents) > 0 {
-		validResults, err := s.lineageStore.StoreEvents(ctx, validEvents)
+		validResults, err := s.ingestionStore.StoreEvents(ctx, validEvents)
 		if err != nil {
 			s.logger.Error("Failed to store events",
 				slog.String("correlation_id", correlationID),
