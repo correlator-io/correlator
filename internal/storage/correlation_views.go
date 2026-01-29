@@ -832,29 +832,26 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 
 	// Query correlation rate and total datasets
 	query := `
-		WITH producer_namespaces AS (
-			SELECT DISTINCT d.namespace
-			FROM lineage_edges le
-			JOIN datasets d ON le.dataset_urn = d.dataset_urn
-			WHERE le.edge_type = 'output'
-			  AND d.namespace != ''
+		WITH all_failed_tests AS (
+			-- Total failed/error tests across all datasets
+			SELECT COUNT(*) AS total_incidents
+			FROM test_results
+			WHERE status IN ('failed', 'error')
 		),
-		incident_stats AS (
-			SELECT
-				COUNT(*) AS total_incidents,
-				COUNT(*) FILTER (WHERE dataset_namespace IN (SELECT namespace FROM producer_namespaces)) AS correlated_incidents
+		correlated_incidents AS (
+			-- Incidents that have lineage correlation (in the view)
+			SELECT COUNT(*) AS correlated_count
 			FROM incident_correlation_view
-			WHERE dataset_namespace != ''
 		),
 		dataset_stats AS (
 			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
 			FROM test_results
 		)
 		SELECT
-			COALESCE(i.total_incidents, 0) AS total_incidents,
-			COALESCE(i.correlated_incidents, 0) AS correlated_incidents,
+			COALESCE(a.total_incidents, 0) AS total_incidents,
+			COALESCE(c.correlated_count, 0) AS correlated_incidents,
 			COALESCE(d.total_datasets, 0) AS total_datasets
-		FROM incident_stats i, dataset_stats d
+		FROM all_failed_tests a, correlated_incidents c, dataset_stats d
 	`
 
 	var totalIncidents, correlatedIncidents, totalDatasets int
