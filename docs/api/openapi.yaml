@@ -4,199 +4,196 @@ info:
   version: 1.0.0
   description: |
     **Correlator Incident Correlation Engine API**
+
+    Correlator automatically connects test failures to job runs and downstream impact
+    across your data stack (dbt, Airflow, Great Expectations).
+
+    ## Authentication
+
+    Protected endpoints require API key authentication via `X-Api-Key` header.
+    Public health endpoints (`/ping`, `/ready`, `/health`) do not require authentication.
+
+    ## Base URLs
+
+    - API endpoints: `/api/v1/*`
+    - Health probes: `/ping`, `/ready`, `/health` (root level)
+
 servers:
-  - url: http://localhost:8080/api/v1
+  - url: http://localhost:8080
     description: Local development server
-  - url: https://getcorrelator.io/api/v1
-    description: Production server
 
 security:
   - ApiKeyAuth: []
-  - {} # No authentication for MVP (localhost binding)
+
+tags:
+  - name: Health Probes
+    description: Kubernetes liveness/readiness probes (public, no auth required)
+  - name: OpenLineage Ingestion
+    description: Plugin integration endpoint for OpenLineage event ingestion
+  - name: Correlation Queries
+    description: Incident list and detail endpoints for UI
+  - name: Correlation Health
+    description: Correlation system health and orphan namespace detection
 
 paths:
-  # OpenLineage Ingestion - Primary plugin integration
-  /lineage/events:
+  # Public Health Probes (no /api/v1 prefix, no auth)
+  /ping:
+    get:
+      summary: Liveness probe
+      description: |
+        Kubernetes liveness probe. Returns "pong" if the server is running.
+        No authentication required.
+      operationId: ping
+      tags:
+        - Health Probes
+      security: []
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: pong
+
+  /ready:
+    get:
+      summary: Readiness probe
+      description: |
+        Kubernetes readiness probe. Checks storage backend health.
+        Returns 503 if storage is unavailable.
+        No authentication required.
+      operationId: ready
+      tags:
+        - Health Probes
+      security: []
+      responses:
+        '200':
+          description: Server is ready to accept traffic
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        '503':
+          description: Storage backend unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: storage unavailable
+
+  /health:
+    get:
+      summary: Health check
+      description: |
+        Basic health check endpoint returning service status, version, and uptime.
+        No authentication required.
+      operationId: health
+      tags:
+        - Health Probes
+      security: []
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: healthy
+                serviceName: correlator
+                version: v1.0.0
+                uptime: 2h30m15s
+
+  # Protected API Endpoints (/api/v1/*)
+  /api/v1/lineage/events:
     post:
       summary: Ingest OpenLineage events
       description: |
         Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant RunEvents
-        from external plugins.
+        from Correlator plugins (dbt-correlator, correlator-airflow, correlator-ge).
+
+        Events are processed with idempotency - duplicate events are detected and counted
+        as successful (OpenLineage specification behavior).
+
+        **Request Limits:**
+        - Max batch size: 1000 events
+        - Max request body: 1 MB
       operationId: ingestLineageEvents
       tags:
         - OpenLineage Ingestion
       requestBody:
-        description: |
-          Array of OpenLineage RunEvents. Single events should be sent as arrays of length 1.
-          This approach simplifies client implementation and aligns with OpenLineage's batch-oriented design.
         required: true
         content:
           application/json:
             schema:
               type: array
               items:
-                $ref: './schemas/openlineage.yaml#/components/schemas/RunEvent'
+                $ref: '#/components/schemas/LineageEvent'
               minItems: 1
               maxItems: 1000
-              description: Batch of RunEvents (up to 1000 events, ~1MB request limit)
-            examples:
-              single_event:
-                summary: Single event (sent as array with 1 element)
-                value:
-                  - eventTime: "2024-01-01T12:00:00Z"
-                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
-                    eventType: "START"
-                    run:
-                      runId: "dbt:abc123-def456"
-                    job:
-                      namespace: "dbt"
-                      name: "models.users"
-                    inputs: []
-                    outputs: []
-              batch_events:
-                summary: Batch of events for single run
-                value:
-                  - eventTime: "2024-01-01T12:00:00Z"
-                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
-                    eventType: "START"
-                    run:
-                      runId: "dbt:abc123-def456"
-                    job:
-                      namespace: "dbt"
-                      name: "models.users"
-                  - eventTime: "2024-01-01T12:05:00Z"
-                    producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-                    schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
-                    eventType: "COMPLETE"
-                    run:
-                      runId: "dbt:abc123-def456"
-                    job:
-                      namespace: "dbt"
-                      name: "models.users"
+            example:
+              - eventTime: "2024-01-01T12:00:00Z"
+                producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+                eventType: "COMPLETE"
+                run:
+                  runId: "dbt:abc123-def456"
+                job:
+                  namespace: "dbt_prod"
+                  name: "models.users"
+                inputs:
+                  - namespace: "postgresql://prod-db/public"
+                    name: "raw_users"
+                outputs:
+                  - namespace: "postgresql://prod-db/public"
+                    name: "clean_users"
       responses:
         '200':
-          description: All events processed successfully (stored or duplicates)
+          description: All events processed successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LineageResponse'
-              examples:
-                all_stored:
-                  summary: All events stored successfully
-                  value:
-                    status: "success"
-                    summary:
-                      received: 2
-                      successful: 2
-                      failed: 0
-                      retriable: 0
-                      non_retriable: 0
-                    failed_events: []
-                    correlation_id: "123e4567-e89b-12d3-a456-426614174000"
-                    timestamp: "2024-01-01T12:05:30Z"
-                all_duplicates:
-                  summary: All events are duplicates (idempotency - OpenLineage treats as successful)
-                  value:
-                    status: "success"
-                    summary:
-                      received: 2
-                      successful: 2
-                      failed: 0
-                      retriable: 0
-                      non_retriable: 0
-                    failed_events: []
-                    correlation_id: "234e5678-e89b-12d3-a456-426614174001"
-                    timestamp: "2024-01-01T12:05:31Z"
         '207':
-          description: Partial success - some events stored, some failed validation
+          description: Partial success - some events failed validation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LineageResponse'
-              example:
-                status: "partial_success"
-                summary:
-                  received: 4
-                  successful: 3
-                  failed: 1
-                  retriable: 0
-                  non_retriable: 1
-                failed_events:
-                  - index: 3
-                    reason: "missing required field: run.runId"
-                    retriable: false
-                correlation_id: "345e6789-e89b-12d3-a456-426614174002"
-                timestamp: "2024-01-01T12:05:32Z"
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
-        '422':
-          $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
 
-  # Plugin Management
-  /plugins/health:
+  /api/v1/incidents:
     get:
-      summary: Plugin health check endpoint
+      summary: List incidents
       description: |
-        Health check endpoint for plugin integration validation. Used by setup wizard
-        and continuous monitoring to ensure plugin connectivity.
-      operationId: checkPluginHealth
-      tags:
-        - Plugin Management
-      parameters:
-        - name: plugin_name
-          in: query
-          description: Specific plugin to check (e.g., 'correlator-dbt', 'correlator-airflow')
-          schema:
-            type: string
-            enum: [correlator-dbt, correlator-airflow, correlator-ge, custom]
-      responses:
-        '200':
-          description: Plugin health status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PluginHealthResponse'
-        '500':
-          $ref: '#/components/responses/InternalError'
+        Retrieve paginated list of incidents (failed test results with correlation info).
+        Supports filtering by time range.
 
-  /plugins/discovery:
-    get:
-      summary: Plugin discovery and registration
-      description: Plugin discovery endpoint for automatic plugin detection and registration
-      operationId: discoverPlugins
-      tags:
-        - Plugin Management
-      responses:
-        '200':
-          description: Available plugins
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PluginDiscoveryResponse'
-
-  # Correlation Queries - For UI and 2-click Navigation
-  /incidents:
-    get:
-      summary: List recent incidents
-      description: |
-        Retrieve recent incidents for dashboard display. Supports 2-click navigation:
-        incident list → incident detail.
-
-        **Performance Target**: <200ms response time for dashboard queries.
+        The view only returns failed/error test results that have lineage correlation.
       operationId: listIncidents
       tags:
         - Correlation Queries
       parameters:
+        - name: since
+          in: query
+          description: Filter incidents after this timestamp (ISO8601)
+          schema:
+            type: string
+            format: date-time
+          example: "2024-01-01T00:00:00Z"
         - name: limit
           in: query
           description: Maximum number of incidents to return
@@ -212,443 +209,216 @@ paths:
             type: integer
             minimum: 0
             default: 0
-        - name: status
-          in: query
-          description: Filter by incident status
-          schema:
-            type: string
-            enum: [active, resolved, investigating]
-        - name: severity
-          in: query
-          description: Filter by incident severity
-          schema:
-            type: string
-            enum: [critical, high, medium, low]
-        - name: time_range
-          in: query
-          description: Time range for incidents
-          schema:
-            type: string
-            enum: [1h, 6h, 24h, 7d, 30d]
-            default: 24h
       responses:
         '200':
-          description: List of incidents
+          description: Paginated list of incidents
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IncidentListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /incidents/{incident_id}:
+  /api/v1/incidents/{id}:
     get:
       summary: Get incident details
       description: |
-        Retrieve detailed incident information for root cause analysis. Second click
-        in 2-click navigation workflow.
+        Retrieve detailed incident information including test details, dataset info,
+        producing job, and downstream impact.
 
-        **Performance Target**: <1s response time for complex lineage queries.
+        The `correlation_status` field indicates:
+        - `correlated`: Fully correlated with a data-producing job
+        - `orphan`: Namespace aliasing issue (needs configuration)
+        - `unknown`: Correlation status cannot be determined
       operationId: getIncidentDetails
       tags:
         - Correlation Queries
       parameters:
-        - name: incident_id
+        - name: id
           in: path
           required: true
-          description: Unique incident identifier
+          description: Test result ID (numeric)
           schema:
             type: string
-            format: uuid
-        - name: include_lineage
-          in: query
-          description: Include upstream/downstream lineage information
-          schema:
-            type: boolean
-            default: true
-        - name: lineage_depth
-          in: query
-          description: Maximum depth for lineage traversal
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10
-            default: 3
+          example: "123"
       responses:
         '200':
-          description: Incident details with correlation information
+          description: Incident details with downstream impact
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IncidentDetailsResponse'
+                $ref: '#/components/schemas/IncidentDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /lineage/traverse:
+  /api/v1/health/correlation:
     get:
-      summary: Traverse dataset lineage
+      summary: Get correlation health
       description: |
-        Traverse dataset lineage for impact analysis. Used by incident detail view
-        to show upstream/downstream relationships.
-      operationId: traverseLineage
+        Returns correlation system health metrics including:
+        - Correlation rate (correlated incidents / total incidents)
+        - Total datasets with test results
+        - Orphan namespaces that need alias configuration
+
+        Orphan namespaces indicate namespace aliasing issues where validators
+        (Great Expectations, Soda) emit different namespace formats than
+        data producers (dbt, Airflow).
+      operationId: getCorrelationHealth
       tags:
-        - Correlation Queries
-      parameters:
-        - name: dataset_urn
-          in: query
-          required: true
-          description: Dataset URN to start traversal from
-          schema:
-            type: string
-            example: "postgres://prod.db/clean.users"
-        - name: direction
-          in: query
-          description: Traversal direction
-          schema:
-            type: string
-            enum: [upstream, downstream, both]
-            default: both
-        - name: depth
-          in: query
-          description: Maximum traversal depth
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10
-            default: 3
+        - Correlation Health
       responses:
         '200':
-          description: Lineage traversal results
+          description: Correlation health metrics
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LineageTraversalResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: '#/components/schemas/CorrelationHealthResponse'
+              example:
+                correlation_rate: 0.87
+                total_datasets: 47
+                orphan_namespaces:
+                  - namespace: postgres_prod
+                    producer: great_expectations
+                    last_seen: "2024-01-29T15:00:00Z"
+                    event_count: 42
+                    suggested_alias: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
-
-  # System Health and Metrics
-  /health:
-    get:
-      summary: System health check
-      description: |
-        Overall system health for setup validation and monitoring. Used by
-        `correlator validate-setup` command and health dashboards.
-      operationId: getSystemHealth
-      tags:
-        - System Health
-      responses:
-        '200':
-          description: System health status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SystemHealthResponse'
-        '503':
-          description: System unhealthy
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SystemHealthResponse'
-
-  /metrics:
-    get:
-      summary: Get system metrics
-      description: |
-        System performance and correlation accuracy metrics. Critical for monitoring
-        >90% correlation accuracy target.
-      operationId: getSystemMetrics
-      tags:
-        - System Health
-      parameters:
-        - name: format
-          in: query
-          description: Metrics format
-          schema:
-            type: string
-            enum: [json, prometheus]
-            default: json
-        - name: time_range
-          in: query
-          description: Time range for metrics
-          schema:
-            type: string
-            enum: [1h, 6h, 24h, 7d]
-            default: 1h
-      responses:
-        '200':
-          description: System metrics
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SystemMetricsResponse'
-            text/plain:
-              schema:
-                type: string
-                description: Prometheus-formatted metrics
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /metrics/correlation-accuracy:
-    get:
-      summary: Get correlation accuracy metrics
-      description: |
-        Detailed correlation accuracy metrics for validation of >90% accuracy target.
-        Used by monitoring systems and business metrics tracking.
-      operationId: getCorrelationAccuracy
-      tags:
-        - System Health
-      parameters:
-        - name: time_window
-          in: query
-          description: Time window for accuracy measurement
-          schema:
-            type: string
-            enum: [1h, 6h, 24h, 7d]
-            default: 24h
-        - name: breakdown_by
-          in: query
-          description: Break down accuracy by dimension
-          schema:
-            type: string
-            enum: [plugin, job_type, dataset_type]
-      responses:
-        '200':
-          description: Correlation accuracy metrics
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CorrelationAccuracyResponse'
 
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
-      name: X-API-Key
-      description: |
-        API key authentication for production environments. Not required for MVP
-        (localhost binding) but available for enterprise upgrade path.
+      name: X-Api-Key
+      description: API key for plugin authentication
 
   schemas:
-    # OpenLineage Event Schema (reference to external file)
-    OpenLineageEvent:
-      $ref: './schemas/openlineage.yaml#/components/schemas/OpenLineageEvent'
-
-    # Correlation Response Schemas (reference to external file)
-    IncidentListResponse:
-      $ref: './schemas/correlation.yaml#/components/schemas/IncidentListResponse'
-
-    IncidentDetailsResponse:
-      $ref: './schemas/correlation.yaml#/components/schemas/IncidentDetailsResponse'
-
-    LineageTraversalResponse:
-      $ref: './schemas/correlation.yaml#/components/schemas/LineageTraversalResponse'
-
-    # System Health Schemas
-    SystemHealthResponse:
+    # Health Check Schemas
+    HealthStatus:
       type: object
       required:
         - status
+        - serviceName
         - version
-        - timestamp
       properties:
         status:
           type: string
-          enum: [healthy, degraded, unhealthy]
-          description: Overall system health status
+          description: Service health status
+          example: healthy
+        serviceName:
+          type: string
+          description: Service name
+          example: correlator
         version:
           type: string
-          description: API version
-          example: "1.0.0"
-        timestamp:
+          description: Service version
+          example: v1.0.0
+        uptime:
+          type: string
+          description: Service uptime duration
+          example: 2h30m15s
+
+    # OpenLineage Event Schemas
+    LineageEvent:
+      type: object
+      required:
+        - eventTime
+        - eventType
+        - run
+        - job
+      properties:
+        eventTime:
           type: string
           format: date-time
-          description: Health check timestamp
-        setup_time:
+          description: Event timestamp (ISO8601)
+        eventType:
           type: string
-          description: Time taken for system setup
-          example: "23s"
-        database:
-          type: object
-          properties:
-            status:
-              type: string
-              enum: [connected, disconnected, error]
-            latency_ms:
-              type: number
-              description: Database connection latency
-        integrations:
-          type: object
-          additionalProperties:
-            type: string
-            enum: [ready, error, not_configured]
-          description: Plugin integration status
-          example:
-            dbt: "ready"
-            airflow: "ready"
-            great_expectations: "not_configured"
-        correlation_accuracy:
+          enum: [START, RUNNING, COMPLETE, ABORT, FAIL, OTHER]
+          description: Event type
+        producer:
           type: string
-          description: Current correlation accuracy percentage
-          example: "94.2%"
-
-    SystemMetricsResponse:
-      type: object
-      properties:
-        timestamp:
+          description: Producer URL identifying the emitting system
+        schemaURL:
           type: string
-          format: date-time
-        time_range:
-          type: string
-          example: "1h"
-        metrics:
-          type: object
-          properties:
-            events_processed_total:
-              type: object
-              additionalProperties:
-                type: number
-              example:
-                openlineage: 1247
-                test_results: 342
-            correlation_latency_seconds:
-              type: object
-              additionalProperties:
-                type: number
-              example:
-                p50: 0.234
-                p95: 1.2
-                p99: 2.8
-            incidents_created_total:
-              type: object
-              additionalProperties:
-                type: number
-              example:
-                critical: 2
-                warning: 8
-                info: 15
-            database_query_duration_seconds:
-              type: object
-              additionalProperties:
-                type: number
-              example:
-                incident: 0.089
-                lineage: 0.156
-
-    CorrelationAccuracyResponse:
-      type: object
-      properties:
-        overall_accuracy:
-          type: number
-          format: float
-          minimum: 0
-          maximum: 100
-          description: Overall correlation accuracy percentage
-          example: 94.2
-        time_window:
-          type: string
-          example: "24h"
-        total_incidents:
-          type: integer
-          description: Total incidents in time window
-        successfully_correlated:
-          type: integer
-          description: Successfully correlated incidents
-        breakdown:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              accuracy:
-                type: number
-                format: float
-              incident_count:
-                type: integer
-          example:
-            dbt:
-              accuracy: 96.8
-              incident_count: 45
-            airflow:
-              accuracy: 91.3
-              incident_count: 23
-
-    # Plugin Management Schemas
-    PluginHealthResponse:
-      type: object
-      properties:
-        overall_status:
-          type: string
-          enum: [healthy, degraded, error]
-        plugins:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              status:
-                type: string
-                enum: [connected, error, not_configured]
-              last_event:
-                type: string
-                format: date-time
-              error_message:
-                type: string
-          example:
-            correlator-dbt:
-              status: "connected"
-              last_event: "2024-01-01T12:00:00Z"
-            correlator-airflow:
-              status: "error"
-              error_message: "Connection timeout"
-
-    PluginDiscoveryResponse:
-      type: object
-      properties:
-        available_plugins:
+          description: OpenLineage schema URL
+        run:
+          $ref: '#/components/schemas/Run'
+        job:
+          $ref: '#/components/schemas/Job'
+        inputs:
           type: array
           items:
-            type: object
-            properties:
-              name:
-                type: string
-              version:
-                type: string
-              status:
-                type: string
-                enum: [installed, available, error]
-              description:
-                type: string
-              setup_url:
-                type: string
-                format: uri
+            $ref: '#/components/schemas/Dataset'
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dataset'
 
-    # Response Schemas
-    IngestionResponse:
+    Run:
       type: object
-      description: |
-        Generic ingestion response for non-lineage endpoints (e.g., test results).
-        For lineage events, see LineageResponse with per-event granularity.
+      required:
+        - runId
       properties:
-        message:
+        runId:
           type: string
-          example: "Events processed successfully"
-        events_processed:
-          type: integer
-          example: 1
-        correlation_id:
-          type: string
-          format: uuid
-          description: Correlation ID for tracking
-        processing_time_ms:
-          type: number
-          example: 45.7
+          description: Unique run identifier
+        facets:
+          type: object
+          additionalProperties: true
+          description: Run facets (OpenLineage spec)
 
-    # Lineage-specific Response Schemas
+    Job:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+          description: Job namespace
+        name:
+          type: string
+          description: Job name
+        facets:
+          type: object
+          additionalProperties: true
+          description: Job facets (OpenLineage spec)
+
+    Dataset:
+      type: object
+      required:
+        - namespace
+        - name
+      properties:
+        namespace:
+          type: string
+          description: Dataset namespace (e.g., postgresql://prod-db/public)
+        name:
+          type: string
+          description: Dataset name (e.g., users)
+        facets:
+          type: object
+          additionalProperties: true
+        inputFacets:
+          type: object
+          additionalProperties: true
+        outputFacets:
+          type: object
+          additionalProperties: true
+
     LineageResponse:
       type: object
       required:
@@ -657,66 +427,49 @@ components:
         - failed_events
         - correlation_id
         - timestamp
-      description: |
-        OpenLineage-compliant response from event ingestion.
-        Follows OpenLineage specification for batch event responses.
-        Spec: https://openlineage.io/apidocs/openapi/#tag/OpenLineage/operation/postEventBatch
       properties:
         status:
           type: string
           enum: [success, error]
-          description: Overall request status (success if any events processed, error if all failed)
-          example: "success"
+          description: Overall request status
         summary:
-          type: object
-          required:
-            - received
-            - successful
-            - failed
-            - retriable
-            - non_retriable
-          description: Summary statistics for the batch
-          properties:
-            received:
-              type: integer
-              minimum: 0
-              description: Total number of events received in the request
-              example: 3
-            successful:
-              type: integer
-              minimum: 0
-              description: Number of events successfully processed (includes stored and duplicates)
-              example: 2
-            failed:
-              type: integer
-              minimum: 0
-              description: Number of events that failed processing
-              example: 1
-            retriable:
-              type: integer
-              minimum: 0
-              description: Number of failed events that can be retried
-              example: 0
-            non_retriable:
-              type: integer
-              minimum: 0
-              description: Number of failed events that cannot be retried (validation errors)
-              example: 1
+          $ref: '#/components/schemas/ResponseSummary'
         failed_events:
           type: array
-          description: Details of events that failed processing (empty if all successful)
           items:
             $ref: '#/components/schemas/FailedEvent'
         correlation_id:
           type: string
-          format: uuid
-          description: Request correlation ID for tracking
-          example: "123e4567-e89b-12d3-a456-426614174000"
+          description: Request correlation ID for tracing
         timestamp:
           type: string
           format: date-time
-          description: Response timestamp in ISO 8601 format
-          example: "2024-01-01T12:05:30Z"
+          description: Response timestamp
+
+    ResponseSummary:
+      type: object
+      required:
+        - received
+        - successful
+        - failed
+        - retriable
+        - non_retriable
+      properties:
+        received:
+          type: integer
+          description: Total events received
+        successful:
+          type: integer
+          description: Successfully processed events
+        failed:
+          type: integer
+          description: Failed events
+        retriable:
+          type: integer
+          description: Retriable failures
+        non_retriable:
+          type: integer
+          description: Non-retriable failures (validation errors)
 
     FailedEvent:
       type: object
@@ -724,73 +477,329 @@ components:
         - index
         - reason
         - retriable
-      description: Details of a single failed event in the batch
       properties:
         index:
           type: integer
-          minimum: 0
-          description: Zero-based index of the failed event in the request array
-          example: 2
+          description: Zero-based index of failed event
         reason:
           type: string
-          description: Detailed error message explaining why the event failed
-          example: "missing required field: run.runId"
+          description: Failure reason
         retriable:
           type: boolean
-          description: Whether this failure is retriable (false for validation errors)
-          example: false
+          description: Whether failure is retriable
 
-    # Error Response Schemas (reference to external file)
+    # Incident Schemas
+    IncidentListResponse:
+      type: object
+      required:
+        - incidents
+        - total
+        - limit
+        - offset
+      properties:
+        incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentSummary'
+        total:
+          type: integer
+          description: Total number of incidents matching filter
+        limit:
+          type: integer
+          description: Page size
+        offset:
+          type: integer
+          description: Page offset
+
+    IncidentSummary:
+      type: object
+      required:
+        - id
+        - test_name
+        - test_type
+        - test_status
+        - dataset_urn
+        - dataset_name
+        - producer
+        - job_name
+        - job_run_id
+        - downstream_count
+        - has_correlation_issue
+        - executed_at
+      properties:
+        id:
+          type: string
+          description: Test result ID
+        test_name:
+          type: string
+          description: Test name
+        test_type:
+          type: string
+          description: Test type (e.g., not_null, unique)
+        test_status:
+          type: string
+          description: Test status (failed, error)
+        dataset_urn:
+          type: string
+          description: Dataset URN
+        dataset_name:
+          type: string
+          description: Dataset name
+        producer:
+          type: string
+          description: Producing tool (e.g., dbt, great_expectations)
+        job_name:
+          type: string
+          description: Job name
+        job_run_id:
+          type: string
+          description: Job run ID
+        downstream_count:
+          type: integer
+          description: Number of downstream datasets affected
+        has_correlation_issue:
+          type: boolean
+          description: True if incident is in orphan namespace
+        executed_at:
+          type: string
+          format: date-time
+          description: Test execution timestamp
+
+    IncidentDetailResponse:
+      type: object
+      required:
+        - id
+        - test
+        - dataset
+        - downstream
+        - correlation_status
+      properties:
+        id:
+          type: string
+          description: Test result ID
+        test:
+          $ref: '#/components/schemas/TestDetail'
+        dataset:
+          $ref: '#/components/schemas/DatasetDetail'
+        job:
+          $ref: '#/components/schemas/JobDetail'
+          nullable: true
+          description: Null if uncorrelated
+        downstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/DownstreamDataset'
+        correlation_status:
+          type: string
+          enum: [correlated, orphan, unknown]
+          description: |
+            - correlated: Fully correlated with data-producing job
+            - orphan: Namespace aliasing issue
+            - unknown: Cannot determine correlation
+
+    TestDetail:
+      type: object
+      required:
+        - name
+        - type
+        - status
+        - message
+        - executed_at
+        - duration_ms
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        executed_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int64
+
+    DatasetDetail:
+      type: object
+      required:
+        - urn
+        - name
+        - namespace
+      properties:
+        urn:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+
+    JobDetail:
+      type: object
+      required:
+        - name
+        - namespace
+        - run_id
+        - producer
+        - status
+        - started_at
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        run_id:
+          type: string
+        producer:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DownstreamDataset:
+      type: object
+      required:
+        - urn
+        - name
+        - depth
+        - parentUrn
+      properties:
+        urn:
+          type: string
+        name:
+          type: string
+        depth:
+          type: integer
+          description: Hops from original dataset
+        parentUrn:
+          type: string
+          description: Parent dataset URN for tree visualization
+
+    # Correlation Health Schemas
+    CorrelationHealthResponse:
+      type: object
+      required:
+        - correlation_rate
+        - total_datasets
+        - orphan_namespaces
+      properties:
+        correlation_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Ratio of correlated incidents to total incidents
+        total_datasets:
+          type: integer
+          description: Distinct datasets with test results
+        orphan_namespaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrphanNamespace'
+
+    OrphanNamespace:
+      type: object
+      required:
+        - namespace
+        - producer
+        - last_seen
+        - event_count
+      properties:
+        namespace:
+          type: string
+          description: Orphan namespace string
+        producer:
+          type: string
+          description: Tool that emitted events (e.g., great_expectations)
+        last_seen:
+          type: string
+          format: date-time
+          description: Most recent event timestamp
+        event_count:
+          type: integer
+          description: Number of test results in this namespace
+        suggested_alias:
+          type: string
+          nullable: true
+          description: Suggested alias (null for MVP)
+
+    # Error Schema
     Error:
-      $ref: './schemas/errors.yaml#/components/schemas/Error'
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Problem type URI
+        title:
+          type: string
+          description: Short human-readable summary
+        status:
+          type: integer
+          description: HTTP status code
+        detail:
+          type: string
+          description: Detailed explanation
+        instance:
+          type: string
+          description: URI of the specific occurrence
+        correlation_id:
+          type: string
+          description: Request correlation ID
 
   responses:
     BadRequest:
       description: Bad request - invalid input
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
             type: "https://getcorrelator.io/problems/400"
             title: "Bad Request"
             status: 400
-            detail: "Invalid OpenLineage event format"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+            detail: "Invalid parameter 'limit': must be between 1 and 100"
 
-    ValidationError:
-      description: Validation error - request doesn't meet schema requirements
+    Unauthorized:
+      description: Authentication required
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
-            type: "https://getcorrelator.io/problems/422"
-            title: "Validation Error"
-            status: 422
-            detail: "Schema validation failed"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+            type: "https://getcorrelator.io/problems/401"
+            title: "Unauthorized"
+            status: 401
+            detail: "Missing API key"
 
     NotFound:
       description: Resource not found
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
             type: "https://getcorrelator.io/problems/404"
             title: "Not Found"
             status: 404
-            detail: "The requested resource was not found"
-            instance: "/api/v1/incidents/123e4567-e89b-12d3-a456-426614174000"
-            correlation_id: "234e5678-e89b-12d3-a456-426614174001"
+            detail: "Incident not found"
 
     PayloadTooLarge:
-      description: Request payload exceeds maximum allowed size (1 MB)
+      description: Request body exceeds 1 MB limit
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
@@ -798,13 +807,11 @@ components:
             title: "Payload Too Large"
             status: 413
             detail: "Request body exceeds maximum size of 1048576 bytes"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "345e6789-e89b-12d3-a456-426614174002"
 
     UnsupportedMediaType:
-      description: Content-Type header is not supported
+      description: Content-Type must be application/json
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
@@ -812,13 +819,11 @@ components:
             title: "Unsupported Media Type"
             status: 415
             detail: "Content-Type must be application/json"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "456e7890-e89b-12d3-a456-426614174003"
 
     RateLimited:
       description: Rate limit exceeded
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
@@ -826,13 +831,11 @@ components:
             title: "Rate Limited"
             status: 429
             detail: "Rate limit exceeded"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "567e8901-e89b-12d3-a456-426614174004"
 
     InternalError:
       description: Internal server error
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
@@ -840,76 +843,3 @@ components:
             title: "Internal Server Error"
             status: 500
             detail: "An unexpected error occurred"
-            instance: "/api/v1/lineage/events"
-            correlation_id: "678e9012-e89b-12d3-a456-426614174005"
-
-  examples:
-    dbt_run_start:
-      summary: dbt model run start event
-      value:
-        eventTime: "2024-01-01T12:00:00Z"
-        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
-        eventType: "START"
-        run:
-          runId: "dbt:abc123-def456"
-          facets:
-            nominalTime:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
-              nominalStartTime: "2024-01-01T12:00:00Z"
-        job:
-          namespace: "dbt"
-          name: "models.users"
-          facets:
-            sql:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
-              query: "SELECT * FROM raw.users WHERE created_at > CURRENT_DATE - 7"
-        inputs:
-          - namespace: "postgres"
-            name: "prod.raw.users"
-            facets:
-              schema:
-                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-                _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json"
-                fields:
-                  - name: "user_id"
-                    type: "INTEGER"
-                  - name: "email"
-                    type: "VARCHAR"
-        outputs:
-          - namespace: "postgres"
-            name: "prod.clean.users"
-
-    airflow_task_complete:
-      summary: Airflow task completion event
-      value:
-        eventTime: "2024-01-01T12:05:00Z"
-        producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
-        schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
-        eventType: "COMPLETE"
-        run:
-          runId: "airflow:manual__2024-01-01T12:00:00"
-          facets:
-            processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
-              _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
-              version: "2.7.0"
-              name: "airflow"
-        job:
-          namespace: "data_pipeline"
-          name: "user_etl.extract_users"
-        outputs:
-          - namespace: "postgres"
-            name: "prod.raw.users"
-
-tags:
-  - name: OpenLineage Ingestion
-    description: Primary plugin integration endpoints for OpenLineage event ingestion
-  - name: Plugin Management
-    description: Plugin health, discovery, and registration endpoints
-  - name: Correlation Queries
-    description: Incident and lineage query endpoints for UI and 2-click navigation
-  - name: System Health
-    description: System health and metrics endpoints for monitoring and validation
