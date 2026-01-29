@@ -81,6 +81,25 @@ type (
 		Depth     int    `json:"depth"`
 		ParentURN string `json:"parentUrn"` // Parent dataset URN for tree building
 	}
+
+	// CorrelationHealthResponse represents the response for GET /api/v1/health/correlation.
+	// Contains overall correlation system health metrics and orphan namespace details.
+	CorrelationHealthResponse struct {
+		CorrelationRate  float64                   `json:"correlation_rate"`  //nolint:tagliatelle
+		TotalDatasets    int                       `json:"total_datasets"`    //nolint:tagliatelle
+		OrphanNamespaces []OrphanNamespaceResponse `json:"orphan_namespaces"` //nolint:tagliatelle
+	}
+
+	// OrphanNamespaceResponse represents a namespace that requires alias configuration.
+	// Orphan namespaces appear in validation tests but have no corresponding
+	// data producer output edges.
+	OrphanNamespaceResponse struct {
+		Namespace      string    `json:"namespace"`
+		Producer       string    `json:"producer"`
+		LastSeen       time.Time `json:"last_seen"`       //nolint:tagliatelle
+		EventCount     int       `json:"event_count"`     //nolint:tagliatelle
+		SuggestedAlias *string   `json:"suggested_alias"` //nolint:tagliatelle
+	}
 )
 
 type (
