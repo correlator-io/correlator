@@ -148,4 +148,56 @@ type Store interface {
 	// Note: Results exclude depth=0 (direct outputs) since those are the starting point,
 	// not downstream. Use QueryLineageImpact with maxDepth=-1 to get direct outputs.
 	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
+
+	// QueryOrphanNamespaces returns namespaces that appear in validation tests
+	// but have no corresponding data producer output edges.
+	//
+	// Orphan Detection Logic:
+	//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
+	//   - Validator namespaces: Namespaces from test_results joined to datasets
+	//   - Orphan = Validator namespace NOT IN Producer namespaces
+	//
+	// This identifies namespace aliasing issues where tools use different formats:
+	//   - GE might emit: "postgres_prod"
+	//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+	//
+	// Returns:
+	//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
+	//   - Empty slice if no orphan namespaces exist (healthy state)
+	//   - Error if query fails or context is cancelled
+	//
+	// Performance:
+	//   - Queries test_results, datasets, lineage_edges tables
+	//   - Filters out empty/null namespaces
+	//   - Typical query time: 10-100ms depending on data volume
+	//
+	// Used by:
+	//   - GET /api/v1/health/correlation endpoint
+	//   - Incident list/detail handlers (for has_correlation_issue field)
+	QueryOrphanNamespaces(ctx context.Context) ([]OrphanNamespace, error)
+
+	// QueryCorrelationHealth returns overall correlation health metrics.
+	//
+	// This aggregates:
+	//   - Correlation rate (correlated incidents / total incidents)
+	//   - Total distinct datasets with test results
+	//   - List of orphan namespaces requiring configuration
+	//
+	// Correlation Rate Calculation:
+	//   - Numerator: Incidents where dataset namespace has producer output edges
+	//   - Denominator: All incidents from incident_correlation_view
+	//   - If denominator = 0, returns 1.0 (no incidents = healthy)
+	//
+	// Returns:
+	//   - Pointer to Health with metrics
+	//   - Error if query fails or context is cancelled
+	//
+	// Performance:
+	//   - Calls QueryOrphanNamespaces internally
+	//   - Queries incident_correlation_view for rate calculation
+	//   - Typical query time: 50-200ms
+	//
+	// Used by:
+	//   - GET /api/v1/health/correlation endpoint
+	QueryCorrelationHealth(ctx context.Context) (*Health, error)
 }

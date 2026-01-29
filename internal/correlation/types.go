@@ -206,4 +206,67 @@ type (
 		Depth       int
 		ParentURN   string
 	}
+
+	// OrphanNamespace represents a namespace that appears in validation tests
+	// but has no corresponding data producer output edges.
+	//
+	// This indicates a namespace aliasing issue where validators (Great Expectations, Soda)
+	// emit events with a different namespace format than data producers (dbt, Airflow).
+	//
+	// Fields:
+	//   - Namespace: The orphan namespace string (e.g., "postgres_prod")
+	//   - Producer: Tool that emitted validation events (e.g., "great_expectations", "soda")
+	//   - LastSeen: Most recent event timestamp for this namespace
+	//   - EventCount: Number of test results in this namespace
+	//   - SuggestedAlias: Potential matching producer namespace (nil for MVP)
+	//
+	// Example:
+	//
+	//	Great Expectations emits tests for namespace "postgres_prod"
+	//	dbt emits output edges for namespace "postgresql://prod-db:5432/mydb"
+	//	→ OrphanNamespace{Namespace: "postgres_prod", Producer: "great_expectations", ...}
+	//
+	// Resolution: Configure namespace alias in correlator.yaml to map "postgres_prod"
+	// to "postgresql://prod-db:5432/mydb".
+	//
+	// Used by:
+	//   - correlation.Store.QueryOrphanNamespaces() - Returns this type
+	//   - Correlation Health API - GET /api/v1/health/correlation
+	//   - UI Correlation Health page - Shows orphan namespaces needing configuration
+	OrphanNamespace struct {
+		Namespace      string
+		Producer       string
+		LastSeen       time.Time
+		EventCount     int
+		SuggestedAlias *string
+	}
+
+	// Health represents overall correlation system health metrics.
+	//
+	// This type aggregates correlation statistics to help users identify
+	// configuration issues that prevent cross-tool correlation.
+	//
+	// Fields:
+	//   - CorrelationRate: Ratio of correlated incidents to total incidents (0.0-1.0)
+	//   - TotalDatasets: Count of distinct datasets with test results
+	//   - OrphanNamespaces: List of namespaces requiring alias configuration
+	//
+	// Correlation Rate Calculation:
+	//
+	//	correlation_rate = correlated_incidents / total_incidents
+	//
+	// Where:
+	//   - correlated_incidents = incidents where dataset namespace has producer output edges
+	//   - total_incidents = all incidents from incident_correlation_view
+	//   - If total_incidents = 0, returns 1.0 (no incidents = healthy)
+	//
+	// Used by:
+	//   - correlation.Store.QueryCorrelationHealth() - Returns this type
+	//   - Correlation Health API - GET /api/v1/health/correlation
+	//   - UI Correlation Health page - Shows overall system health
+	Health struct {
+		CorrelationRate  float64
+		TotalDatasets    int
+		OrphanNamespaces []OrphanNamespace
+	}
 )

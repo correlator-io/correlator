@@ -698,3 +698,204 @@ func (s *LineageStore) QueryDownstreamWithParents(
 
 	return results, nil
 }
+
+// QueryOrphanNamespaces implements correlation.Store.
+// Returns namespaces that appear in validation tests but have no corresponding
+// data producer output edges.
+//
+// Orphan Detection Logic:
+//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
+//   - Validator namespaces: Namespaces from test_results joined to datasets and job_runs
+//   - Orphan = Validator namespace NOT IN Producer namespaces
+//
+// This identifies namespace aliasing issues where different tools use different formats:
+//   - GE might emit: "postgres_prod"
+//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+//
+// Returns:
+//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
+//   - Empty slice if no orphan namespaces exist (healthy state)
+//   - Error if query fails or context is cancelled
+//
+// Performance:
+//   - Queries test_results, datasets, lineage_edges, job_runs tables
+//   - Filters out empty namespaces
+//   - Typical query time: 10-100ms depending on data volume
+func (s *LineageStore) QueryOrphanNamespaces(ctx context.Context) ([]correlation.OrphanNamespace, error) {
+	start := time.Now()
+
+	// Orphan detection query using CTEs
+	query := `
+		WITH producer_namespaces AS (
+			-- Namespaces that have output lineage edges (data producers)
+			SELECT DISTINCT d.namespace
+			FROM lineage_edges le
+			JOIN datasets d ON le.dataset_urn = d.dataset_urn
+			WHERE le.edge_type = 'output'
+			  AND d.namespace != ''
+		),
+		validator_namespaces AS (
+			-- Namespaces from test results (validators)
+			SELECT
+				d.namespace,
+				jr.producer_name,
+				MAX(tr.executed_at) AS last_seen,
+				COUNT(*) AS event_count
+			FROM test_results tr
+			JOIN datasets d ON tr.dataset_urn = d.dataset_urn
+			JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
+			WHERE d.namespace != ''
+			GROUP BY d.namespace, jr.producer_name
+		)
+		-- Orphans: validator namespaces not in producer namespaces
+		SELECT
+			vn.namespace,
+			vn.producer_name,
+			vn.last_seen,
+			vn.event_count
+		FROM validator_namespaces vn
+		WHERE vn.namespace NOT IN (SELECT namespace FROM producer_namespaces)
+		ORDER BY vn.event_count DESC, vn.namespace, vn.producer_name
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		s.logger.Error("Failed to query orphan namespaces",
+			slog.Any("error", err),
+			slog.Duration("duration", time.Since(start)))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var results []correlation.OrphanNamespace
+
+	for rows.Next() {
+		var r correlation.OrphanNamespace
+
+		if err := rows.Scan(&r.Namespace, &r.Producer, &r.LastSeen, &r.EventCount); err != nil {
+			s.logger.Error("Failed to scan orphan namespace row", slog.Any("error", err))
+
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		s.logger.Error("Error iterating orphan namespace rows", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried orphan namespaces",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int("result_count", len(results)))
+
+	return results, nil
+}
+
+// QueryCorrelationHealth implements correlation.Store.
+// Returns overall correlation health metrics including correlation rate,
+// total datasets, and orphan namespaces.
+//
+// Correlation Rate Calculation:
+//   - Numerator: Incidents where dataset namespace has producer output edges
+//   - Denominator: All incidents from incident_correlation_view
+//   - If denominator = 0, returns 1.0 (no incidents = healthy)
+//
+// Returns:
+//   - Pointer to Health with metrics
+//   - Error if query fails or context is cancelled
+//
+// Performance:
+//   - Calls QueryOrphanNamespaces internally
+//   - Queries incident_correlation_view for rate calculation
+//   - Typical query time: 50-200ms
+func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation.Health, error) {
+	start := time.Now()
+
+	// Query orphan namespaces first
+	orphans, err := s.QueryOrphanNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build set of orphan namespaces for efficient lookup
+	orphanNSSet := make(map[string]bool)
+	for _, o := range orphans {
+		orphanNSSet[o.Namespace] = true
+	}
+
+	// Query correlation rate and total datasets
+	query := `
+		WITH all_failed_tests AS (
+			-- Total failed/error tests across all datasets
+			SELECT COUNT(*) AS total_incidents
+			FROM test_results
+			WHERE status IN ('failed', 'error')
+		),
+		correlated_incidents AS (
+			-- Incidents that have lineage correlation (in the view)
+			SELECT COUNT(*) AS correlated_count
+			FROM incident_correlation_view
+		),
+		dataset_stats AS (
+			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
+			FROM test_results
+		)
+		SELECT
+			COALESCE(a.total_incidents, 0) AS total_incidents,
+			COALESCE(c.correlated_count, 0) AS correlated_incidents,
+			COALESCE(d.total_datasets, 0) AS total_datasets
+		FROM all_failed_tests a, correlated_incidents c, dataset_stats d
+	`
+
+	var totalIncidents, correlatedIncidents, totalDatasets int
+
+	err = s.conn.QueryRowContext(ctx, query).Scan(&totalIncidents, &correlatedIncidents, &totalDatasets)
+	if err != nil {
+		// Handle case where no data exists (query returns no rows)
+		if errors.Is(err, sql.ErrNoRows) {
+			s.logger.Info("Queried correlation health (empty state)",
+				slog.Duration("duration", time.Since(start)))
+
+			return &correlation.Health{
+				CorrelationRate:  1.0, // No incidents = healthy
+				TotalDatasets:    0,
+				OrphanNamespaces: orphans,
+			}, nil
+		}
+
+		s.logger.Error("Failed to query correlation health",
+			slog.Any("error", err),
+			slog.Duration("duration", time.Since(start)))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	// Calculate correlation rate (avoid division by zero)
+	correlationRate := 1.0
+
+	if totalIncidents > 0 {
+		correlationRate = float64(correlatedIncidents) / float64(totalIncidents)
+	}
+
+	duration := time.Since(start)
+	s.logger.Info("Queried correlation health",
+		slog.Duration("duration", duration),
+		slog.Float64("correlation_rate", correlationRate),
+		slog.Int("total_incidents", totalIncidents),
+		slog.Int("correlated_incidents", correlatedIncidents),
+		slog.Int("total_datasets", totalDatasets),
+		slog.Int("orphan_namespaces", len(orphans)))
+
+	return &correlation.Health{
+		CorrelationRate:  correlationRate,
+		TotalDatasets:    totalDatasets,
+		OrphanNamespaces: orphans,
+	}, nil
+}

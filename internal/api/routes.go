@@ -52,9 +52,6 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 		Route{"/", s.handleNotFound},         // Catch-all handler for 404 responses
 	)
 
-	// Protected endpoints
-	mux.HandleFunc("GET /api/v1/health/data-consistency", s.handleDataConsistency)
-
 	// Lineage endpoints
 	mux.HandleFunc("POST /api/v1/lineage/events", s.handleLineageEvents)
 
@@ -62,6 +59,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	if s.correlationStore != nil {
 		mux.HandleFunc("GET /api/v1/incidents", s.handleListIncidents)
 		mux.HandleFunc("GET /api/v1/incidents/{id}", s.handleGetIncidentDetails)
+		mux.HandleFunc("GET /api/v1/health/correlation", s.handleGetCorrelationHealth)
 	}
 }
 
@@ -200,43 +198,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	_, err := w.Write([]byte("ready"))
 	if err != nil {
 		s.logger.Error("Failed to write ready response",
-			slog.String("correlation_id", correlationID),
-			slog.String("error", err.Error()),
-		)
-	}
-}
-
-// handleDataConsistency returns correlator health check.
-// TODO: Implement full data consistency check by the end of week 2 or week 4.
-func (s *Server) handleDataConsistency(w http.ResponseWriter, r *http.Request) {
-	correlationID := middleware.GetCorrelationID(r.Context())
-
-	// Dummy response for now
-	health := map[string]interface{}{
-		"missing_correlations": 23, //nolint: mnd
-		"stale_events":         5,  //nolint: mnd
-		"plugin_failures":      map[string]interface{}{},
-	}
-
-	data, err := json.Marshal(health)
-	if err != nil {
-		s.logger.Error("Failed to marshal data consistency response",
-			slog.String("correlation_id", correlationID),
-			slog.String("error", err.Error()),
-		)
-		WriteErrorResponse(w, r, s.logger, InternalServerError("..."))
-
-		return
-	}
-
-	// Only write headers after successful marshaling
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if _, err := w.Write(data); err != nil {
-		// At this point headers already sent, log only
-		correlationID := middleware.GetCorrelationID(r.Context())
-		s.logger.Error("Failed to write data consistency response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
