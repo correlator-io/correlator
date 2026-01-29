@@ -50,8 +50,8 @@ SELECT
     100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
 FROM pg_stat_statements
 WHERE query LIKE '%job_runs%'
-   OR query LIKE '%correlation_events%'
    OR query LIKE '%lineage_edges%'
+   OR query LIKE '%test_results%'
 ORDER BY total_exec_time DESC;
 
 -- Log initialization completion

@@ -16,7 +16,6 @@ DROP FUNCTION IF EXISTS validate_job_run_state_transition() CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order
-DROP TABLE IF EXISTS correlation_events CASCADE;
 DROP TABLE IF EXISTS test_results CASCADE;
 DROP TABLE IF EXISTS lineage_event_idempotency CASCADE;
 DROP TABLE IF EXISTS lineage_edges CASCADE;
@@ -35,7 +34,7 @@ COMMIT;
 -- Success message
 SELECT
     'Initial schema rollback completed' as status,
-    9 as tables_dropped,
+    8 as tables_dropped,
     3 as materialized_views_dropped,
     3 as functions_dropped,
     'Database clean - ready for fresh installation' as note,

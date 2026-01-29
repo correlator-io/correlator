@@ -39,15 +39,11 @@
 --    - Lineage relationships are historical facts (job A produced dataset B at time T)
 --    - Never updated, only inserted
 --
--- 2. correlation_events - Immutable audit trail
---    - Correlation events are append-only for accuracy tracking
---    - Compliance requirement: audit events must not be mutated
---
--- 3. lineage_event_idempotency - TTL-based cleanup
+-- 2. lineage_event_idempotency - TTL-based cleanup
 --    - Rows expire naturally via expires_at timestamp
 --    - Deleted by cleanup job, never updated
 --
--- 4. api_key_audit_log - Immutable audit trail
+-- 3. api_key_audit_log - Immutable audit trail
 --    - Security requirement: audit logs must not be mutated
 --    - Compliance: tamper-proof event log
 --
@@ -267,33 +263,7 @@ COMMENT ON COLUMN test_results.job_run_id IS 'CRITICAL correlation key linking t
 COMMENT ON COLUMN test_results.test_name IS 'Extended to VARCHAR(750) based on real-world test naming analysis';
 
 -- =====================================================
--- 6. CORRELATION EVENTS - Accuracy tracking
--- =====================================================
-CREATE TABLE correlation_events (
-    id BIGSERIAL PRIMARY KEY,
-
-    event_type VARCHAR(100) NOT NULL CHECK (event_type IN ('correlation_created', 'correlation_validated', 'correlation_failed', 'accuracy_measured')),
-
-    test_result_id BIGINT REFERENCES test_results(id) ON DELETE SET NULL,
-    job_run_id VARCHAR(255) REFERENCES job_runs(job_run_id) ON DELETE SET NULL,
-    dataset_urn VARCHAR(500) REFERENCES datasets(dataset_urn) ON DELETE SET NULL,
-
-    correlation_successful BOOLEAN DEFAULT FALSE,
-    confidence_score DECIMAL(3,2) CHECK (confidence_score >= 0.00 AND confidence_score <= 1.00),
-
-    correlation_latency_ms INTEGER,
-    processing_time_ms INTEGER,
-
-    validation_metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Comments
-COMMENT ON TABLE correlation_events IS 'Correlation engine performance and accuracy tracking with confidence scoring';
-
--- =====================================================
--- 7. LINEAGE EVENT IDEMPOTENCY - Duplicate detection
+-- 6. LINEAGE EVENT IDEMPOTENCY - Duplicate detection
 -- =====================================================
 -- 
 -- Idempotency Strategy:
@@ -336,7 +306,7 @@ COMMENT ON COLUMN lineage_event_idempotency.idempotency_key IS 'SHA-256 hash of 
 COMMENT ON COLUMN lineage_event_idempotency.expires_at IS 'TTL expiration (24 hours from created_at) - events older than this are not deduped';
 
 -- =====================================================
--- 8. API KEYS - Authentication
+-- 7. API KEYS - Authentication
 -- =====================================================
 -- 
 -- Dual-Hash Strategy for Security + Performance:
@@ -397,7 +367,7 @@ COMMENT ON COLUMN api_keys.key_hash IS 'Bcrypt hash of API key - use bcrypt.Comp
 COMMENT ON COLUMN api_keys.key_lookup_hash IS 'SHA-256 hash of plaintext key for O(1) lookup performance';
 
 -- =====================================================
--- 9. API KEY AUDIT LOG
+-- 8. API KEY AUDIT LOG
 -- =====================================================
 CREATE TABLE api_key_audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -782,7 +752,7 @@ END $$;
 -- Success message
 SELECT
     'Initial OpenLineage schema migration completed' as status,
-    9 as tables_created,
+    8 as tables_created,
     3 as materialized_views_created,
     1 as functions_created,
     'OpenLineage v1.0 compliant, correlation-ready' as note,
