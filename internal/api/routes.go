@@ -62,6 +62,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	if s.correlationStore != nil {
 		mux.HandleFunc("GET /api/v1/incidents", s.handleListIncidents)
 		mux.HandleFunc("GET /api/v1/incidents/{id}", s.handleGetIncidentDetails)
+		mux.HandleFunc("GET /api/v1/health/correlation", s.handleGetCorrelationHealth)
 	}
 }
 
