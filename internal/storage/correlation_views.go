@@ -730,7 +730,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 //   - With aliases: minimal overhead from VALUES clause join
 func (s *LineageStore) QueryOrphanNamespaces(ctx context.Context) ([]correlation.OrphanNamespace, error) {
 	// Use alias-aware query if resolver is configured with aliases
-	if s.resolver != nil && s.resolver.AliasCount() > 0 {
+	if s.resolver != nil && s.resolver.GetAliasCount() > 0 {
 		return s.queryOrphanNamespacesWithAliases(ctx)
 	}
 
@@ -820,7 +820,7 @@ func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) 
 func (s *LineageStore) queryOrphanNamespacesWithAliases(ctx context.Context) ([]correlation.OrphanNamespace, error) {
 	start := time.Now()
 
-	aliasKeys, canonicalValues := s.resolver.AliasSlices()
+	aliasKeys, canonicalValues := s.resolver.GetAliasSlices()
 
 	s.logger.Debug("Querying orphan namespaces with alias resolution",
 		slog.Int("alias_count", len(aliasKeys)))

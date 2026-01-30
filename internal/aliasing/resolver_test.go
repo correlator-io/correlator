@@ -1,7 +1,6 @@
 package aliasing
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,14 +18,14 @@ func TestNewResolver_WithValidConfig(t *testing.T) {
 	r := NewResolver(cfg)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 2, r.AliasCount())
+	assert.Equal(t, 2, r.GetAliasCount())
 }
 
 func TestNewResolver_WithNilConfig(t *testing.T) {
 	r := NewResolver(nil)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 0, r.AliasCount())
+	assert.Equal(t, 0, r.GetAliasCount())
 }
 
 func TestNewResolver_WithEmptyAliases(t *testing.T) {
@@ -37,156 +36,7 @@ func TestNewResolver_WithEmptyAliases(t *testing.T) {
 	r := NewResolver(cfg)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 0, r.AliasCount())
-}
-
-func TestResolver_Resolve_KnownAlias(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	result := r.Resolve("postgres_prod")
-
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", result)
-}
-
-func TestResolver_Resolve_UnknownNamespace(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	// Unknown namespace should pass through unchanged
-	result := r.Resolve("unknown_namespace")
-
-	assert.Equal(t, "unknown_namespace", result)
-}
-
-func TestResolver_Resolve_EmptyString(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	result := r.Resolve("")
-
-	assert.Empty(t, result)
-}
-
-func TestResolver_Resolve_WithNilConfig(t *testing.T) {
-	r := NewResolver(nil)
-
-	// Should pass through when no config
-	result := r.Resolve("any_namespace")
-
-	assert.Equal(t, "any_namespace", result)
-}
-
-func TestResolver_Resolve_CaseSensitive(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	// Case mismatch should not match - aliases are case-sensitive
-	result := r.Resolve("POSTGRES_PROD")
-
-	assert.Equal(t, "POSTGRES_PROD", result)
-}
-
-func TestResolver_Resolve_MultipleAliasesToSameCanonical(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod":           "postgresql://prod-db:5432/mydb",
-			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	// Both aliases should resolve to same canonical
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", r.Resolve("postgres_prod"))
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", r.Resolve("postgres://prod-db:5432"))
-}
-
-func TestResolver_Resolve_TransitiveChain(t *testing.T) {
-	// A → B → C should resolve A to C
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod":           "postgres://prod-db:5432",
-			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	// Direct resolution
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", r.Resolve("postgres://prod-db:5432"))
-
-	// Transitive resolution: postgres_prod → postgres://... → postgresql://...
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", r.Resolve("postgres_prod"))
-}
-
-func TestResolver_Resolve_LongTransitiveChain(t *testing.T) {
-	// A → B → C → D should resolve A to D
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias1": "alias2",
-			"alias2": "alias3",
-			"alias3": "canonical",
-		},
-	}
-	r := NewResolver(cfg)
-
-	assert.Equal(t, "canonical", r.Resolve("alias1"))
-	assert.Equal(t, "canonical", r.Resolve("alias2"))
-	assert.Equal(t, "canonical", r.Resolve("alias3"))
-	assert.Equal(t, "canonical", r.Resolve("canonical")) // Terminal, returns itself
-}
-
-func TestResolver_Resolve_CircularChainDetection(t *testing.T) {
-	// Manually construct a resolver with a circular chain
-	// (bypassing NewResolver validation for testing)
-	r := &Resolver{
-		aliases: map[string]string{
-			"a": "b",
-			"b": "c",
-			"c": "a", // Creates cycle: a → b → c → a
-		},
-	}
-
-	// Should detect the loop and return without infinite loop
-	result := r.Resolve("a")
-
-	// The exact result depends on where the loop is detected
-	// but it should be one of the values in the chain
-	assert.Contains(t, []string{"a", "b", "c"}, result)
-}
-
-func TestResolver_HasAlias(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	assert.True(t, r.HasAlias("postgres_prod"))
-	assert.False(t, r.HasAlias("unknown"))
-	assert.False(t, r.HasAlias(""))
-}
-
-func TestResolver_HasAlias_NilConfig(t *testing.T) {
-	r := NewResolver(nil)
-
-	assert.False(t, r.HasAlias("any"))
+	assert.Equal(t, 0, r.GetAliasCount())
 }
 
 func TestResolver_AliasCount(t *testing.T) {
@@ -215,9 +65,14 @@ func TestResolver_AliasCount(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := NewResolver(&Config{NamespaceAliases: tc.aliases})
-			assert.Equal(t, tc.expected, r.AliasCount())
+			assert.Equal(t, tc.expected, r.GetAliasCount())
 		})
 	}
+}
+
+func TestResolver_AliasCount_NilResolver(t *testing.T) {
+	var r *Resolver
+	assert.Equal(t, 0, r.GetAliasCount())
 }
 
 func TestResolver_Aliases_ReturnsCopy(t *testing.T) {
@@ -229,12 +84,25 @@ func TestResolver_Aliases_ReturnsCopy(t *testing.T) {
 	r := NewResolver(cfg)
 
 	// Get copy and modify it
-	cp := r.Aliases()
+	cp := r.GetAliases()
 	cp["alias2"] = "canonical2"
 
 	// Original should be unchanged
-	assert.Equal(t, 1, r.AliasCount())
-	assert.False(t, r.HasAlias("alias2"))
+	assert.Equal(t, 1, r.GetAliasCount())
+
+	// Verify alias2 is not in the resolver's aliases
+	aliases := r.GetAliases()
+	_, exists := aliases["alias2"]
+	assert.False(t, exists)
+}
+
+func TestResolver_Aliases_Empty(t *testing.T) {
+	r := NewResolver(nil)
+
+	aliases := r.GetAliases()
+
+	assert.NotNil(t, aliases)
+	assert.Empty(t, aliases)
 }
 
 func TestResolver_AliasSlices(t *testing.T) {
@@ -246,7 +114,7 @@ func TestResolver_AliasSlices(t *testing.T) {
 	}
 	r := NewResolver(cfg)
 
-	keys, values := r.AliasSlices()
+	keys, values := r.GetAliasSlices()
 
 	assert.Len(t, keys, 2)
 	assert.Len(t, values, 2)
@@ -264,7 +132,16 @@ func TestResolver_AliasSlices(t *testing.T) {
 func TestResolver_AliasSlices_Empty(t *testing.T) {
 	r := NewResolver(nil)
 
-	keys, values := r.AliasSlices()
+	keys, values := r.GetAliasSlices()
+
+	assert.Empty(t, keys)
+	assert.Empty(t, values)
+}
+
+func TestResolver_AliasSlices_NilResolver(t *testing.T) {
+	var r *Resolver
+
+	keys, values := r.GetAliasSlices()
 
 	assert.Empty(t, keys)
 	assert.Empty(t, values)
@@ -283,9 +160,14 @@ func TestNewResolver_SkipsSelfReferentialAlias(t *testing.T) {
 	r := NewResolver(cfg)
 
 	// Should only have the valid alias
-	assert.Equal(t, 1, r.AliasCount())
-	assert.False(t, r.HasAlias("postgres_prod"))
-	assert.True(t, r.HasAlias("mysql_prod"))
+	assert.Equal(t, 1, r.GetAliasCount())
+
+	aliases := r.GetAliases()
+	_, hasSelfRef := aliases["postgres_prod"]
+	_, hasValid := aliases["mysql_prod"]
+
+	assert.False(t, hasSelfRef, "Self-referential alias should be skipped")
+	assert.True(t, hasValid, "Valid alias should be kept")
 }
 
 func TestNewResolver_SkipsCircularAlias(t *testing.T) {
@@ -301,9 +183,14 @@ func TestNewResolver_SkipsCircularAlias(t *testing.T) {
 	// Processing is deterministic (sorted by key):
 	// 1. alias_a → alias_b is processed first (a < b alphabetically)
 	// 2. alias_b → alias_a is skipped because alias_a is already a valid alias key
-	assert.Equal(t, 1, r.AliasCount(), "Only one alias should be kept")
-	assert.True(t, r.HasAlias("alias_a"), "alias_a should be kept (processed first)")
-	assert.False(t, r.HasAlias("alias_b"), "alias_b should be skipped (circular)")
+	assert.Equal(t, 1, r.GetAliasCount(), "Only one alias should be kept")
+
+	aliases := r.GetAliases()
+	_, hasA := aliases["alias_a"]
+	_, hasB := aliases["alias_b"]
+
+	assert.True(t, hasA, "alias_a should be kept (processed first)")
+	assert.False(t, hasB, "alias_b should be skipped (circular)")
 }
 
 func TestNewResolver_DeterministicCircularHandling(t *testing.T) {
@@ -323,10 +210,16 @@ func TestNewResolver_DeterministicCircularHandling(t *testing.T) {
 		// 1. apple → zebra: kept (zebra not yet processed)
 		// 2. banana → cherry: kept (cherry is not an alias)
 		// 3. zebra → apple: skipped (apple already in validAliases)
-		assert.Equal(t, 2, r.AliasCount(), "Should have exactly 2 aliases")
-		assert.True(t, r.HasAlias("apple"), "apple should be kept")
-		assert.True(t, r.HasAlias("banana"), "banana should be kept")
-		assert.False(t, r.HasAlias("zebra"), "zebra should be skipped (circular with apple)")
+		assert.Equal(t, 2, r.GetAliasCount(), "Should have exactly 2 aliases")
+
+		aliases := r.GetAliases()
+		_, hasApple := aliases["apple"]
+		_, hasBanana := aliases["banana"]
+		_, hasZebra := aliases["zebra"]
+
+		assert.True(t, hasApple, "apple should be kept")
+		assert.True(t, hasBanana, "banana should be kept")
+		assert.False(t, hasZebra, "zebra should be skipped (circular with apple)")
 	}
 }
 
@@ -342,10 +235,16 @@ func TestNewResolver_SkipsEmptyCanonical(t *testing.T) {
 	r := NewResolver(cfg)
 
 	// Should only have the valid alias
-	assert.Equal(t, 1, r.AliasCount())
-	assert.False(t, r.HasAlias("alias1"))
-	assert.False(t, r.HasAlias("alias2"))
-	assert.True(t, r.HasAlias("alias3"))
+	assert.Equal(t, 1, r.GetAliasCount())
+
+	aliases := r.GetAliases()
+	_, has1 := aliases["alias1"]
+	_, has2 := aliases["alias2"]
+	_, has3 := aliases["alias3"]
+
+	assert.False(t, has1, "Empty canonical should be skipped")
+	assert.False(t, has2, "Whitespace-only canonical should be skipped")
+	assert.True(t, has3, "Valid alias should be kept")
 }
 
 func TestNewResolver_TrimsWhitespace(t *testing.T) {
@@ -358,12 +257,52 @@ func TestNewResolver_TrimsWhitespace(t *testing.T) {
 	r := NewResolver(cfg)
 
 	// Keys and values should be trimmed
-	assert.True(t, r.HasAlias("alias_with_spaces"))
-	assert.Equal(t, "canonical_with_spaces", r.Resolve("alias_with_spaces"))
+	aliases := r.GetAliases()
+	canonical, exists := aliases["alias_with_spaces"]
+
+	assert.True(t, exists, "Trimmed alias key should exist")
+	assert.Equal(t, "canonical_with_spaces", canonical, "Canonical value should be trimmed")
+}
+
+func TestNewResolver_MultipleAliasesToSameCanonical(t *testing.T) {
+	cfg := &Config{
+		NamespaceAliases: map[string]string{
+			"postgres_prod":           "postgresql://prod-db:5432/mydb",
+			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
+		},
+	}
+	r := NewResolver(cfg)
+
+	assert.Equal(t, 2, r.GetAliasCount())
+
+	aliases := r.GetAliases()
+	assert.Equal(t, "postgresql://prod-db:5432/mydb", aliases["postgres_prod"])
+	assert.Equal(t, "postgresql://prod-db:5432/mydb", aliases["postgres://prod-db:5432"])
+}
+
+func TestNewResolver_TransitiveChainAllowed(t *testing.T) {
+	// A → B → C should be allowed (not circular)
+	cfg := &Config{
+		NamespaceAliases: map[string]string{
+			"postgres_prod":           "postgres://prod-db:5432",
+			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
+		},
+	}
+	r := NewResolver(cfg)
+
+	// Both aliases should be kept (transitive chains are valid)
+	assert.Equal(t, 2, r.GetAliasCount())
+
+	aliases := r.GetAliases()
+	_, has1 := aliases["postgres_prod"]
+	_, has2 := aliases["postgres://prod-db:5432"]
+
+	assert.True(t, has1)
+	assert.True(t, has2)
 }
 
 //nolint:gosmopolitan // testing unicode support intentionally
-func TestResolver_Resolve_Unicode(t *testing.T) {
+func TestNewResolver_UnicodeAliases(t *testing.T) {
 	cfg := &Config{
 		NamespaceAliases: map[string]string{
 			"生产数据库": "postgresql://prod-db:5432/mydb",
@@ -371,43 +310,11 @@ func TestResolver_Resolve_Unicode(t *testing.T) {
 	}
 	r := NewResolver(cfg)
 
-	result := r.Resolve("生产数据库")
+	assert.Equal(t, 1, r.GetAliasCount())
 
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", result)
-}
+	aliases := r.GetAliases()
+	canonical, exists := aliases["生产数据库"]
 
-func TestResolver_ConcurrentResolve(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias1": "canonical1",
-			"alias2": "canonical2",
-			"alias3": "canonical3",
-		},
-	}
-	r := NewResolver(cfg)
-
-	var wg sync.WaitGroup
-
-	// Run 100 concurrent resolve operations
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-
-		go func(i int) {
-			defer wg.Done()
-
-			// Mix of known aliases and passthrough
-			switch i % 4 {
-			case 0:
-				assert.Equal(t, "canonical1", r.Resolve("alias1"))
-			case 1:
-				assert.Equal(t, "canonical2", r.Resolve("alias2"))
-			case 2:
-				assert.Equal(t, "canonical3", r.Resolve("alias3"))
-			case 3:
-				assert.Equal(t, "unknown", r.Resolve("unknown"))
-			}
-		}(i)
-	}
-
-	wg.Wait()
+	assert.True(t, exists)
+	assert.Equal(t, "postgresql://prod-db:5432/mydb", canonical)
 }

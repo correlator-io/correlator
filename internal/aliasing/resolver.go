@@ -125,62 +125,8 @@ func NewResolver(cfg *Config) *Resolver {
 	}
 }
 
-// Resolve returns the canonical namespace for an alias.
-// If no alias exists for the given namespace, returns it unchanged (passthrough).
-//
-// Transitive resolution: If A → B and B → C, then Resolve("A") returns "C".
-// This follows the alias chain until reaching a terminal (non-aliased) value.
-//
-// Loop detection: If a circular chain is detected (should not happen with
-// proper validation), resolution stops and returns the last resolved value.
-//
-// This method is thread-safe as the resolver is immutable after construction.
-func (r *Resolver) Resolve(namespace string) string {
-	if r == nil || len(r.aliases) == 0 {
-		return namespace
-	}
-
-	// Track visited namespaces to detect loops
-	visited := make(map[string]bool)
-	current := namespace
-
-	for {
-		// Check if we've seen this namespace before (loop detection)
-		if visited[current] {
-			slog.Warn("Circular alias chain detected during resolution",
-				slog.String("original", namespace),
-				slog.String("loop_at", current))
-
-			return current
-		}
-
-		visited[current] = true
-
-		// Try to resolve current namespace
-		canonical, exists := r.aliases[current]
-		if !exists {
-			// No more aliases to follow - return current value
-			return current
-		}
-
-		// Follow the chain
-		current = canonical
-	}
-}
-
-// HasAlias returns true if the namespace has a configured alias.
-func (r *Resolver) HasAlias(namespace string) bool {
-	if r == nil || len(r.aliases) == 0 {
-		return false
-	}
-
-	_, exists := r.aliases[namespace]
-
-	return exists
-}
-
-// AliasCount returns the number of configured aliases.
-func (r *Resolver) AliasCount() int {
+// GetAliasCount returns the number of configured aliases.
+func (r *Resolver) GetAliasCount() int {
 	if r == nil {
 		return 0
 	}
@@ -188,9 +134,9 @@ func (r *Resolver) AliasCount() int {
 	return len(r.aliases)
 }
 
-// Aliases returns a copy of the alias map.
+// GetAliases returns a copy of the alias map.
 // Modifications to the returned map do not affect the resolver.
-func (r *Resolver) Aliases() map[string]string {
+func (r *Resolver) GetAliases() map[string]string {
 	if r == nil || len(r.aliases) == 0 {
 		return make(map[string]string)
 	}
@@ -204,15 +150,15 @@ func (r *Resolver) Aliases() map[string]string {
 	return result
 }
 
-// AliasSlices returns aliases as parallel slices for SQL parameterization.
+// GetAliasSlices returns aliases as parallel slices for SQL parameterization.
 // Returns (aliasKeys, canonicalValues) for use with PostgreSQL unnest().
 //
 // Example usage:
 //
-//	keys, values := resolver.AliasSlices()
+//	keys, values := resolver.GetAliasSlices()
 //	query := "SELECT unnest($1::text[]), unnest($2::text[])"
 //	rows, err := db.Query(query, pq.Array(keys), pq.Array(values))
-func (r *Resolver) AliasSlices() ([]string, []string) {
+func (r *Resolver) GetAliasSlices() ([]string, []string) {
 	if r == nil || len(r.aliases) == 0 {
 		return []string{}, []string{}
 	}

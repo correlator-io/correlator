@@ -115,10 +115,10 @@ func main() {
 	resolver := aliasing.NewResolver(aliasConfig)
 
 	logger.Info("Namespace alias configuration loaded",
-		slog.Int("alias_count", resolver.AliasCount()))
+		slog.Int("alias_count", resolver.GetAliasCount()))
 
 	// Log individual aliases at debug level for troubleshooting
-	for alias, canonical := range resolver.Aliases() {
+	for alias, canonical := range resolver.GetAliases() {
 		logger.Debug("Configured namespace alias",
 			slog.String("alias", alias),
 			slog.String("canonical", canonical))
