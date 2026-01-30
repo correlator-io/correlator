@@ -76,6 +76,52 @@ Automated correlation that connects test failures to their source, reducing time
 
 ---
 
+## Configuration
+
+### Namespace Aliasing
+
+Different data tools emit different namespace formats for the same data source:
+
+| Tool               | Example Namespace                |
+|--------------------|----------------------------------|
+| Great Expectations | `postgres_prod`                  |
+| dbt                | `postgresql://prod-db:5432/mydb` |
+| Airflow            | `postgres://prod-db:5432`        |
+
+Without aliasing, Correlator sees these as separate datasets and cannot correlate test failures across tools.
+
+**Solution:** Configure namespace aliases in `.correlator.yaml`:
+
+```yaml
+# .correlator.yaml
+namespace_aliases:
+  # Map GE namespace to dbt's canonical format
+  postgres_prod: "postgresql://prod-db:5432/mydb"
+  postgres://prod-db:5432: "postgresql://prod-db:5432/mydb"
+```
+
+**Workflow:**
+
+1. Deploy Correlator without aliases
+2. Check Correlation Health page for orphan namespaces
+3. Configure aliases based on discovered orphans
+4. Restart Correlator - historical data is immediately resolved
+
+See `.correlator.yaml.example` for a full configuration template.
+
+### Environment Variables
+
+| Variable                  | Description                          | Default            |
+|---------------------------|--------------------------------------|--------------------|
+| `CORRELATOR_CONFIG_PATH`  | Path to YAML config file             | `.correlator.yaml` |
+| `CORRELATOR_AUTH_ENABLED` | Enable API key authentication        | `false`            |
+| `CORRELATOR_PORT`         | HTTP server port                     | `8080`             |
+| `LOG_LEVEL`               | Log level (debug, info, warn, error) | `info`             |
+
+See `.env.example` for all available configuration options.
+
+---
+
 ## Versioning
 
 This project follows [Semantic Versioning](https://semver.org/) with the following guidelines:

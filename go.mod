@@ -11,6 +11,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.38.0
 	golang.org/x/crypto v0.39.0
 	golang.org/x/time v0.5.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -68,5 +69,4 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	google.golang.org/grpc v1.75.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

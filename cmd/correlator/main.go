@@ -1,7 +1,4 @@
 // Package main provides the Correlator incident correlation service.
-//
-// This is the main correlation engine service that processes OpenLineage events
-// and correlates test failures with job runs to provide < 5minute incident response.
 package main
 
 import (
@@ -12,6 +9,7 @@ import (
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 
+	"github.com/correlator-io/correlator/internal/aliasing"
 	"github.com/correlator-io/correlator/internal/api"
 	"github.com/correlator-io/correlator/internal/api/middleware"
 	"github.com/correlator-io/correlator/internal/config"
@@ -24,6 +22,7 @@ const (
 	name    = "correlator"
 )
 
+//nolint:funlen // main function sets up dependencies sequentially, extracting would reduce clarity
 func main() {
 	versionFlag := flag.Bool("version", false, "show version information")
 	flag.Parse()
@@ -104,7 +103,31 @@ func main() {
 		)
 	}
 
-	lineageStore, err := storage.NewLineageStore(dbConn, storageConfig.CleanupInterval)
+	// Load namespace alias configuration (optional - graceful degradation)
+	aliasConfig, err := aliasing.LoadConfigFromEnv()
+	if err != nil {
+		logger.Warn("Failed to load alias config, continuing without aliases",
+			slog.String("error", err.Error()))
+
+		aliasConfig = &aliasing.Config{}
+	}
+
+	resolver := aliasing.NewResolver(aliasConfig)
+
+	logger.Info("Namespace alias configuration loaded",
+		slog.Int("alias_count", resolver.GetAliasCount()))
+
+	// Log individual aliases at debug level for troubleshooting
+	for alias, canonical := range resolver.GetAliases() {
+		logger.Debug("Configured namespace alias",
+			slog.String("alias", alias),
+			slog.String("canonical", canonical))
+	}
+
+	lineageStore, err := storage.NewLineageStore(
+		dbConn, storageConfig.CleanupInterval,
+		storage.WithAliasResolver(resolver),
+	)
 	if err != nil {
 		logger.Error("Failed to connect to lineage store", slog.String("error", err.Error()))
 		// Close database connection before exit (defer won't run with os.Exit)
