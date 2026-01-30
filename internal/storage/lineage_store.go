@@ -15,6 +15,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"github.com/correlator-io/correlator/internal/aliasing"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
@@ -76,7 +77,11 @@ type (
 		cleanupStop     chan struct{} // Signal to stop cleanup goroutine
 		cleanupDone     chan struct{} // Signal cleanup has stopped
 		closeOnce       sync.Once
+		resolver        *aliasing.Resolver // Optional alias resolver for query-time namespace resolution
 	}
+
+	// LineageStoreOption configures optional LineageStore behavior.
+	LineageStoreOption func(*LineageStore)
 
 	// stateTransition represents a single state transition entry in state_history.
 	stateTransition struct {
@@ -95,15 +100,34 @@ type (
 	}
 )
 
+// WithAliasResolver sets the namespace alias resolver for query-time resolution.
+// If not set, no alias resolution is applied (passthrough behavior).
+//
+// Example:
+//
+//	resolver := aliasing.NewResolver(cfg)
+//	store, err := storage.NewLineageStore(conn, interval,
+//	    storage.WithAliasResolver(resolver))
+func WithAliasResolver(r *aliasing.Resolver) LineageStoreOption {
+	return func(s *LineageStore) {
+		s.resolver = r
+	}
+}
+
 // NewLineageStore creates a PostgreSQL-backed OpenLineage event store with background cleanup.
 // Returns error if connection is nil (ErrNoDatabaseConnection).
 //
 // Parameters:
 //   - conn: Database connection (required)
 //   - cleanupInterval: Interval for TTL cleanup goroutine (e.g., 1 hour)
+//   - opts: Optional configuration (e.g., WithAliasResolver)
 //
 // The cleanup goroutine starts automatically and stops gracefully on Close().
-func NewLineageStore(conn *Connection, cleanupInterval time.Duration) (*LineageStore, error) {
+func NewLineageStore(
+	conn *Connection,
+	cleanupInterval time.Duration,
+	opts ...LineageStoreOption,
+) (*LineageStore, error) {
 	if conn == nil {
 		return nil, ErrNoDatabaseConnection
 	}
@@ -120,6 +144,11 @@ func NewLineageStore(conn *Connection, cleanupInterval time.Duration) (*LineageS
 		cleanupInterval: cleanupInterval,
 		cleanupStop:     make(chan struct{}), // Signal to stop cleanup goroutine
 		cleanupDone:     make(chan struct{}), // Signal cleanup has stopped
+	}
+
+	// Apply optional configuration
+	for _, opt := range opts {
+		opt(store)
 	}
 
 	// Start cleanup goroutine
