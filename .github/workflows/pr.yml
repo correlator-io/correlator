@@ -34,8 +34,8 @@ jobs:
       - name: Run tests
         run: make run web test
 
-      - name: Build (type check)
-        run: make run web build
+      - name: Build
+        run: make build web
 
   quality:
     name: Code Quality Checks
