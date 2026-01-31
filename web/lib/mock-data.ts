@@ -2,7 +2,6 @@ import type {
   Incident,
   IncidentDetail,
   CorrelationHealth,
-  DownstreamDataset,
 } from "./types";
 
 /**
@@ -258,51 +257,8 @@ export const MOCK_CORRELATION_HEALTH: CorrelationHealth = {
 };
 
 /**
- * Generate YAML config example for fixing orphan namespaces
- */
-export function generateYamlConfig(orphanNamespaces: typeof MOCK_CORRELATION_HEALTH.orphanNamespaces): string {
-  const aliases = orphanNamespaces
-    .filter((ns) => ns.suggestedAlias)
-    .map(
-      (ns) =>
-        `  # ${ns.producer} uses "${ns.namespace}"\n  - from: "${ns.namespace}"\n    to: "${ns.suggestedAlias}"`
-    )
-    .join("\n\n");
-
-  return `# correlator.yaml
-namespace_aliases:
-${aliases || "  # No suggested aliases"}
-
-# Add manual aliases for remaining namespaces:
-${orphanNamespaces
-  .filter((ns) => !ns.suggestedAlias)
-  .map((ns) => `  # - from: "${ns.namespace}"\n  #   to: "your-canonical-namespace"`)
-  .join("\n")}
-`;
-}
-
-/**
- * Get incident detail by ID
+ * Get incident detail by ID (used for mock data lookups only)
  */
 export function getIncidentDetail(id: string): IncidentDetail | undefined {
   return MOCK_INCIDENT_DETAILS[id];
-}
-
-/**
- * Filter incidents by status
- */
-export function filterIncidents(
-  incidents: Incident[],
-  filter: "all" | "failed" | "passed" | "correlation_issues"
-): Incident[] {
-  switch (filter) {
-    case "failed":
-      return incidents.filter((i) => i.testStatus === "failed");
-    case "passed":
-      return incidents.filter((i) => i.testStatus === "passed");
-    case "correlation_issues":
-      return incidents.filter((i) => i.hasCorrelationIssue);
-    default:
-      return incidents;
-  }
 }

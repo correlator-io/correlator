@@ -4,7 +4,7 @@ import { useState } from "react";
 import { IncidentCard } from "./incident-card";
 import { IncidentFilter, type FilterValue } from "./incident-filter";
 import { Button } from "@/components/ui/button";
-import { filterIncidents } from "@/lib/mock-data";
+import { filterIncidents } from "@/lib/filters";
 import type { Incident } from "@/lib/types";
 import { CheckCircle2 } from "lucide-react";
 

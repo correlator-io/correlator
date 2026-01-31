@@ -1,25 +1,19 @@
-import { notFound } from "next/navigation";
+"use client";
+
+import { use } from "react";
 import { AppShell } from "@/components/layout/app-shell";
-import { IncidentDetail } from "@/components/incidents/incident-detail";
-import { getIncidentDetail } from "@/lib/mock-data";
+import { IncidentDetailPageContent } from "@/components/incidents/incident-detail-page-content";
 
 interface IncidentDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function IncidentDetailPage({
-  params,
-}: IncidentDetailPageProps) {
-  const { id } = await params;
-  const incident = getIncidentDetail(id);
-
-  if (!incident) {
-    notFound();
-  }
+export default function IncidentDetailPage({ params }: IncidentDetailPageProps) {
+  const { id } = use(params);
 
   return (
     <AppShell title="Incident Detail">
-      <IncidentDetail incident={incident} />
+      <IncidentDetailPageContent id={id} />
     </AppShell>
   );
 }

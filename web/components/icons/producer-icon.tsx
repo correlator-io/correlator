@@ -30,40 +30,46 @@ const producerLabels: Record<Producer, string> = {
   unknown: "Unknown",
 };
 
+function getProducerIcon(
+  producer: Producer,
+  size: number,
+  className?: string
+): React.ReactNode {
+  switch (producer) {
+    case "dbt":
+      return <DbtIcon size={size} className={className} />;
+    case "airflow":
+      return <AirflowIcon size={size} className={className} />;
+    case "great_expectations":
+      return <GreatExpectationsIcon size={size} className={className} />;
+    default:
+      return (
+        <HelpCircle
+          size={size}
+          className={cn("text-muted-foreground", className)}
+        />
+      );
+  }
+}
+
 export function ProducerIcon({
   producer,
   size = 16,
   className,
   showLabel = false,
 }: ProducerIconProps) {
-  const Icon = () => {
-    switch (producer) {
-      case "dbt":
-        return <DbtIcon size={size} className={className} />;
-      case "airflow":
-        return <AirflowIcon size={size} className={className} />;
-      case "great_expectations":
-        return <GreatExpectationsIcon size={size} className={className} />;
-      default:
-        return (
-          <HelpCircle
-            size={size}
-            className={cn("text-muted-foreground", className)}
-          />
-        );
-    }
-  };
+  const icon = getProducerIcon(producer, size, className);
 
   if (showLabel) {
     return (
       <span className="inline-flex items-center gap-1.5">
-        <Icon />
+        {icon}
         <span className="text-sm">{producerLabels[producer]}</span>
       </span>
     );
   }
 
-  return <Icon />;
+  return icon;
 }
 
 export { producerLabels };

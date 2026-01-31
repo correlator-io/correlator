@@ -6,7 +6,7 @@ import { YamlConfigBlock } from "./yaml-config-block";
 import { HealthyState } from "./healthy-state";
 import { AlertTriangle, Wrench } from "lucide-react";
 import type { CorrelationHealth } from "@/lib/types";
-import { generateYamlConfig } from "@/lib/mock-data";
+import { generateYamlConfig } from "@/lib/yaml";
 
 interface CorrelationHealthDashboardProps {
   health: CorrelationHealth;
