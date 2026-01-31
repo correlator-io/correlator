@@ -76,6 +76,6 @@ export interface IncidentListResponse {
   offset: number;
 }
 
-export interface IncidentDetailResponse extends IncidentDetail {}
+export type IncidentDetailResponse = IncidentDetail;
 
-export interface CorrelationHealthResponse extends CorrelationHealth {}
+export type CorrelationHealthResponse = CorrelationHealth;

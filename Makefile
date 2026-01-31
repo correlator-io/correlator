@@ -337,7 +337,6 @@ run:
 		echo "  make run migrate drop       # Drop all tables (destructive, uses --force)"; \
 		echo "  make run smoketest          # Run smoke tests (end-to-end correlation validation)"; \
 		echo "  make run web                # Start frontend dev server"; \
-		echo "  make run web build          # Build frontend for production"; \
 		echo "  make run web lint           # Run frontend linter"; \
 		echo "  make run web test           # Run frontend tests"; \
 		exit 1; \
@@ -413,8 +412,6 @@ run-web-internal: check-web-deps
 		echo "   URL: http://localhost:3000"; \
 		echo ""; \
 		cd $(WEB_DIR) && npm run dev; \
-	elif [ "$(WEBCMD)" = "build" ]; then \
-		$(MAKE) run-web-build; \
 	elif [ "$(WEBCMD)" = "lint" ]; then \
 		$(MAKE) run-web-lint; \
 	elif [ "$(WEBCMD)" = "test" ]; then \
@@ -422,17 +419,12 @@ run-web-internal: check-web-deps
 	else \
 		echo "❌ Unknown web command: $(WEBCMD)"; \
 		echo "📖 Available web commands:"; \
-		echo "  make run web                # Start frontend dev server"; \
-		echo "  make run web build          # Build frontend for production"; \
-		echo "  make run web lint           # Run frontend linter"; \
-		echo "  make run web test           # Run frontend tests"; \
+		echo "  make run web          # Start frontend dev server"; \
+		echo "  make run web lint     # Run frontend linter"; \
+		echo "  make run web test     # Run frontend tests"; \
+		echo "  make build web        # Build frontend for production"; \
 		exit 1; \
 	fi
-
-run-web-build: check-web-deps
-	@echo "🔨 Building frontend for production..."
-	@cd $(WEB_DIR) && npm run build
-	@echo "✅ Frontend build complete!"
 
 run-web-lint: check-web-deps
 	@echo "📝 Running frontend linter..."
@@ -586,7 +578,7 @@ docker: ensure-not-in-dev-container check-docker-environment
 # BUILD & DEPLOY
 #===============================================================================
 
-# Create artifacts (build, build prod, build all)
+# Create artifacts (build, build prod, build all, build web)
 build:
 	@if [ "$(filter-out $@,$(MAKECMDGOALS))" = "" ]; then \
 		echo "🔨 Building development binary..."; \
@@ -598,12 +590,16 @@ build:
 		$(MAKE) build-prod; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "all" ]; then \
 		$(MAKE) build-all; \
+	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "web" ]; then \
+		$(MAKE) build-web; \
 	else \
 		echo "❌ Unknown build target: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "Available targets:"; \
-		echo "  make build       # Development build"; \
-		echo "  make build prod  # Production build"; \
-		echo "  make build all   # Build all components"; \
+		echo "  make build           # Development build (Go binary)"; \
+		echo "  make build prod      # Production build"; \
+		echo "  make build migrator  # Build migrator"; \
+		echo "  make build all       # Build all components"; \
+		echo "  make build web       # Build frontend for production"; \
 		exit 1; \
 	fi
 
@@ -625,6 +621,11 @@ build-all:
 	@echo "📦 Building migrator..."
 	go build -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(COMMIT) -X 'main.buildTime=$(BUILD_TIME)'" -o bin/migrator ./migrations
 	@echo "✅ All builds complete!"
+
+build-web: check-web-deps
+	@echo "🔨 Building frontend for production..."
+	@cd $(WEB_DIR) && npm run build
+	@echo "✅ Frontend build complete!"
 
 # Prepare for production (builds + images + migrations)
 deploy: ensure-not-in-dev-container
@@ -753,5 +754,9 @@ help:
 	@echo "💡 For detailed options: make <command> --help"
 
 # Handle command line arguments for parameterized commands
-%:
+# These are pseudo-targets that act as arguments to run/build/docker commands
+# They must be declared as .PHONY and have empty recipes to prevent Make errors
+.PHONY: web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator
+
+web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator:
 	@:

@@ -19,7 +19,6 @@ Example: fix(ingestion): resolve OpenLineage event parsing error
 - [ ] Documentation update
 - [ ] Code refactoring
 - [ ] Database schema change (migration required)
-- [ ] Plugin implementation (dbt, Airflow, Great Expectations)
 - [ ] Performance optimization
 - [ ] CI/CD or workflow changes
 - [ ] Other (please describe):

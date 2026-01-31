@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProducerIcon } from "@/components/icons/producer-icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
-import { Clock, PlayCircle, CheckCircle } from "lucide-react";
+import { PlayCircle, CheckCircle } from "lucide-react";
 import type { Producer } from "@/lib/types";
 
 interface JobDetailsCardProps {

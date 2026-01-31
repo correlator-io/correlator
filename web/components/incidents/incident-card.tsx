@@ -20,7 +20,6 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
     testName,
     testStatus,
     datasetUrn,
-    datasetName,
     producer,
     jobName,
     downstreamCount,
