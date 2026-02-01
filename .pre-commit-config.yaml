@@ -23,10 +23,10 @@ repos:
   # Go-specific hooks that integrate with our existing setup
   - repo: local
     hooks:
-      # Format code (uses our make fmt)
+      # Format code (uses golangci-lint fmt like make fix)
       - id: go-fmt
         name: go fmt
-        entry: make fmt
+        entry: golangci-lint fmt
         language: system
         pass_filenames: false
         types: [go]
@@ -37,17 +37,17 @@ repos:
         language: system
         pass_filenames: false
         files: 'go\.(mod|sum)$'
-      # Run go vet (integrates with our make vet)
+      # Run go vet
       - id: go-vet
         name: go vet
-        entry: make vet
+        entry: go vet ./...
         language: system
         pass_filenames: false
         types: [go]
       # Run unit tests before commit
       - id: go-unit-tests
         name: go unit tests
-        entry: make test-unit
+        entry: go test -short ./...
         language: system
         pass_filenames: false
         types: [go]

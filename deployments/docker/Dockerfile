@@ -1,13 +1,10 @@
-# Migrator Dockerfile
-# Production-ready database migration container
+# Correlator API Server Dockerfile
 
 # Build stage
 FROM golang:1.25-alpine AS builder
 
-# Install build dependencies
 RUN apk add --no-cache git
 
-# Set working directory
 WORKDIR /app
 
 # Copy go mod files for dependency caching
@@ -17,8 +14,7 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the migrator binary with embedded migrations and version information
-# The go:embed directive will include SQL files at compile time
+# Build arguments for version injection
 ARG VERSION=0.1.0-dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
@@ -26,37 +22,34 @@ ARG BUILD_TIME=unknown
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -a -installsuffix cgo \
     -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X 'main.buildTime=${BUILD_TIME}'" \
-    -o migrator ./migrations
+    -o correlator ./cmd/correlator
 
 # Runtime stage
 FROM alpine:3.19
 
-# Install ca-certificates for SSL/TLS connections
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates wget
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S correlator && \
     adduser -u 1001 -S correlator -G correlator
 
-# Set working directory
 WORKDIR /app
 
-# Copy the migrator binary from builder stage (includes embedded migrations)
-COPY --from=builder /app/migrator .
+# Copy binary from builder
+COPY --from=builder /app/correlator .
 
-# Change ownership to non-root user
 RUN chown -R correlator:correlator /app
 
-# Switch to non-root user
 USER correlator
 
-# Set default environment variables
+# Environment variables (config mounted at runtime, not baked in)
 ENV DATABASE_URL=""
-ENV MIGRATION_TABLE="schema_migrations"
+ENV LOG_LEVEL="info"
+ENV CORRELATOR_CONFIG_PATH=""
 
-# Health check
+EXPOSE 8080 9090
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ./migrator --version || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Default command shows help
-CMD ["./migrator", "--help"]
+CMD ["./correlator"]

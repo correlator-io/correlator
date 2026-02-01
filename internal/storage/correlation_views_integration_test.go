@@ -349,9 +349,9 @@ func TestQueryOrphanNamespaces(t *testing.T) {
 	now := time.Now()
 
 	// Job runs for both scenarios
-	geJobRunID := "great_expectations:" + uuid.New().String()   // Validator job (GE)
-	dbtJobRunID := "dbt:" + uuid.New().String()                 // Producer job (dbt)
-	sodaJobRunID := "soda:" + uuid.New().String()               // Another validator job (Soda) for orphan namespace
+	geJobRunID := "great_expectations:" + uuid.New().String() // Validator job (GE)
+	dbtJobRunID := "dbt:" + uuid.New().String()               // Producer job (dbt)
+	sodaJobRunID := "soda:" + uuid.New().String()             // Another validator job (Soda) for orphan namespace
 
 	// Orphan namespace: "postgres_prod" - only has test results, no output edges
 	orphanNamespace := "postgres_prod"
@@ -980,8 +980,8 @@ func TestQueryOrphanNamespaces_WithAliasResolution(t *testing.T) {
 	geJobRunID := "great_expectations:" + uuid.New().String()
 	dbtJobRunID := "dbt:" + uuid.New().String()
 
-	orphanNamespace := "postgres_prod"                       // GE uses this
-	canonicalNamespace := "postgresql://prod-db:5432/mydb"   // dbt uses this
+	orphanNamespace := "postgres_prod"                     // GE uses this
+	canonicalNamespace := "postgresql://prod-db:5432/mydb" // dbt uses this
 	orphanDatasetURN := orphanNamespace + "/public.orders"
 	canonicalDatasetURN := canonicalNamespace + "/public.orders"
 
@@ -1081,8 +1081,8 @@ func TestQueryOrphanNamespaces_PartialAliasResolution(t *testing.T) {
 	sodaJobRunID := "soda:" + uuid.New().String()
 	dbtJobRunID := "dbt:" + uuid.New().String()
 
-	aliasedNamespace := "postgres_prod"                      // Has alias
-	unaliasedNamespace := "mysql_prod"                       // No alias
+	aliasedNamespace := "postgres_prod" // Has alias
+	unaliasedNamespace := "mysql_prod"  // No alias
 	canonicalNamespace := "postgresql://prod-db:5432/mydb"
 
 	aliasedDatasetURN := aliasedNamespace + "/public.orders"
@@ -1182,9 +1182,9 @@ func TestQueryOrphanNamespaces_MultipleAliasesToSameCanonical(t *testing.T) {
 	airflowJobRunID := "airflow:" + uuid.New().String()
 	dbtJobRunID := "dbt:" + uuid.New().String()
 
-	geNamespace := "postgres_prod"                           // GE format
-	airflowNamespace := "postgres://prod-db:5432"            // Airflow format
-	canonicalNamespace := "postgresql://prod-db:5432/mydb"   // dbt format (canonical)
+	geNamespace := "postgres_prod"                         // GE format
+	airflowNamespace := "postgres://prod-db:5432"          // Airflow format
+	canonicalNamespace := "postgresql://prod-db:5432/mydb" // dbt format (canonical)
 
 	geDatasetURN := geNamespace + "/public.orders"
 	airflowDatasetURN := airflowNamespace + "/public.orders"
