@@ -32,8 +32,13 @@ services:
     environment:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD:-dev123}@postgres:5432/correlator?sslmode=disable
       - LOG_LEVEL=debug
-      - DEVELOPMENT=true
+      - CORRELATOR_AUTH_ENABLED=false
+      - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
 
-    # Mount source code for development (when using air for hot reload)
     volumes:
-      - ../..:/app:ro
+      # Config file only - don't mount source tree (shadows compiled binary)
+      - ../../.correlator.yaml:/config/.correlator.yaml:ro
+
+  correlator-ui:
+    environment:
+      - NODE_ENV=development

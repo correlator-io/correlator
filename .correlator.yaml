@@ -1,0 +1,16 @@
+# Correlator Namespace Alias Configuration
+# =========================================
+# This file maps tool-specific namespaces to canonical namespaces for cross-tool correlation.
+#
+# See .correlator.yaml.example for documentation and examples.
+#
+# Workflow:
+#   1. Run your data tools (dbt, Airflow, GE) to ingest events
+#   2. Check the Health page for orphan namespaces
+#   3. Add aliases below to map orphans to canonical namespaces
+#   4. Restart Correlator - correlation improves immediately
+
+namespace_aliases:
+  # Add your aliases here, for example:
+  # postgres_prod: "postgresql://prod-db:5432/mydb"
+  # airflow://prod: "postgresql://prod-db:5432/mydb"

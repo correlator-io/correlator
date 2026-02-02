@@ -34,4 +34,7 @@ coverage.out
 .DS_Store
 Thumbs.db
 
+# Project-specific exclusions
 notes/
+web/
+deployments/

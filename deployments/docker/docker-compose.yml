@@ -62,7 +62,7 @@ services:
       context: ../..
       dockerfile: deployments/docker/migrator.dockerfile
       args:
-        VERSION: ${VERSION:-1.0.0-dev}
+        VERSION: ${VERSION:-0.1.0-dev}
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: correlator-migrator
@@ -78,24 +78,53 @@ services:
       - migration  # For migration operations
       - full       # Include in full stack
 
-  # Correlation service placeholder for Phase 3+
+  # Correlator API server
   correlator:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile
-    container_name: correlator-service
+      args:
+        VERSION: ${VERSION:-0.1.0-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: correlator-api
     environment:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
-      - MIGRATION_PATH=file://migrations
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CORRELATOR_AUTH_ENABLED=${CORRELATOR_AUTH_ENABLED:-false}
+      - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
     ports:
       - "8080:8080"   # API
-      - "9090:9090"   # Metrics
+      - "9090:9090"   # Reserved for future metrics endpoint (Prometheus/OpenTelemetry)
+    volumes:
+      - ../../.correlator.yaml:/config/.correlator.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+    networks:
+      - correlator-network
+    profiles:
+      - full  # Only start when explicitly requested
+
+  # Correlator Web UI
+  correlator-ui:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-0.1.0-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        NEXT_PUBLIC_CORRELATOR_URL: ${NEXT_PUBLIC_CORRELATOR_URL:-http://localhost:8080}
+    container_name: correlator-ui
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    depends_on:
+      correlator:
+        condition: service_healthy
     networks:
       - correlator-network
     profiles:
