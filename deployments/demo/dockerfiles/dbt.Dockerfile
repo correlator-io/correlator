@@ -1,0 +1,28 @@
+# dbt Dockerfile for Correlator Demo
+# Includes dbt-postgres and dbt-correlator plugin from TestPyPI
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /dbt
+
+# Install dbt-postgres and dbt-correlator from TestPyPI
+# --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
+RUN pip install --no-cache-dir \
+    dbt-postgres \
+    && pip install --no-cache-dir \
+    --index-url https://test.pypi.org/simple/ \
+    --extra-index-url https://pypi.org/simple/ \
+    dbt-correlator
+
+# Environment variables for dbt-correlator
+ENV CORRELATOR_URL=""
+ENV CORRELATOR_NAMESPACE=""
+
+# Default command
+ENTRYPOINT ["dbt"]
+CMD ["--help"]

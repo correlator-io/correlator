@@ -1,0 +1,292 @@
+# Correlator Demo Environment
+# 3-tool correlation demo: dbt + Airflow + Great Expectations
+#
+# Port Mapping (Demo = Dev + 1):
+#   PostgreSQL:        5433 (dev: 5432)
+#   Correlator API:    8081 (dev: 8080)
+#   Correlator UI:     3001 (dev: 3000)
+#   Airflow Webserver: 8082 (avoids conflict with API)
+#
+# PostgreSQL Schemas:
+#   public:     Demo data (Jaffle Shop)
+#   airflow:    Airflow metadata
+#   correlator: Correlator lineage data
+#
+# Credentials: Uses same credentials as development (correlator/correlator_dev_password)
+#
+# Usage:
+#   make run demo                    # Start demo stack
+#   make docker demo stop            # Stop demo stack
+#   make docker demo dbt seed        # Run dbt seed
+
+services:
+  # =============================================================================
+  # Data Layer - Single PostgreSQL with multiple schemas
+  # =============================================================================
+  demo-postgres:
+    image: postgres:15-alpine
+    container_name: demo-postgres
+    environment:
+      POSTGRES_DB: demo
+      POSTGRES_USER: correlator
+      POSTGRES_PASSWORD: correlator_dev_password # pragma: allowlist secret
+      # Memory Configuration
+      POSTGRES_SHARED_BUFFERS: "128MB"
+      POSTGRES_EFFECTIVE_CACHE_SIZE: "512MB"
+      POSTGRES_WORK_MEM: "8MB"
+    command: [
+      "postgres",
+      "-c", "shared_buffers=128MB",
+      "-c", "effective_cache_size=512MB",
+      "-c", "work_mem=8MB",
+      "-c", "max_connections=100",
+      "-c", "shared_preload_libraries=pg_stat_statements,pg_trgm",
+      "-c", "log_statement=all",
+      "-c", "log_min_duration_statement=1000"
+    ]
+    ports:
+      - "5433:5432"
+    volumes:
+      - demo_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U correlator && psql -U correlator -d demo -c 'SELECT 1;'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - demo-network
+
+  # =============================================================================
+  # Correlator Stack (built from source)
+  # =============================================================================
+
+  # Database migrator - applies Correlator schema to correlator schema
+  demo-correlator-migrator:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/migrator.dockerfile
+      args:
+        VERSION: ${VERSION:-demo}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: demo-correlator-migrator
+    environment:
+      - DATABASE_URL=postgres://correlator:correlator_dev_password@demo-postgres:5432/demo?sslmode=disable&search_path=correlator
+      - MIGRATION_TABLE=schema_migrations
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+    networks:
+      - demo-network
+
+  # Correlator API server
+  demo-correlator:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        VERSION: ${VERSION:-demo}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    container_name: demo-correlator
+    environment:
+      - DATABASE_URL=postgres://correlator:correlator_dev_password@demo-postgres:5432/demo?sslmode=disable&search_path=correlator
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - CORRELATOR_AUTH_ENABLED=false
+      - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
+    ports:
+      - "8081:8080"   # API (demo port)
+      - "9091:9090"   # Metrics (demo port)
+    volumes:
+      - ./config/.correlator.yaml:/config/.correlator.yaml:ro
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+      demo-correlator-migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+    networks:
+      - demo-network
+
+  # Correlator Web UI
+  demo-correlator-ui:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-demo}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        NEXT_PUBLIC_CORRELATOR_URL: http://localhost:8081
+    container_name: demo-correlator-ui
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "3001:3000"   # UI (demo port)
+    depends_on:
+      demo-correlator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    networks:
+      - demo-network
+
+  # =============================================================================
+  # Airflow (with airflow-correlator plugin)
+  # =============================================================================
+
+  # Airflow database initialization
+  demo-airflow-init:
+    build:
+      context: .
+      dockerfile: dockerfiles/airflow.Dockerfile
+    container_name: demo-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Demo \
+          --lastname User \
+          --role Admin \
+          --email admin@demo.local || true
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dairflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-demo-secret-key-change-in-production}
+      - _AIRFLOW_DB_MIGRATE=true
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+    networks:
+      - demo-network
+
+  # Airflow webserver
+  demo-airflow-webserver:
+    build:
+      context: .
+      dockerfile: dockerfiles/airflow.Dockerfile
+    container_name: demo-airflow-webserver
+    command: webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dairflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-demo-secret-key-change-in-production}
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+      - OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
+    ports:
+      - "8082:8080"   # Airflow UI (demo port, +2 to avoid API conflict)
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/openlineage.yml:/opt/airflow/openlineage.yml:ro
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+      demo-airflow-init:
+        condition: service_completed_successfully
+      demo-correlator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+    networks:
+      - demo-network
+
+  # Airflow scheduler
+  demo-airflow-scheduler:
+    build:
+      context: .
+      dockerfile: dockerfiles/airflow.Dockerfile
+    container_name: demo-airflow-scheduler
+    command: scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dairflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
+      - OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/openlineage.yml:/opt/airflow/openlineage.yml:ro
+    depends_on:
+      demo-airflow-webserver:
+        condition: service_healthy
+    networks:
+      - demo-network
+
+  # =============================================================================
+  # Data Tools (profile: tools)
+  # These are run on-demand, not as long-running services
+  # =============================================================================
+
+  # dbt with dbt-correlator
+  demo-dbt:
+    build:
+      context: .
+      dockerfile: dockerfiles/dbt.Dockerfile
+    container_name: demo-dbt
+    environment:
+      - CORRELATOR_URL=http://demo-correlator:8080
+      - CORRELATOR_NAMESPACE=postgresql://demo-postgres:5432/demo
+    volumes:
+      - ./dbt:/dbt
+    working_dir: /dbt
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+      demo-correlator:
+        condition: service_healthy
+    networks:
+      - demo-network
+    profiles:
+      - tools
+
+  # Great Expectations with ge-correlator
+  demo-great-expectations:
+    build:
+      context: .
+      dockerfile: dockerfiles/gx.Dockerfile
+    container_name: demo-gx
+    volumes:
+      - ./great-expectations:/gx
+    working_dir: /gx
+    depends_on:
+      demo-postgres:
+        condition: service_healthy
+      demo-correlator:
+        condition: service_healthy
+    networks:
+      - demo-network
+    profiles:
+      - tools
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  demo_postgres_data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  demo-network:
+    driver: bridge

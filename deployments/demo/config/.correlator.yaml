@@ -1,0 +1,37 @@
+# Correlator Demo Configuration
+# This file configures namespace aliasing for cross-tool correlation
+
+# Namespace aliases map tool-specific namespaces to canonical namespaces
+# This enables correlation across dbt, Airflow, and Great Expectations
+namespace_aliases:
+  # PostgreSQL database - canonical namespace
+  # All tools should resolve to this canonical form
+  "postgresql://demo-postgres:5432/demo":
+    - "postgres://demo-postgres:5432/demo"      # Alternate postgres:// scheme
+    - "postgresql://localhost:5433/demo"        # External access
+    - "postgres://localhost:5433/demo"          # External access (alternate)
+
+  # Great Expectations namespace
+  # GE uses a custom namespace format
+  "ge://demo":
+    - "great_expectations://demo"
+    - "gx://demo"
+
+  # Airflow namespace
+  # Airflow DAGs emit events with this namespace
+  "airflow://demo":
+    - "airflow://demo-airflow"
+    - "airflow://localhost:8082"
+
+# Correlation settings
+correlation:
+  # Maximum depth for lineage traversal
+  max_depth: 10
+
+  # Time window for correlating events (in hours)
+  time_window_hours: 24
+
+# Logging
+logging:
+  level: debug
+  format: json
