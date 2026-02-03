@@ -1,0 +1,41 @@
+# Correlator Demo - dbt Project
+# Jaffle Shop data transformation with dbt-correlator integration
+
+name: 'jaffle_shop_demo'
+version: '1.0.0'
+config-version: 2
+
+# Profile to use (defined in profiles.yml)
+profile: 'jaffle_shop_demo'
+
+# Directories
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Model configurations
+models:
+  jaffle_shop_demo:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Seed configurations
+seeds:
+  jaffle_shop_demo:
+    +schema: raw
+
+# dbt-correlator configuration
+# Emits OpenLineage events to Correlator
+vars:
+  correlator_enabled: true

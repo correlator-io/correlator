@@ -1,0 +1,44 @@
+# Correlator Demo - Great Expectations Configuration
+# Data quality validation with ge-correlator integration
+
+config_version: 3.0
+
+# Datasources - Connection to demo PostgreSQL
+fluent_datasources:
+  demo_postgres:
+    type: postgres
+    connection_string: postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo # pragma: allowlist secret
+
+# Default expectations store
+expectations_store_name: expectations_store
+validations_store_name: validations_store
+checkpoint_store_name: checkpoint_store
+
+stores:
+  expectations_store:
+    class_name: ExpectationsStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: expectations/
+
+  validations_store:
+    class_name: ValidationsStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: uncommitted/validations/
+
+  checkpoint_store:
+    class_name: CheckpointStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: checkpoints/
+
+# Data docs - Local HTML reports
+data_docs_sites:
+  local_site:
+    class_name: SiteBuilder
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: uncommitted/data_docs/local_site/
+    site_index_builder:
+      class_name: DefaultSiteIndexBuilder
