@@ -88,20 +88,15 @@ with DAG(
         task_id="ge_validate",
         bash_command="""
             cd /gx && \
-            python -c "
-import great_expectations as gx
-context = gx.get_context()
-result = context.run_checkpoint(checkpoint_name='demo_checkpoint')
-if not result.success:
-    raise Exception('Great Expectations validation failed')
-print('Great Expectations validation passed!')
-"
+            python checkpoints/demo_checkpoint.py
         """,
         doc_md="""
         ### Great Expectations Validate
         Runs the demo checkpoint to validate:
         - customers mart: row counts, uniqueness, data types
         - orders mart: row counts, value ranges, referential integrity
+
+        Emits OpenLineage events to Correlator via ge-correlator.
         """,
     )
 

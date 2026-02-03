@@ -15,9 +15,10 @@
 # Credentials: Uses same credentials as development (correlator/correlator_dev_password)
 #
 # Usage:
-#   make run demo                    # Start demo stack
-#   make docker demo stop            # Stop demo stack
-#   make docker demo dbt seed        # Run dbt seed
+#   make start demo                # Start demo stack
+#   make run demo                  # run full demo stack
+#   make docker stop demo          # Stop demo stack
+#   make run demo dbt seed         # Run dbt seed
 
 services:
   # =============================================================================
@@ -262,11 +263,11 @@ services:
   demo-great-expectations:
     build:
       context: .
-      dockerfile: dockerfiles/gx.Dockerfile
-    container_name: demo-gx
+      dockerfile: dockerfiles/ge.Dockerfile
+    container_name: demo-ge
     volumes:
-      - ./great-expectations:/gx
-    working_dir: /gx
+      - ./great-expectations:/ge
+    working_dir: /ge
     depends_on:
       demo-postgres:
         condition: service_healthy

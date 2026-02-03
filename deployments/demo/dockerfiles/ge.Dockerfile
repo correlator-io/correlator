@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /gx
+WORKDIR /ge
 
 # Install Great Expectations and ge-correlator from TestPyPI
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
