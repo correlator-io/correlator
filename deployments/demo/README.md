@@ -1,28 +1,31 @@
 # Correlator Demo Environment
 
-3-tool correlation demo: **dbt + Airflow + Great Expectations**
+Correlation demo: **dbt + Airflow + Great Expectations**
 
 ## Quick Start
 
 ```bash
-# Start the demo environment
-make run demo
+# 1. Start the demo infrastructure
+make start demo
 
-# That's it! The command will:
-# 1. Build all containers from source
-# 2. Start PostgreSQL, Correlator, Airflow
-# 3. Wait for services to be healthy
-# 4. Print access URLs
+# 2. Run the full demo pipeline
+make run demo
 ```
+
+That's it! The demo will:
+
+1. Start all containers (PostgreSQL, Correlator, Airflow)
+2. Trigger the Airflow DAG that runs dbt and GE
+3. Generate lineage events that appear in Correlator UI
 
 ## Access URLs
 
-| Service        | URL                          | Credentials                      |
-|----------------|------------------------------|----------------------------------|
-| Correlator UI  | http://localhost:3001        | -                                |
-| Correlator API | http://localhost:8081        | -                                |
-| Airflow UI     | http://localhost:8082        | admin / admin                    |
-| PostgreSQL     | localhost:5433               | correlator / correlator_dev_password |
+| Service        | URL                   | Credentials                          |
+|----------------|-----------------------|--------------------------------------|
+| Correlator UI  | http://localhost:3001 | -                                    |
+| Correlator API | http://localhost:8081 | -                                    |
+| Airflow UI     | http://localhost:8082 | admin / admin                        |
+| PostgreSQL     | localhost:5433        | correlator / correlator_dev_password |
 
 ## Port Mapping
 
@@ -40,32 +43,23 @@ make run demo
 ### Starting and Stopping
 
 ```bash
-make run demo              # Start demo environment
-make docker demo stop      # Stop demo environment
-make docker demo logs      # View all logs
-make docker demo logs correlator  # View specific service logs
+make start demo            # Start demo infrastructure
+make run demo              # Run full demo pipeline (Airflow DAG)
+make docker stop demo      # Stop demo environment
+make docker logs demo      # View all logs
 ```
 
-### Running Data Tools
+### Running Data Tools Manually
 
 ```bash
 # dbt commands
-make docker demo dbt seed      # Load seed data
-make docker demo dbt run       # Run transformations
-make docker demo dbt test      # Run dbt tests
-make docker demo dbt debug     # Show dbt debug info
+make run demo dbt seed      # Load seed data
+make run demo dbt run       # Run transformations
+make run demo dbt test      # Run dbt tests
+make run demo dbt debug     # Show dbt debug info
 
 # Great Expectations
-make docker demo ge validate   # Run GE checkpoint
-
-# Airflow
-make docker demo airflow trigger demo_pipeline  # Trigger DAG
-```
-
-### Database Access
-
-```bash
-make docker demo psql          # Connect to demo PostgreSQL
+make run demo ge validate   # Run GE checkpoint
 ```
 
 ## PostgreSQL Schemas
@@ -79,22 +73,23 @@ make docker demo psql          # Connect to demo PostgreSQL
 ## Demo Scenarios
 
 ### Scenario 1: Success Path
-1. Load data: `make docker demo dbt seed`
-2. Transform: `make docker demo dbt run`
-3. Test: `make docker demo dbt test` (all pass)
-4. Validate: `make docker demo ge validate` (all pass)
-5. **Expected:** No incidents in Correlator UI
+
+1. Start demo: `make start demo`
+2. Run pipeline: `make run demo`
+3. **Expected:** No incidents in Correlator UI
 
 ### Scenario 2: Failure Path
+
 1. Inject bad data (see `scripts/seed-failure.sh`)
-2. Run pipeline
+2. Run pipeline: `make run demo`
 3. **Expected:** Incidents appear with cross-tool correlation
 
 ### Scenario 3: Orphan Namespace Detection
+
 1. Run all tools with default namespaces
 2. Check Health page - orphan namespaces visible
 3. Configure `config/.correlator.yaml` with aliases
-4. Restart Correlator: `make docker demo stop && make run demo`
+4. Restart: `make docker stop demo && make start demo`
 5. **Expected:** Orphan count drops to 0
 
 ## Directory Structure
@@ -124,18 +119,18 @@ deployments/demo/
 
 ```bash
 # Check logs
-make docker demo logs
+make docker logs demo
 
 # Check specific service
-make docker demo logs correlator
-make docker demo logs airflow-webserver
+make docker logs demo correlator
+make docker logs demo airflow-webserver
 ```
 
 ### Database connection issues
 
 ```bash
 # Connect to PostgreSQL
-make docker demo psql
+make run demo psql
 
 # Check schemas
 \dn
@@ -154,20 +149,20 @@ If you see port conflicts, the development environment may be running:
 make docker stop
 
 # Then start demo
-make run demo
+make start demo
 ```
 
 ### Clean restart
 
 ```bash
 # Stop and remove demo containers
-make docker demo stop
+make docker stop demo
 
 # Remove demo volumes (fresh start)
 cd deployments/demo && docker compose -f docker-compose.demo.yml down -v
 
 # Start fresh
-make run demo
+make start demo
 ```
 
 ## Plugin Versions

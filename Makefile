@@ -264,13 +264,16 @@ print-demo-info:
 	@echo "   Airflow UI:        http://localhost:8082  (admin/admin)"
 	@echo "   PostgreSQL:        localhost:5433         (correlator/correlator_dev_password)"
 	@echo ""
-	@echo "📖 Quick Commands:"
-	@echo "   make docker demo stop          # Stop demo stack"
-	@echo "   make docker demo logs          # View all logs"
-	@echo "   make docker demo dbt seed      # Run dbt seed"
-	@echo "   make docker demo dbt run       # Run dbt transformations"
-	@echo "   make docker demo dbt test      # Run dbt tests"
-	@echo "   make docker demo ge validate   # Run GE checkpoint"
+	@echo "📖 Next Steps:"
+	@echo "   make run demo               # Run full demo pipeline (Airflow DAG)"
+	@echo ""
+	@echo "📖 Other Commands:"
+	@echo "   make docker stop demo       # Stop demo environment"
+	@echo "   make docker logs demo       # View all logs"
+	@echo "   make run demo dbt seed      # Run dbt seed"
+	@echo "   make run demo dbt run       # Run dbt transformations"
+	@echo "   make run demo dbt test      # Run dbt tests"
+	@echo "   make run demo ge validate   # Run GE checkpoint"
 	@echo ""
 
 #===============================================================================
@@ -278,7 +281,16 @@ print-demo-info:
 #===============================================================================
 
 # Begin working (intelligent setup + exec into dev container)
-start: ensure-not-in-dev-container ensure-env-file check-docker-environment check-devcontainer-cli check-environment-state
+# Also handles: make start demo
+start: ensure-not-in-dev-container ensure-env-file check-docker-environment
+	@if [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "demo" ]; then \
+		$(MAKE) start-demo; \
+	else \
+		$(MAKE) start-dev; \
+	fi
+
+# Start development environment
+start-dev: check-devcontainer-cli check-environment-state
 	@$(eval DEV_CONTAINER_RUNNING := $(shell docker ps --format "table {{.Names}}" | grep -q "correlator-dev-container" 2>/dev/null && echo "yes" || echo "no"))
 	@$(eval POSTGRES_RUNNING := $(shell cd deployments/docker && docker compose ps postgres --format "table {{.State}}" | grep -q "running" 2>/dev/null && echo "yes" || echo "no"))
 	@$(eval DEV_CONTAINER_EXISTS := $(shell docker ps -a --format "table {{.Names}}" | grep -q "correlator-dev-container" 2>/dev/null && echo "yes" || echo "no"))
@@ -299,6 +311,52 @@ start: ensure-not-in-dev-container ensure-env-file check-docker-environment chec
 		$(MAKE) start-full-setup; \
 		echo ""; \
 		$(MAKE) exec-dev-container; \
+	fi
+
+# Start demo environment
+start-demo: ensure-not-in-dev-container check-docker-environment
+	@echo "🎪 Starting Correlator Demo Environment..."
+	@echo ""
+	@echo "This will start a 3-tool correlation demo with:"
+	@echo "  - Correlator (API + UI)"
+	@echo "  - Airflow (with airflow-correlator plugin)"
+	@echo "  - dbt (with dbt-correlator plugin)"
+	@echo "  - Great Expectations (with ge-correlator plugin)"
+	@echo ""
+	@# Check if demo is already running
+	@if docker ps --format "{{.Names}}" | grep -q "demo-correlator" 2>/dev/null; then \
+		echo "✅ Demo environment is already running!"; \
+		$(MAKE) print-demo-info; \
+		exit 0; \
+	fi
+	@# Check for port conflicts with dev environment
+	@if docker ps --format "{{.Names}}" | grep -q "correlator-postgres" 2>/dev/null; then \
+		echo "⚠️  Development PostgreSQL is running on port 5432"; \
+		echo "   Demo will use port 5433 (no conflict)"; \
+	fi
+	@echo "🐳 Building and starting demo containers..."
+	@echo "   (This may take a few minutes on first run)"
+	@echo ""
+	$(call get-version-info)
+	@if cd $(DEMO_DIR) && \
+		VERSION="$(VERSION)" \
+		GIT_COMMIT="$(COMMIT)" \
+		BUILD_TIME="$(BUILD_TIME)" \
+		docker compose -f docker-compose.demo.yml up -d --build; then \
+		echo ""; \
+		echo "✅ Demo containers started successfully"; \
+		$(MAKE) wait-for-demo-health; \
+		$(MAKE) print-demo-info; \
+	else \
+		echo ""; \
+		echo "❌ Failed to start demo environment"; \
+		echo ""; \
+		echo "💡 Troubleshooting:"; \
+		echo "   1. Check Docker is running: docker info"; \
+		echo "   2. Check for port conflicts: docker ps"; \
+		echo "   3. View build logs: cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml logs"; \
+		echo "   4. Clean and retry: make docker stop demo && make start demo"; \
+		exit 1; \
 	fi
 
 # Internal target for full environment setup
@@ -377,12 +435,11 @@ run:
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "web" ]; then \
 		$(MAKE) run-web WEBCMD="$(wordlist 3,3,$(MAKECMDGOALS))"; \
 	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "demo" ]; then \
-		$(MAKE) run-demo; \
+		$(MAKE) run-demo-cmd DEMOCMD="$(wordlist 3,100,$(MAKECMDGOALS))"; \
 	else \
 		echo "❌ Unknown run command: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "📖 Available run commands:"; \
 		echo "  make run                    # Start development server"; \
-		echo "  make run demo               # Start demo environment"; \
 		echo "  make run test               # Run all tests"; \
 		echo "  make run test unit          # Run unit tests only"; \
 		echo "  make run test integration   # Run integration tests"; \
@@ -398,6 +455,13 @@ run:
 		echo "  make run web                # Start frontend dev server"; \
 		echo "  make run web lint           # Run frontend linter"; \
 		echo "  make run web test           # Run frontend tests"; \
+		echo ""; \
+		echo "Demo commands:"; \
+		echo "  make run demo               # Run full demo pipeline (Airflow DAG)"; \
+		echo "  make run demo dbt seed      # Run dbt seed in demo"; \
+		echo "  make run demo dbt run       # Run dbt transformations in demo"; \
+		echo "  make run demo dbt test      # Run dbt tests in demo"; \
+		echo "  make run demo ge validate   # Run GE checkpoint in demo"; \
 		exit 1; \
 	fi
 
@@ -495,51 +559,98 @@ run-web-test: check-web-deps
 	@cd $(WEB_DIR) && npm test
 	@echo "✅ Frontend tests complete!"
 
-# Demo environment execution
-run-demo: ensure-not-in-dev-container check-docker-environment
-	@echo "🎪 Starting Correlator Demo Environment..."
-	@echo ""
-	@echo "This will start a correlation demo with:"
-	@echo "  - Correlator (API + UI)"
-	@echo "  - Airflow (with airflow-correlator plugin)"
-	@echo "  - dbt (with dbt-correlator plugin)"
-	@echo "  - Great Expectations (with ge-correlator plugin)"
-	@echo ""
-	@# Check if demo is already running
-	@if docker ps --format "{{.Names}}" | grep -q "demo-correlator" 2>/dev/null; then \
-		echo "✅ Demo environment is already running!"; \
-		$(MAKE) print-demo-info; \
-		exit 0; \
-	fi
-	@# Check for port conflicts with dev environment
-	@if docker ps --format "{{.Names}}" | grep -q "correlator-postgres" 2>/dev/null; then \
-		echo "⚠️  Development PostgreSQL is running on port 5432"; \
-		echo "   Demo will use port 5433 (no conflict)"; \
-	fi
-	@echo "🐳 Building and starting demo containers..."
-	@echo "   (This may take a few minutes on first run)"
-	@echo ""
-	$(call get-version-info)
-	@if cd $(DEMO_DIR) && \
-		VERSION="$(VERSION)" \
-		GIT_COMMIT="$(COMMIT)" \
-		BUILD_TIME="$(BUILD_TIME)" \
-		docker compose -f docker-compose.demo.yml up -d --build; then \
+# Demo run commands
+run-demo-cmd: ensure-not-in-dev-container check-docker-environment
+	@# Check if demo is running first
+	@if ! docker ps --format "{{.Names}}" | grep -q "demo-correlator" 2>/dev/null; then \
+		echo "❌ Demo environment is not running"; \
 		echo ""; \
-		echo "✅ Demo containers started successfully"; \
-		$(MAKE) wait-for-demo-health; \
-		$(MAKE) print-demo-info; \
-	else \
-		echo ""; \
-		echo "❌ Failed to start demo environment"; \
-		echo ""; \
-		echo "💡 Troubleshooting:"; \
-		echo "   1. Check Docker is running: docker info"; \
-		echo "   2. Check for port conflicts: docker ps"; \
-		echo "   3. View build logs: cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml logs"; \
-		echo "   4. Clean and retry: make docker demo stop && make run demo"; \
+		echo "💡 Start demo first: make start demo"; \
 		exit 1; \
 	fi
+	@if [ -z "$(DEMOCMD)" ]; then \
+		$(MAKE) run-demo-pipeline; \
+	elif [ "$(word 1,$(DEMOCMD))" = "dbt" ]; then \
+		$(MAKE) run-demo-dbt DBTCMD="$(wordlist 2,100,$(DEMOCMD))"; \
+	elif [ "$(word 1,$(DEMOCMD))" = "ge" ]; then \
+		$(MAKE) run-demo-ge GECMD="$(wordlist 2,100,$(DEMOCMD))"; \
+	else \
+		echo "❌ Unknown demo command: $(DEMOCMD)"; \
+		echo ""; \
+		echo "📖 Available demo commands:"; \
+		echo "  make run demo               # Run full demo pipeline (Airflow DAG)"; \
+		echo "  make run demo dbt seed      # Run dbt seed"; \
+		echo "  make run demo dbt run       # Run dbt transformations"; \
+		echo "  make run demo dbt test      # Run dbt tests"; \
+		echo "  make run demo ge validate   # Run GE checkpoint"; \
+		exit 1; \
+	fi
+
+# Run full demo pipeline via Airflow
+run-demo-pipeline:
+	@echo "🚀 Running full demo pipeline..."
+	@echo ""
+	@echo "This will trigger the Airflow DAG that runs:"
+	@echo "  1. dbt seed   - Load seed data"
+	@echo "  2. dbt run    - Run transformations"
+	@echo "  3. dbt test   - Run dbt tests"
+	@echo "  4. GE validate - Run Great Expectations checkpoint"
+	@echo ""
+	@if ! docker ps --format "{{.Names}}" | grep -q "demo-airflow-webserver" 2>/dev/null; then \
+		echo "❌ Demo Airflow is not running"; \
+		echo "💡 Start demo first: make start demo"; \
+		exit 1; \
+	fi
+	@echo "🎯 Triggering demo_pipeline DAG..."
+	@if docker exec demo-airflow-webserver airflow dags trigger demo_pipeline 2>/dev/null; then \
+		echo ""; \
+		echo "✅ Pipeline triggered successfully!"; \
+		echo ""; \
+		echo "📋 Monitor progress:"; \
+		echo "   Airflow UI: http://localhost:8082 (admin/admin)"; \
+		echo "   Logs:       make docker logs demo"; \
+		echo ""; \
+		echo "📊 View results:"; \
+		echo "   Correlator UI: http://localhost:3001"; \
+	else \
+		echo ""; \
+		echo "⚠️  Could not trigger DAG. The DAG may not exist yet."; \
+		echo ""; \
+		echo "💡 The demo_pipeline DAG will be created in Phase 1.7."; \
+		echo "   For now, you can run tools manually:"; \
+		echo "     make run demo dbt seed"; \
+		echo "     make run demo dbt run"; \
+		echo "     make run demo dbt test"; \
+		echo "     make run demo ge validate"; \
+	fi
+
+# Run dbt commands in demo
+run-demo-dbt:
+	@if [ -z "$(DBTCMD)" ]; then \
+		echo "❌ No dbt command specified"; \
+		echo ""; \
+		echo "💡 Usage: make run demo dbt <command>"; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make run demo dbt seed      # Load seed data"; \
+		echo "  make run demo dbt run       # Run transformations"; \
+		echo "  make run demo dbt test      # Run tests"; \
+		echo "  make run demo dbt debug     # Show dbt debug info"; \
+		exit 1; \
+	fi
+	@echo "🔧 Running: dbt $(DBTCMD)"
+	@cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-dbt $(DBTCMD)
+
+# Run GE commands in demo
+run-demo-ge:
+	@if [ -z "$(GECMD)" ] || [ "$(GECMD)" != "validate" ]; then \
+		echo "❌ Invalid GE command: $(GECMD)"; \
+		echo ""; \
+		echo "💡 Usage: make run demo ge validate"; \
+		exit 1; \
+	fi
+	@echo "🔍 Running GE checkpoint..."
+	@cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-great-expectations checkpoints/demo_checkpoint.py
 
 # Internal helper for environment-aware migrations
 run-migrator:
@@ -656,6 +767,8 @@ docker: ensure-not-in-dev-container check-docker-environment
 			echo "ℹ️  Dev container was not running"; \
 		fi; \
 		echo "✅ All project containers stopped"; \
+	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "stop demo" ]; then \
+		$(MAKE) docker-stop-demo; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "logs" ]; then \
 		if [ "$(wordlist 3,3,$(MAKECMDGOALS))" != "" ]; then \
 			echo "📋 Viewing $(wordlist 3,3,$(MAKECMDGOALS)) logs..."; \
@@ -664,71 +777,27 @@ docker: ensure-not-in-dev-container check-docker-environment
 			echo "📋 Viewing all service logs..."; \
 			cd deployments/docker && docker compose logs -f; \
 		fi \
+	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "logs" ] && [ "$(wordlist 3,3,$(MAKECMDGOALS))" = "demo" ]; then \
+		$(MAKE) docker-logs-demo SVC="$(wordlist 4,4,$(MAKECMDGOALS))"; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "health" ]; then \
 		echo "🏥 Running comprehensive diagnostics..."; \
 		cd deployments/docker && ./dev-diagnostics.sh; \
-	elif [ "$(wordlist 2,2,$(MAKECMDGOALS))" = "demo" ]; then \
-		$(MAKE) docker-demo DEMOCMD="$(wordlist 3,100,$(MAKECMDGOALS))"; \
 	else \
 		echo "❌ Unknown docker target: $(filter-out $@,$(MAKECMDGOALS))"; \
 		echo "Available targets:"; \
 		echo "  make docker                    # Start development environment"; \
 		echo "  make docker prod               # Start full production stack"; \
-		echo "  make docker stop               # Stop all services + dev container"; \
-		echo "  make docker logs               # View all service logs"; \
+		echo "  make docker stop               # Stop dev services + dev container"; \
+		echo "  make docker stop demo          # Stop demo environment only"; \
+		echo "  make docker logs               # View dev service logs"; \
+		echo "  make docker logs demo          # View demo logs"; \
 		echo "  make docker logs <service>     # View specific service logs"; \
 		echo "  make docker health             # Run comprehensive diagnostics"; \
-		echo ""; \
-		echo "Demo environment:"; \
-		echo "  make docker demo stop          # Stop demo stack"; \
-		echo "  make docker demo logs          # View demo logs"; \
-		echo "  make docker demo dbt <cmd>     # Run dbt command (seed, run, test)"; \
-		echo "  make docker demo ge validate   # Run GE checkpoint"; \
-		echo "  make docker demo psql          # Connect to demo PostgreSQL"; \
-		exit 1; \
-	fi
-
-# Demo container operations
-docker-demo: ensure-not-in-dev-container check-docker-environment
-	@if [ -z "$(DEMOCMD)" ] || [ "$(DEMOCMD)" = "demo" ]; then \
-		echo "📖 Demo environment commands:"; \
-		echo ""; \
-		echo "  make run demo                  # Start demo environment"; \
-		echo ""; \
-		echo "  make docker demo stop          # Stop demo stack"; \
-		echo "  make docker demo logs          # View all demo logs"; \
-		echo "  make docker demo logs <svc>    # View specific service logs"; \
-		echo "  make docker demo psql          # Connect to demo PostgreSQL"; \
-		echo ""; \
-		echo "  make docker demo dbt seed      # Load seed data"; \
-		echo "  make docker demo dbt run       # Run dbt transformations"; \
-		echo "  make docker demo dbt test      # Run dbt tests"; \
-		echo "  make docker demo dbt <cmd>     # Run any dbt command"; \
-		echo ""; \
-		echo "  make docker demo ge validate   # Run GE checkpoint"; \
-		echo ""; \
-		echo "  make docker demo airflow trigger <dag>  # Trigger Airflow DAG"; \
-	elif [ "$(word 1,$(DEMOCMD))" = "stop" ]; then \
-		$(MAKE) docker-demo-stop; \
-	elif [ "$(word 1,$(DEMOCMD))" = "logs" ]; then \
-		$(MAKE) docker-demo-logs SVC="$(word 2,$(DEMOCMD))"; \
-	elif [ "$(word 1,$(DEMOCMD))" = "psql" ]; then \
-		$(MAKE) docker-demo-psql; \
-	elif [ "$(word 1,$(DEMOCMD))" = "dbt" ]; then \
-		$(MAKE) docker-demo-dbt DBTCMD="$(wordlist 2,100,$(DEMOCMD))"; \
-	elif [ "$(word 1,$(DEMOCMD))" = "ge" ]; then \
-		$(MAKE) docker-demo-ge GECMD="$(wordlist 2,100,$(DEMOCMD))"; \
-	elif [ "$(word 1,$(DEMOCMD))" = "airflow" ]; then \
-		$(MAKE) docker-demo-airflow AFCMD="$(wordlist 2,100,$(DEMOCMD))"; \
-	else \
-		echo "❌ Unknown demo command: $(DEMOCMD)"; \
-		echo ""; \
-		echo "💡 Run 'make docker demo' to see available commands"; \
 		exit 1; \
 	fi
 
 # Stop demo environment
-docker-demo-stop:
+docker-stop-demo:
 	@echo "🛑 Stopping demo environment..."
 	@if docker ps --format "{{.Names}}" | grep -q "demo-" 2>/dev/null; then \
 		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml down; \
@@ -738,90 +807,13 @@ docker-demo-stop:
 	fi
 
 # View demo logs
-docker-demo-logs:
+docker-logs-demo:
 	@if [ -z "$(SVC)" ]; then \
 		echo "📋 Viewing all demo logs..."; \
 		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml logs -f; \
 	else \
 		echo "📋 Viewing demo-$(SVC) logs..."; \
 		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml logs -f demo-$(SVC); \
-	fi
-
-# Connect to demo PostgreSQL
-docker-demo-psql:
-	@echo "🐘 Connecting to demo PostgreSQL..."
-	@if docker ps --format "{{.Names}}" | grep -q "demo-postgres" 2>/dev/null; then \
-		docker exec -it demo-postgres psql -U correlator -d demo; \
-	else \
-		echo "❌ Demo PostgreSQL is not running"; \
-		echo "💡 Start demo first: make run demo"; \
-		exit 1; \
-	fi
-
-# Run dbt commands in demo
-docker-demo-dbt:
-	@if [ -z "$(DBTCMD)" ]; then \
-		echo "❌ No dbt command specified"; \
-		echo ""; \
-		echo "💡 Usage: make docker demo dbt <command>"; \
-		echo ""; \
-		echo "Examples:"; \
-		echo "  make docker demo dbt seed      # Load seed data"; \
-		echo "  make docker demo dbt run       # Run transformations"; \
-		echo "  make docker demo dbt test      # Run tests"; \
-		echo "  make docker demo dbt debug     # Show dbt debug info"; \
-		exit 1; \
-	fi
-	@if ! docker ps --format "{{.Names}}" | grep -q "demo-correlator" 2>/dev/null; then \
-		echo "❌ Demo environment is not running"; \
-		echo "💡 Start demo first: make run demo"; \
-		exit 1; \
-	fi
-	@echo "🔧 Running: dbt $(DBTCMD)"
-	@cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-dbt $(DBTCMD)
-
-# Run GE commands in demo
-# Run GE commands in demo
-docker-demo-ge:
-	@if [ -z "$(GECMD)" ] || [ "$(GECMD)" != "validate" ]; then \
-		echo "❌ Invalid GE command: $(GECMD)"; \
-		echo ""; \
-		echo "💡 Usage: make docker demo ge validate"; \
-		exit 1; \
-	fi
-	@if ! docker ps --format "{{.Names}}" | grep -q "demo-correlator" 2>/dev/null; then \
-		echo "❌ Demo environment is not running"; \
-		echo "💡 Start demo first: make run demo"; \
-		exit 1; \
-	fi
-	@echo "🔍 Running GE checkpoint..."
-	@cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-great-expectations checkpoints/demo_checkpoint.py
-
-# Run Airflow commands in demo
-docker-demo-airflow:
-	@if [ -z "$(AFCMD)" ]; then \
-		echo "❌ No Airflow command specified"; \
-		echo ""; \
-		echo "💡 Usage: make docker demo airflow trigger <dag_id>"; \
-		exit 1; \
-	fi
-	@if ! docker ps --format "{{.Names}}" | grep -q "demo-airflow-webserver" 2>/dev/null; then \
-		echo "❌ Demo Airflow is not running"; \
-		echo "💡 Start demo first: make run demo"; \
-		exit 1; \
-	fi
-	@if [ "$(word 1,$(AFCMD))" = "trigger" ]; then \
-		if [ -z "$(word 2,$(AFCMD))" ]; then \
-			echo "❌ No DAG ID specified"; \
-			echo "💡 Usage: make docker demo airflow trigger <dag_id>"; \
-			exit 1; \
-		fi; \
-		echo "🚀 Triggering DAG: $(word 2,$(AFCMD))"; \
-		docker exec demo-airflow-webserver airflow dags trigger $(word 2,$(AFCMD)); \
-	else \
-		echo "❌ Unknown Airflow command: $(word 1,$(AFCMD))"; \
-		echo "💡 Available: trigger"; \
-		exit 1; \
 	fi
 
 #===============================================================================
@@ -985,10 +977,11 @@ help:
 	@echo "        make docker stop              # Stop all services + dev container"
 	@echo ""
 	@echo "    🎪 Demo Environment:"
-	@echo "        make run demo                 # Start correlation demo"
-	@echo "        make docker demo stop         # Stop demo environment"
-	@echo "        make docker demo dbt seed     # Run dbt seed in demo"
-	@echo "        make docker demo ge validate  # Run GE checkpoint in demo"
+	@echo "        make start demo               # Start demo infrastructure"
+	@echo "        make run demo                 # Run full demo pipeline (Airflow DAG)"
+	@echo "        make docker stop demo         # Stop demo environment"
+	@echo "        make run demo dbt seed        # Run dbt seed in demo"
+	@echo "        make run demo ge validate     # Run GE checkpoint in demo"
 	@echo ""
 	@echo "    📊 Database:"
 	@echo "        make run migrate up           # Apply pending migrations"
@@ -1005,7 +998,7 @@ help:
 	@echo "    🆕 New to this project?          make start"
 	@echo "    💻 Daily development?            make start"
 	@echo "    🌐 Frontend development?         make run web"
-	@echo "    🎪 Demo environment?             make run demo"
+	@echo "    🎪 Demo environment?             make start demo"
 	@echo "    🚀 Ready to deploy?              make check && make deploy"
 	@echo ""
 	@echo "💡 For detailed options: make <command> --help"
@@ -1013,7 +1006,7 @@ help:
 # Handle command line arguments for parameterized commands
 # These are pseudo-targets that act as arguments to run/build/docker commands
 # They must be declared as .PHONY and have empty recipes to prevent Make errors
-.PHONY: web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator demo dbt ge airflow seed validate trigger psql
+.PHONY: web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator demo dbt ge airflow seed validate trigger
 
-web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator demo dbt ge airflow seed validate trigger psql:
+web test unit integration race benchmark linter migrate up down status version drop smoketest lint prod stop logs health all migrator demo dbt ge airflow seed validate trigger:
 	@:
