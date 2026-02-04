@@ -50,25 +50,6 @@ func TestGenerateJobRunID_Airflow(t *testing.T) {
 	}
 }
 
-func TestGenerateJobRunID_Spark(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	id := GenerateJobRunID("spark://prod-cluster", "application_123456")
-
-	// Should return format "spark:application_id"
-	expected := "spark:application_123456"
-	if id != expected {
-		t.Errorf("GenerateJobRunID() = %q, expected %q", id, expected)
-	}
-
-	// Should start with "spark:"
-	if !strings.HasPrefix(id, "spark:") {
-		t.Errorf("GenerateJobRunID() should start with 'spark:', got %q", id)
-	}
-}
-
 func TestGenerateJobRunID_GreatExpectations(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -436,7 +417,6 @@ func TestGenerateJobRunID_SpecialCharacters(t *testing.T) {
 	}{
 		{"spaces in runID", "dbt://test", "run with spaces", "dbt:run with spaces"},
 		{"slashes in runID", "airflow://test", "dag/task/2025-01-01", "airflow:dag/task/2025-01-01"},
-		{"colons in runID", "spark://test", "app:123:456", "spark:app:123:456"},
 		{"unicode in runID", "dbt://test", "测试-run-123", "dbt:测试-run-123"}, //nolint:gosmopolitan
 		{"emoji in runID", "custom://test", "🚀-deploy-v1", "custom:🚀-deploy-v1"},
 	}
@@ -483,18 +463,6 @@ func TestParseCanonicalJobRunID_ValidFormats(t *testing.T) {
 			canonical:     "airflow:manual__2025-01-01T12:00:00",
 			expectedTool:  "airflow",
 			expectedRunID: "manual__2025-01-01T12:00:00",
-		},
-		{
-			name:          "spark with application ID",
-			canonical:     "spark:application_123456",
-			expectedTool:  "spark",
-			expectedRunID: "application_123456",
-		},
-		{
-			name:          "runID with multiple colons",
-			canonical:     "spark:app:123:456",
-			expectedTool:  "spark",
-			expectedRunID: "app:123:456",
 		},
 		{
 			name:          "custom tool",
@@ -589,7 +557,6 @@ func TestParseCanonicalJobRunID_RoundTrip(t *testing.T) {
 	}{
 		{"dbt://analytics", "550e8400-e29b-41d4-a716-446655440000"},
 		{"airflow://production", "manual__2025-01-01T12:00:00"},
-		{"spark://cluster", "application_123456"},
 		{"custom://env", "my-custom-run"},
 	}
 
@@ -716,7 +683,6 @@ func TestParseCanonicalJobRunID_PreservesColons(t *testing.T) {
 
 	// Verify that colons in runID are preserved correctly
 	testCases := []string{
-		"spark:app:123:456",
 		"custom:url:https://example.com:8080",
 		"dbt:::multiple:::colons:::",
 	}

@@ -200,8 +200,6 @@ func extractToolFromNamespace(namespace string) string {
 		return "dbt"
 	case "airflow":
 		return "airflow"
-	case "spark":
-		return "spark"
 	case "great_expectations", "ge", "gx":
 		return "ge"
 	default:
