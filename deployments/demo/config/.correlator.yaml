@@ -1,37 +1,24 @@
 # Correlator Demo Configuration
-# This file configures namespace aliasing for cross-tool correlation
+# Namespace aliasing for cross-tool correlation
 
-# Namespace aliases map tool-specific namespaces to canonical namespaces
-# This enables correlation across dbt, Airflow, and Great Expectations
+# Format: alias -> canonical
+# Multiple aliases can map to the same canonical namespace
 namespace_aliases:
-  # PostgreSQL database - canonical namespace
-  # All tools should resolve to this canonical form
-  "postgresql://demo-postgres:5432/demo":
-    - "postgres://demo-postgres:5432/demo"      # Alternate postgres:// scheme
-    - "postgresql://localhost:5433/demo"        # External access
-    - "postgres://localhost:5433/demo"          # External access (alternate)
+  # PostgreSQL dataset variations -> canonical PostgreSQL
+  # (These are DATASET namespaces, not job namespaces)
+  "postgres://demo-postgres:5432/demo": "postgresql://demo-postgres:5432/demo"
+  "postgresql://localhost:5433/demo": "postgresql://demo-postgres:5432/demo"
+  "postgres://localhost:5433/demo": "postgresql://demo-postgres:5432/demo"
 
-  # Great Expectations namespace
-  # GE uses a custom namespace format
-  "ge://demo":
-    - "great_expectations://demo"
-    - "gx://demo"
+  # dbt job namespace variations -> canonical dbt
+  # (dbt-correlator emits job namespace as dbt://...)
+  "dbt://demo-postgres": "dbt://demo"
 
-  # Airflow namespace
-  # Airflow DAGs emit events with this namespace
-  "airflow://demo":
-    - "airflow://demo-airflow"
-    - "airflow://localhost:8082"
+  # GE job namespace variations -> canonical GE
+  # (ge-correlator emits job namespace as great_expectations://...)
+  "gx://demo": "ge://demo"
+  "great_expectations://default": "ge://demo"
 
-# Correlation settings
-correlation:
-  # Maximum depth for lineage traversal
-  max_depth: 10
-
-  # Time window for correlating events (in hours)
-  time_window_hours: 24
-
-# Logging
-logging:
-  level: debug
-  format: json
+  # Airflow job namespace variations -> canonical Airflow
+  "airflow://demo-airflow": "airflow://demo"
+  "airflow://localhost:8082": "airflow://demo"

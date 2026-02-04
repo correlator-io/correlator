@@ -130,7 +130,7 @@ def main():
     )
     job_namespace = os.environ.get(
         "GE_JOB_NAMESPACE",
-        "great_expectations://demo-postgres/demo",
+        "great_expectations://demo",
     )
 
     correlator_action = CorrelatorValidationAction(

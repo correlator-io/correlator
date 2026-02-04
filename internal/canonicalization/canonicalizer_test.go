@@ -69,6 +69,29 @@ func TestGenerateJobRunID_Spark(t *testing.T) {
 	}
 }
 
+func TestGenerateJobRunID_GreatExpectations(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		namespace string
+		runID     string
+		expected  string
+	}{
+		{"great_expectations://default", "validation-123", "ge:validation-123"},
+		{"ge://prod", "checkpoint-456", "ge:checkpoint-456"},
+		{"gx://demo", "run-789", "ge:run-789"},
+	}
+
+	for _, tc := range testCases {
+		id := GenerateJobRunID(tc.namespace, tc.runID)
+		if id != tc.expected {
+			t.Errorf("GenerateJobRunID(%q, %q) = %q, expected %q", tc.namespace, tc.runID, id, tc.expected)
+		}
+	}
+}
+
 func TestGenerateJobRunID_SameRunDifferentEvents(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")

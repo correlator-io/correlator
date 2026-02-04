@@ -70,6 +70,34 @@ make run demo ge validate   # Run GE checkpoint
 | `airflow`    | Airflow metadata        |
 | `correlator` | Correlator lineage data |
 
+## Job Namespace Convention
+
+Each tool emits OpenLineage events with a **job namespace** that identifies the tool. Correlator uses these namespaces
+to categorize and correlate events.
+
+| Tool               | Job Namespace               | Canonical ID Format |
+|--------------------|-----------------------------|---------------------|
+| dbt                | `dbt://demo`                | `dbt:run-123`       |
+| Great Expectations | `great_expectations://demo` | `ge:validation-456` |
+| Airflow            | `airflow://demo`            | `airflow:dag-789`   |
+
+**Why this matters:**
+
+- The namespace prefix (before `://`) identifies the tool type
+- Correlator's canonicalizer extracts this prefix to generate canonical job run IDs
+- This enables filtering by tool (e.g., "show all dbt runs") and cross-tool correlation
+
+**Configuration:**
+
+- dbt: Set via `CORRELATOR_NAMESPACE` environment variable
+- GE: Set via `GE_JOB_NAMESPACE` environment variable or `job_namespace` in checkpoint
+- Airflow: Automatically set by Airflow's OpenLineage provider
+
+**Namespace Aliasing:**
+
+If tools emit different namespace formats, configure aliases in `config/.correlator.yaml` to map them to canonical
+forms. See the file for examples.
+
 ## Demo Scenarios
 
 ### Scenario 1: Success Path
@@ -99,19 +127,49 @@ deployments/demo/
 ├── docker-compose.demo.yml      # Main compose file
 ├── dockerfiles/
 │   ├── dbt.Dockerfile           # dbt + dbt-correlator
-│   ├── airflow.Dockerfile       # Airflow + airflow-correlator
-│   └── gx.Dockerfile            # GE + ge-correlator
+│   ├── airflow.Dockerfile       # Airflow + all plugins (dbt, GE, correlator)
+│   └── ge.Dockerfile            # GE + ge-correlator
 ├── postgres-init/
 │   └── 01-init-schemas.sql      # Schema initialization
 ├── config/
 │   └── .correlator.yaml         # Namespace aliases
-├── dbt/                         # dbt project (Phase 1.7)
+├── dbt/                         # dbt project (Jaffle Shop)
+│   ├── macros/                  # Custom dbt macros
+│   │   └── generate_schema_name.sql  # Schema naming override
+│   ├── models/                  # SQL transformations
+│   ├── seeds/                   # Raw CSV data
+│   └── profiles.yml             # Database connection
 ├── airflow/
-│   ├── dags/                    # Airflow DAGs (Phase 1.7)
+│   ├── dags/                    # Airflow DAGs
+│   │   └── demo_pipeline.py     # Main demo DAG
 │   └── openlineage.yml          # airflow-correlator config
-├── great-expectations/          # GE project (Phase 1.7)
-└── scripts/                     # Helper scripts (Phase 1.7)
+├── great-expectations/          # GE project
+│   └── checkpoints/
+│       └── demo_checkpoint.py   # Validation checkpoint
+└── scripts/                     # Helper scripts
+    ├── seed-success.sh          # Use good data
+    ├── seed-failure.sh          # Use bad data
+    └── restore-good-data.sh     # Restore after failure
 ```
+
+## dbt Schema Naming
+
+The dbt project includes a custom `generate_schema_name` macro that overrides dbt's default schema naming behavior.
+
+**Why this is needed:**
+
+By default, dbt creates schemas using the pattern `{target_schema}_{custom_schema}`. With our `profiles.yml` setting
+`schema: public`, this would create:
+
+- `public_staging` instead of `staging`
+- `public_marts` instead of `marts`
+
+The custom macro ensures schemas are created with their intended names (`staging`, `marts`), which is required for:
+
+- Great Expectations checkpoint to find tables in the expected schema
+- Cleaner schema organization in the demo database
+
+The macro is located at `dbt/macros/generate_schema_name.sql`.
 
 ## Troubleshooting
 
@@ -129,8 +187,8 @@ make docker logs demo airflow-webserver
 ### Database connection issues
 
 ```bash
-# Connect to PostgreSQL
-make run demo psql
+# Connect to PostgreSQL using a visual DB client or psql directly:
+docker exec -it demo-postgres psql -U correlator -d demo
 
 # Check schemas
 \dn
@@ -182,8 +240,3 @@ The demo uses the same credentials as the development environment for simplicity
 - **Database User:** `correlator`
 - **Database Password:** `correlator_dev_password`
 - **Airflow Admin:** `admin` / `admin`
-
-## Next Steps
-
-- **Phase 1.7:** Create demo data (Jaffle Shop) and scenarios
-- **Phase 1.8:** Configure plugins for Correlator integration
