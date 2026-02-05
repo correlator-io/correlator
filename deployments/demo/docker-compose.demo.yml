@@ -12,7 +12,7 @@
 #   airflow:    Airflow metadata
 #   correlator: Correlator lineage data
 #
-# Credentials: Uses same credentials as development (correlator/correlator_dev_password)
+# Credentials: Uses same credentials as development
 #
 # Usage:
 #   make start demo                # Start demo stack
