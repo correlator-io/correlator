@@ -625,6 +625,8 @@ run-demo-pipeline:
 	fi
 
 # Run dbt commands in demo
+# Note: 'run' and 'test' use dbt-correlator to emit OpenLineage events
+# Other commands (seed, debug, etc.) use plain dbt
 run-demo-dbt:
 	@if [ -z "$(DBTCMD)" ]; then \
 		echo "❌ No dbt command specified"; \
@@ -632,14 +634,26 @@ run-demo-dbt:
 		echo "💡 Usage: make run demo dbt <command>"; \
 		echo ""; \
 		echo "Examples:"; \
-		echo "  make run demo dbt seed      # Load seed data"; \
-		echo "  make run demo dbt run       # Run transformations"; \
-		echo "  make run demo dbt test      # Run tests"; \
-		echo "  make run demo dbt debug     # Show dbt debug info"; \
+		echo "  make run demo dbt seed      # Load seed data (plain dbt)"; \
+		echo "  make run demo dbt run       # Run transformations (dbt-correlator)"; \
+		echo "  make run demo dbt test      # Run tests (dbt-correlator)"; \
+		echo "  make run demo dbt debug     # Show dbt debug info (plain dbt)"; \
 		exit 1; \
 	fi
-	@echo "🔧 Running: dbt $(DBTCMD)"
-	@cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-dbt $(DBTCMD)
+	@FIRST_ARG=$$(echo "$(DBTCMD)" | awk '{print $$1}'); \
+	if [ "$$FIRST_ARG" = "run" ] || [ "$$FIRST_ARG" = "test" ]; then \
+		echo "🔧 Running: dbt-correlator $(DBTCMD) (with OpenLineage emission)"; \
+		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm \
+			--entrypoint dbt-correlator \
+			demo-dbt $(DBTCMD) \
+			--project-dir . \
+			--profiles-dir . \
+			--correlator-endpoint http://demo-correlator:8080/api/v1/lineage/events \
+			--openlineage-namespace dbt://demo; \
+	else \
+		echo "🔧 Running: dbt $(DBTCMD)"; \
+		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-dbt $(DBTCMD); \
+	fi
 
 # Run GE commands in demo
 run-demo-ge:
