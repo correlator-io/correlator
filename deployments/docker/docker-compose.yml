@@ -66,6 +66,7 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: correlator-migrator
+    command: ["./migrator", "up"]
     environment:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
       - MIGRATION_TABLE=schema_migrations

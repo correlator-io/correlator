@@ -73,6 +73,7 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: demo-correlator-migrator
+    command: ["./migrator", "up"]
     environment:
       - DATABASE_URL=postgres://correlator:correlator_dev_password@demo-postgres:5432/demo?sslmode=disable&search_path=correlator
       - MIGRATION_TABLE=schema_migrations

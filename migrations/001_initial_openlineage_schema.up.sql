@@ -728,16 +728,16 @@ BEGIN
         RAISE EXCEPTION 'Table test_results not created';
     END IF;
 
-    -- Verify materialized views
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'incident_correlation_view') THEN
+    -- Verify materialized views (use current_schema() for schema-agnostic validation)
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'incident_correlation_view') THEN
         RAISE EXCEPTION 'Materialized view incident_correlation_view not created';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'lineage_impact_analysis') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'lineage_impact_analysis') THEN
         RAISE EXCEPTION 'Materialized view lineage_impact_analysis not created';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'recent_incidents_summary') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'recent_incidents_summary') THEN
         RAISE EXCEPTION 'Materialized view recent_incidents_summary not created';
     END IF;
 
