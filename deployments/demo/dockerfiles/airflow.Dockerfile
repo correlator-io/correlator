@@ -30,13 +30,14 @@ RUN pip install --no-cache-dir \
     sqlalchemy
 
 # Install all Correlator plugins from TestPyPI
+# Package names follow the convention: correlator-{tool} (not {tool}-correlator)
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
 RUN pip install --no-cache-dir \
     --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
-    airflow-correlator \
-    dbt-correlator \
-    ge-correlator
+    correlator-airflow \
+    correlator-dbt \
+    correlator-ge
 
 # OpenLineage configuration is mounted at runtime via openlineage.yml
 # See: deployments/demo/airflow/openlineage.yml

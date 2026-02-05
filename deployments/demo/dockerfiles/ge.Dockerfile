@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /ge
 
-# Install Great Expectations and ge-correlator from TestPyPI
+# Install Great Expectations and correlator-ge from TestPyPI
+# Package name is correlator-ge (not ge-correlator)
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
 RUN pip install --no-cache-dir \
     "great_expectations>=1.3.0" \
@@ -20,7 +21,7 @@ RUN pip install --no-cache-dir \
     && pip install --no-cache-dir \
     --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
-    ge-correlator
+    correlator-ge
 
 # Default command
 ENTRYPOINT ["python"]

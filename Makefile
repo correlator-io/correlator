@@ -338,16 +338,11 @@ start-demo: ensure-not-in-dev-container check-docker-environment
 	@echo "   (This may take a few minutes on first run)"
 	@echo ""
 	$(call get-version-info)
-	@if cd $(DEMO_DIR) && \
+	@cd $(DEMO_DIR) && \
 		VERSION="$(VERSION)" \
 		GIT_COMMIT="$(COMMIT)" \
 		BUILD_TIME="$(BUILD_TIME)" \
-		docker compose -f docker-compose.demo.yml up -d --build; then \
-		echo ""; \
-		echo "✅ Demo containers started successfully"; \
-		$(MAKE) wait-for-demo-health; \
-		$(MAKE) print-demo-info; \
-	else \
+		docker compose -f docker-compose.demo.yml up -d --build || { \
 		echo ""; \
 		echo "❌ Failed to start demo environment"; \
 		echo ""; \
@@ -357,7 +352,11 @@ start-demo: ensure-not-in-dev-container check-docker-environment
 		echo "   3. View build logs: cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml logs"; \
 		echo "   4. Clean and retry: make docker stop demo && make start demo"; \
 		exit 1; \
-	fi
+	}
+	@echo ""
+	@echo "✅ Demo containers started successfully"
+	@$(MAKE) wait-for-demo-health
+	@$(MAKE) print-demo-info
 
 # Internal target for full environment setup
 start-full-setup: check-dev-container
@@ -952,8 +951,8 @@ help:
 	@echo "***************************************************************"
 	@echo ""
 	@echo "🚀 Getting Started:"
-	@echo "    start   - Begin working (smart setup + exec into dev container)"
-	@echo "    run     - Execute something (run, run test, run migrate up, run web)"
+	@echo "    start   - Begin working (smart setup + exec into dev container or start demo)"
+	@echo "    run     - Execute something (run, run test, run migrate up, run web, run demo)"
 	@echo ""
 	@echo "🛠️  Daily Development:"
 	@echo "    check   - Verify code quality (lint + test + vet)"
@@ -993,9 +992,9 @@ help:
 	@echo "    🎪 Demo Environment:"
 	@echo "        make start demo               # Start demo infrastructure"
 	@echo "        make run demo                 # Run full demo pipeline (Airflow DAG)"
-	@echo "        make docker stop demo         # Stop demo environment"
 	@echo "        make run demo dbt seed        # Run dbt seed in demo"
 	@echo "        make run demo ge validate     # Run GE checkpoint in demo"
+	@echo "        make docker stop demo         # Stop demo environment"
 	@echo ""
 	@echo "    📊 Database:"
 	@echo "        make run migrate up           # Apply pending migrations"

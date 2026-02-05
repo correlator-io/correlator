@@ -10,14 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /dbt
 
-# Install dbt-postgres and dbt-correlator from TestPyPI
+# Install dbt-postgres and correlator-dbt from TestPyPI
+# Package name is correlator-dbt (not dbt-correlator), CLI command is dbt-correlator
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
 RUN pip install --no-cache-dir \
     dbt-postgres \
     && pip install --no-cache-dir \
     --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
-    dbt-correlator
+    correlator-dbt
 
 # Environment variables for dbt-correlator
 ENV CORRELATOR_URL=""
