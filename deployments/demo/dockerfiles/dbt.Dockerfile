@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir \
 
 # Environment variables for dbt-correlator
 ENV CORRELATOR_URL=""
-ENV CORRELATOR_NAMESPACE=""
+ENV OPENLINEAGE_NAMESPACE=""
 
 # Default command
 ENTRYPOINT ["dbt"]

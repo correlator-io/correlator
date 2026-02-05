@@ -44,4 +44,4 @@ ENV OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
 
 # dbt-correlator configuration
 ENV CORRELATOR_URL=http://demo-correlator:8080
-ENV CORRELATOR_NAMESPACE=dbt://demo
+ENV OPENLINEAGE_NAMESPACE=dbt://demo

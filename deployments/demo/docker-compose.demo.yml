@@ -225,7 +225,7 @@ services:
       - OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
       # dbt-correlator configuration
       - CORRELATOR_URL=http://demo-correlator:8080
-      - CORRELATOR_NAMESPACE=dbt://demo
+      - OPENLINEAGE_NAMESPACE=dbt://demo
       # GE configuration
       - GE_POSTGRES_URL=postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo
       - CORRELATOR_ENDPOINT=http://demo-correlator:8080/api/v1/lineage/events
@@ -254,7 +254,7 @@ services:
     container_name: demo-dbt
     environment:
       - CORRELATOR_URL=http://demo-correlator:8080
-      - CORRELATOR_NAMESPACE=dbt://demo
+      - OPENLINEAGE_NAMESPACE=dbt://demo
     volumes:
       - ./dbt:/dbt
     working_dir: /dbt

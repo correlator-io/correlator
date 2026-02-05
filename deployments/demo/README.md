@@ -89,7 +89,7 @@ to categorize and correlate events.
 
 **Configuration:**
 
-- dbt: Set via `CORRELATOR_NAMESPACE` environment variable
+- dbt: Set via `OPENLINEAGE_NAMESPACE` environment variable (or `--openlineage-namespace` CLI flag)
 - GE: Set via `GE_JOB_NAMESPACE` environment variable or `job_namespace` in checkpoint
 - Airflow: Automatically set by Airflow's OpenLineage provider
 
