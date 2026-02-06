@@ -59,6 +59,7 @@ const (
 	cleanupBatchSize = 10000
 	// batchSleepDuration is the sleep time between batches to avoid overwhelming the database.
 	batchSleepDuration = 100 * time.Millisecond
+	producerURLParts   = 4
 )
 
 type (
@@ -421,6 +422,7 @@ func isDatabaseConnectionError(err error) bool {
 //   - "https://github.com/apache/airflow/tree/2.7.0" → "airflow"
 //   - "https://github.com/great-expectations/great_expectations/tree/0.17.0" → "great_expectations"
 //   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "spark"
+//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "dbt-correlator"
 //
 // Falls back to the full URL if extraction fails (defensive programming).
 //
@@ -441,6 +443,7 @@ func extractProducerName(producerURL string) string {
 	// Handle common GitHub URL patterns:
 	// github.com/org/repo/tree/version → "repo"
 	// github.com/org/repo/tree/version/integration/tool → "tool"
+	// github.com/org/repo/version → "repo" (correlator plugins)
 	if len(parts) >= 3 && parts[0] == "github.com" {
 		// Look for "integration" directory (Spark, Flink, etc.)
 		for i, part := range parts {
@@ -460,6 +463,52 @@ func extractProducerName(producerURL string) string {
 
 	// Fallback to full URL (defensive)
 	return producerURL
+}
+
+// extractProducerVersion extracts the version from an OpenLineage producer URL.
+//
+// OpenLineage producers typically include version information:
+//   - "https://github.com/dbt-labs/dbt-core/tree/1.5.0" → "1.5.0"
+//   - "https://github.com/apache/airflow/tree/2.7.0" → "2.7.0"
+//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "0.1.1.dev0"
+//   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "1.0.0"
+//
+// Returns empty string if version cannot be extracted.
+//
+// This is used to populate the producer_version column in the job_runs table for
+// debugging and version tracking.
+func extractProducerVersion(producerURL string) string {
+	if producerURL == "" {
+		return ""
+	}
+
+	// Remove protocol
+	producerURL = strings.TrimPrefix(producerURL, "https://")
+	producerURL = strings.TrimPrefix(producerURL, "http://")
+
+	// Split by slashes
+	parts := strings.Split(producerURL, "/")
+
+	// Handle GitHub URL patterns
+	if len(parts) >= 3 && parts[0] == "github.com" {
+		// Pattern: github.com/org/repo/tree/version/... → version is after "tree"
+		for i, part := range parts {
+			if part == "tree" && i+1 < len(parts) {
+				return parts[i+1]
+			}
+		}
+
+		// Pattern: github.com/org/repo/version (correlator plugins)
+		// Version typically starts with a digit or 'v'
+		if len(parts) >= producerURLParts {
+			candidate := parts[3]
+			if len(candidate) > 0 && (candidate[0] >= '0' && candidate[0] <= '9' || candidate[0] == 'v') {
+				return candidate
+			}
+		}
+	}
+
+	return ""
 }
 
 // checkIdempotency checks if an event with the given idempotency key already exists.
@@ -696,10 +745,11 @@ func (s *LineageStore) executeJobRunUpsert(
 			state_history,
 			metadata,
 			producer_name,
+			producer_version,
 			started_at,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 		ON CONFLICT (job_run_id) DO UPDATE
 		SET
 			current_state = CASE
@@ -716,6 +766,7 @@ func (s *LineageStore) executeJobRunUpsert(
 				WHEN EXCLUDED.event_time > job_runs.event_time THEN EXCLUDED.metadata
 				ELSE job_runs.metadata
 			END,
+			producer_version = COALESCE(NULLIF(EXCLUDED.producer_version, ''), job_runs.producer_version),
 			updated_at = NOW()
 	`
 
@@ -732,6 +783,7 @@ func (s *LineageStore) executeJobRunUpsert(
 		stateHistoryJSON,
 		metadataJSON,
 		extractProducerName(event.Producer),
+		extractProducerVersion(event.Producer),
 		event.EventTime,
 	)
 	if err != nil {
