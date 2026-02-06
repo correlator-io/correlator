@@ -733,6 +733,11 @@ func (s *LineageStore) executeJobRunUpsert(
 	newState string,
 	stateHistoryJSON, metadataJSON []byte,
 ) error {
+	var completedAt time.Time
+	if newState == "COMPLETE" || newState == "FAIL" || newState == "ABORT" { //nolint:goconst
+		completedAt = event.EventTime // Set completed_at only for terminal states
+	}
+
 	query := `
 		INSERT INTO job_runs (
 			job_run_id,
@@ -747,9 +752,10 @@ func (s *LineageStore) executeJobRunUpsert(
 			producer_name,
 			producer_version,
 			started_at,
+			completed_at,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
 		ON CONFLICT (job_run_id) DO UPDATE
 		SET
 			current_state = CASE
@@ -767,6 +773,11 @@ func (s *LineageStore) executeJobRunUpsert(
 				ELSE job_runs.metadata
 			END,
 			producer_version = COALESCE(NULLIF(EXCLUDED.producer_version, ''), job_runs.producer_version),
+			completed_at = CASE
+				WHEN EXCLUDED.completed_at IS NOT NULL AND EXCLUDED.event_time > job_runs.event_time
+					THEN EXCLUDED.completed_at
+				ELSE job_runs.completed_at
+			END,
 			updated_at = NOW()
 	`
 
@@ -785,6 +796,7 @@ func (s *LineageStore) executeJobRunUpsert(
 		extractProducerName(event.Producer),
 		extractProducerVersion(event.Producer),
 		event.EventTime,
+		completedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)
