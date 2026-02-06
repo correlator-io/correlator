@@ -12,11 +12,12 @@ WORKDIR /dbt
 
 # Install dbt-postgres and correlator-dbt from TestPyPI
 # Package name is correlator-dbt (not dbt-correlator), CLI command is dbt-correlator
+# --pre allows pre-release/dev versions, -i sets TestPyPI as primary index
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
 RUN pip install --no-cache-dir \
     dbt-postgres \
-    && pip install --no-cache-dir \
-    --index-url https://test.pypi.org/simple/ \
+    && pip install --no-cache-dir --pre \
+    -i https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
     correlator-dbt
 

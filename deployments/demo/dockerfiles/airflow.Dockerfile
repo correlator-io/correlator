@@ -31,9 +31,10 @@ RUN pip install --no-cache-dir \
 
 # Install all Correlator plugins from TestPyPI
 # Package names follow the convention: correlator-{tool} (not {tool}-correlator)
+# --pre allows pre-release/dev versions, -i sets TestPyPI as primary index
 # --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
-RUN pip install --no-cache-dir \
-    --index-url https://test.pypi.org/simple/ \
+RUN pip install --no-cache-dir --pre \
+    -i https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
     correlator-airflow \
     correlator-dbt \
