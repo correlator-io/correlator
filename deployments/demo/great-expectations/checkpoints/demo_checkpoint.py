@@ -152,14 +152,12 @@ def main():
     # Report results
     if result.success:
         print("\n✅ All validations passed!")
-        print(f"   - Customers: {result.run_results[customers_validation].success}")
-        print(f"   - Orders: {result.run_results[orders_validation].success}")
         sys.exit(0)
     else:
         print("\n❌ Validation failed!")
-        for validation_def, run_result in result.run_results.items():
+        for validation_id, run_result in result.run_results.items():
             status = "✅" if run_result.success else "❌"
-            print(f"   {status} {validation_def.name}: {run_result.success}")
+            print(f"   {status} {validation_id}: {run_result.success}")
         sys.exit(1)
 
 
