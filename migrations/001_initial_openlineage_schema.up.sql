@@ -503,7 +503,9 @@ WITH RECURSIVE downstream AS (
         AND NOT (jr_next.job_run_id = ANY(ds.job_path))
         AND NOT (le_next_output.dataset_urn = ANY(ds.dataset_path))
 )
-SELECT
+-- Use DISTINCT ON to prevent duplicate rows when multiple paths exist to the same
+-- (job_run_id, dataset_urn, depth) combination. Keeps the shortest path (min job_path_length).
+SELECT DISTINCT ON (job_run_id, dataset_urn, depth)
     job_run_id,
     job_name,
     job_namespace,
@@ -515,7 +517,7 @@ SELECT
     array_length(job_path, 1) AS job_path_length,
     array_length(dataset_path, 1) AS dataset_path_length
 FROM downstream
-ORDER BY job_run_id, depth;
+ORDER BY job_run_id, dataset_urn, depth, array_length(job_path, 1);
 
 -- UNIQUE index required for CONCURRENTLY refresh
 CREATE UNIQUE INDEX idx_lineage_impact_analysis_pk
@@ -529,7 +531,7 @@ CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_depth
     ON lineage_impact_analysis (depth, job_run_id);
 
 COMMENT ON MATERIALIZED VIEW lineage_impact_analysis IS
-    'Recursive downstream impact analysis: finds all datasets and jobs affected by a job run failure. Max depth: 10 levels.';
+    'Recursive downstream impact analysis: finds all datasets and jobs affected by a job run failure. Uses DISTINCT ON to deduplicate multiple paths. Max depth: 10 levels.';
 
 -- View 3: Recent Incidents Summary
 CREATE MATERIALIZED VIEW recent_incidents_summary AS
