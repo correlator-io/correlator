@@ -893,7 +893,9 @@ func (s *LineageStore) upsertDataset(ctx context.Context, tx *sql.Tx, dataset *i
 	return nil
 }
 
-// createLineageEdge creates a lineage edge (input or output) for a job run.
+// createLineageEdge creates or updates a lineage edge (input or output) for a job run.
+// Uses UPSERT to handle duplicate edges - merges facets instead of creating duplicates.
+// Facet merging strategy: Keep non-empty facets (new facets win if both are non-empty).
 func (s *LineageStore) createLineageEdge(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -918,9 +920,15 @@ func (s *LineageStore) createLineageEdge(
 		return fmt.Errorf("failed to marshal facets: %w", err)
 	}
 
-	// Use CASE statement to set appropriate facet column based on edge_type
-	// This eliminates SQL string interpolation and enables query plan caching
-	// We use ::text cast to help PostgreSQL deduce parameter types correctly
+	// UPSERT with facet merging strategy:
+	// - If existing facets are empty ({}), use new facets
+	// - If new facets are empty ({}), keep existing facets
+	// - If both have data, merge them (new facets win for conflicting keys)
+	//
+	// The CASE statements handle the merge logic:
+	// 1. If new facets are empty, keep existing
+	// 2. If existing facets are empty, use new
+	// 3. Otherwise, merge with || operator (right side wins)
 	query := `
 		INSERT INTO lineage_edges (
 			job_run_id,
@@ -931,10 +939,23 @@ func (s *LineageStore) createLineageEdge(
 			created_at
 		) VALUES (
 			$1, $2, $3::text,
-			CASE WHEN $3::text = 'input' THEN $4::jsonb ELSE NULL END,
-			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE NULL END,
+			CASE WHEN $3::text = 'input' THEN $4::jsonb ELSE '{}'::jsonb END,
+			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE '{}'::jsonb END,
 			NOW()
 		)
+		ON CONFLICT (job_run_id, dataset_urn, edge_type) DO UPDATE SET
+			input_facets = CASE
+				WHEN $3::text != 'input' THEN lineage_edges.input_facets
+				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.input_facets
+				WHEN lineage_edges.input_facets = '{}'::jsonb THEN $4::jsonb
+				ELSE lineage_edges.input_facets || $4::jsonb
+			END,
+			output_facets = CASE
+				WHEN $3::text != 'output' THEN lineage_edges.output_facets
+				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.output_facets
+				WHEN lineage_edges.output_facets = '{}'::jsonb THEN $4::jsonb
+				ELSE lineage_edges.output_facets || $4::jsonb
+			END
 	`
 
 	_, err = tx.ExecContext(
@@ -946,7 +967,7 @@ func (s *LineageStore) createLineageEdge(
 		facetsJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create lineage edge: %w", err)
+		return fmt.Errorf("failed to upsert lineage edge: %w", err)
 	}
 
 	return nil

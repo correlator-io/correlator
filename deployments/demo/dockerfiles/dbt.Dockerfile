@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir \
     --extra-index-url https://pypi.org/simple/ \
     correlator-dbt
 
+# print the version correlator-dbt plugin
+RUN pip show correlator-dbt
+
 # Environment variables for dbt-correlator
 ENV CORRELATOR_URL=""
 ENV OPENLINEAGE_NAMESPACE=""

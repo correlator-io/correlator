@@ -190,8 +190,6 @@ CREATE TABLE lineage_edges (
     dataset_urn VARCHAR(500) NOT NULL REFERENCES datasets(dataset_urn) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     edge_type VARCHAR(10) NOT NULL CHECK (edge_type IN ('input', 'output')),
 
-    lineage_type VARCHAR(50) DEFAULT 'transformation' CHECK (lineage_type IN ('transformation', 'extraction', 'loading', 'validation')),
-
     input_facets JSONB DEFAULT '{}',
     output_facets JSONB DEFAULT '{}',
 
@@ -205,6 +203,10 @@ CREATE TABLE lineage_edges (
 -- Indexes for lineage_edges
 CREATE INDEX idx_lineage_edges_job_run_id ON lineage_edges(job_run_id);
 CREATE INDEX idx_lineage_edges_dataset_urn ON lineage_edges(dataset_urn, edge_type, job_run_id);
+
+-- Unique constraint: One edge per (job_run_id, dataset_urn, edge_type) combination
+-- Go code uses UPSERT with facet merging to handle duplicate edge insertions
+CREATE UNIQUE INDEX idx_lineage_edges_unique ON lineage_edges(job_run_id, dataset_urn, edge_type);
 
 -- Comments
 COMMENT ON TABLE lineage_edges IS 'OpenLineage lineage edges: separate rows for each input and output dataset per job run';
