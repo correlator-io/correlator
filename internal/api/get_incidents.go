@@ -87,21 +87,21 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 		downstreamCounts = map[string]int{}
 	}
 
-	orphanNamespaces, err := s.correlationStore.QueryOrphanNamespaces(ctx)
+	orphanDatasets, err := s.correlationStore.QueryOrphanDatasets(ctx)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "Failed to query orphan namespaces",
+		s.logger.ErrorContext(ctx, "Failed to query orphan datasets",
 			"correlation_id", correlationID,
 			"error", err.Error(),
 		)
 		// Non-fatal: continue with empty orphan set
-		orphanNamespaces = nil
+		orphanDatasets = nil
 	}
 
-	orphanNSSet := buildOrphanNamespaceSet(orphanNamespaces)
+	orphanDatasetSet := buildOrphanDatasetSet(orphanDatasets)
 
 	summaries := make([]IncidentSummary, 0, len(result.Incidents))
 	for _, inc := range result.Incidents {
-		summaries = append(summaries, mapIncidentToSummary(inc, downstreamCounts, orphanNSSet))
+		summaries = append(summaries, mapIncidentToSummary(inc, downstreamCounts, orphanDatasetSet))
 	}
 
 	response := IncidentListResponse{
@@ -205,11 +205,11 @@ func extractJobRunIDs(incidents []correlation.Incident) []string {
 }
 
 // mapIncidentToSummary converts a domain Incident to an API IncidentSummary.
-// The orphanNSSet parameter is used to determine if the incident has a correlation issue.
+// The orphanDatasetSet parameter is used to determine if the incident has a correlation issue.
 func mapIncidentToSummary(
 	inc correlation.Incident,
 	downstreamCounts map[string]int,
-	orphanNSSet map[string]bool,
+	orphanDatasetSet map[string]bool,
 ) IncidentSummary {
 	return IncidentSummary{
 		ID:                  strconv.FormatInt(inc.TestResultID, 10),
@@ -222,17 +222,17 @@ func mapIncidentToSummary(
 		JobName:             inc.JobName,
 		JobRunID:            inc.JobRunID,
 		DownstreamCount:     downstreamCounts[inc.JobRunID],
-		HasCorrelationIssue: orphanNSSet[inc.DatasetNS],
+		HasCorrelationIssue: orphanDatasetSet[inc.DatasetURN],
 		ExecutedAt:          inc.TestExecutedAt,
 	}
 }
 
-// buildOrphanNamespaceSet creates a set of orphan namespace strings for O(1) lookup.
-func buildOrphanNamespaceSet(orphans []correlation.OrphanNamespace) map[string]bool {
+// buildOrphanDatasetSet creates a set of orphan dataset URNs for O(1) lookup.
+func buildOrphanDatasetSet(orphans []correlation.OrphanDataset) map[string]bool {
 	set := make(map[string]bool, len(orphans))
 
 	for _, o := range orphans {
-		set[o.Namespace] = true
+		set[o.DatasetURN] = true
 	}
 
 	return set

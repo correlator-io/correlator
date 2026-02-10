@@ -249,14 +249,14 @@ type (
 	// Fields:
 	//   - CorrelationRate: Ratio of correlated incidents to total incidents (0.0-1.0)
 	//   - TotalDatasets: Count of distinct datasets with test results
-	//   - OrphanNamespaces: List of namespaces requiring alias configuration
+	//   - OrphanDatasets: List of datasets requiring pattern configuration
 	//
 	// Correlation Rate Calculation:
 	//
 	//	correlation_rate = correlated_incidents / total_incidents
 	//
 	// Where:
-	//   - correlated_incidents = incidents where dataset namespace has producer output edges
+	//   - correlated_incidents = incidents where dataset has producer output edges
 	//   - total_incidents = all incidents from incident_correlation_view
 	//   - If total_incidents = 0, returns 1.0 (no incidents = healthy)
 	//
@@ -265,8 +265,74 @@ type (
 	//   - Correlation Health API - GET /api/v1/health/correlation
 	//   - UI Correlation Health page - Shows overall system health
 	Health struct {
-		CorrelationRate  float64
-		TotalDatasets    int
-		OrphanNamespaces []OrphanNamespace
+		CorrelationRate    float64
+		TotalDatasets      int
+		ProducedDatasets   int
+		CorrelatedDatasets int
+		OrphanDatasets     []OrphanDataset
+		SuggestedPatterns  []SuggestedPattern
+	}
+
+	// OrphanDataset represents a dataset with test results but no corresponding
+	// data producer output edges. This is the dataset-level equivalent of OrphanNamespace,
+	// providing finer granularity for correlation diagnostics.
+	//
+	// Unlike OrphanNamespace which groups by namespace, OrphanDataset tracks individual
+	// dataset URNs, enabling:
+	//   - Precise identification of uncorrelated test results
+	//   - Automatic matching to likely producer datasets via table name extraction
+	//   - Pattern suggestion for resolving Entity Resolution issues
+	//
+	// Fields:
+	//   - DatasetURN: The orphan dataset URN (e.g., "demo_postgres/customers")
+	//   - TestCount: Number of test results for this dataset
+	//   - LastSeen: Most recent test execution timestamp
+	//   - LikelyMatch: Candidate producer dataset match (nil if no match found)
+	//
+	// Example:
+	//
+	//	GE emits tests for "demo_postgres/customers"
+	//	dbt produces "postgresql://demo/marts.customers"
+	//	→ OrphanDataset{
+	//	    DatasetURN: "demo_postgres/customers",
+	//	    LikelyMatch: &DatasetMatch{
+	//	        DatasetURN: "postgresql://demo/marts.customers",
+	//	        Confidence: 1.0,
+	//	        MatchReason: "exact_table_name",
+	//	    },
+	//	  }
+	//
+	// Used by:
+	//   - correlation.Store.DetectOrphanDatasets() - Returns this type
+	//   - Pattern suggestion algorithm - Uses LikelyMatch to generate patterns
+	//   - Correlation Health API - Future enhancement to orphan_datasets field
+	OrphanDataset struct {
+		DatasetURN  string
+		TestCount   int
+		LastSeen    time.Time
+		LikelyMatch *DatasetMatch
+	}
+
+	// DatasetMatch represents a candidate match between an orphan dataset and a
+	// produced dataset. Used for automatic pattern suggestion.
+	//
+	// Fields:
+	//   - DatasetURN: The producer dataset URN that potentially matches the orphan
+	//   - Confidence: Match confidence score (0.0 to 1.0)
+	//     - 1.0: Exact table name match (e.g., both extract to "customers")
+	//     - 0.0: No match found
+	//   - MatchReason: Human-readable explanation of why this match was suggested
+	//     - "exact_table_name": Table names extracted from both URNs are identical
+	//     - "no_match": No matching producer dataset found
+	//
+	// Example:
+	//
+	//	Orphan: "demo_postgres/customers" → table name: "customers"
+	//	Producer: "postgresql://demo/marts.customers" → table name: "customers"
+	//	→ DatasetMatch{Confidence: 1.0, MatchReason: "exact_table_name"}
+	DatasetMatch struct {
+		DatasetURN  string
+		Confidence  float64
+		MatchReason string
 	}
 )

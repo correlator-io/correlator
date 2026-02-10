@@ -83,22 +83,38 @@ type (
 	}
 
 	// CorrelationHealthResponse represents the response for GET /api/v1/health/correlation.
-	// Contains overall correlation system health metrics and orphan namespace details.
+	// Contains overall correlation system health metrics and orphan dataset details.
 	CorrelationHealthResponse struct {
-		CorrelationRate  float64                   `json:"correlation_rate"`  //nolint:tagliatelle
-		TotalDatasets    int                       `json:"total_datasets"`    //nolint:tagliatelle
-		OrphanNamespaces []OrphanNamespaceResponse `json:"orphan_namespaces"` //nolint:tagliatelle
+		CorrelationRate    float64                    `json:"correlation_rate"`    //nolint:tagliatelle
+		TotalDatasets      int                        `json:"total_datasets"`      //nolint:tagliatelle
+		ProducedDatasets   int                        `json:"produced_datasets"`   //nolint:tagliatelle
+		CorrelatedDatasets int                        `json:"correlated_datasets"` //nolint:tagliatelle
+		OrphanDatasets     []OrphanDatasetResponse    `json:"orphan_datasets"`     //nolint:tagliatelle
+		SuggestedPatterns  []SuggestedPatternResponse `json:"suggested_patterns"`  //nolint:tagliatelle
 	}
 
-	// OrphanNamespaceResponse represents a namespace that requires alias configuration.
-	// Orphan namespaces appear in validation tests but have no corresponding
-	// data producer output edges.
-	OrphanNamespaceResponse struct {
-		Namespace      string    `json:"namespace"`
-		Producer       string    `json:"producer"`
-		LastSeen       time.Time `json:"last_seen"`       //nolint:tagliatelle
-		EventCount     int       `json:"event_count"`     //nolint:tagliatelle
-		SuggestedAlias *string   `json:"suggested_alias"` //nolint:tagliatelle
+	// OrphanDatasetResponse represents a dataset that requires pattern configuration.
+	// Orphan datasets have test results but no corresponding data producer output edges.
+	OrphanDatasetResponse struct {
+		DatasetURN  string                `json:"dataset_urn"`  //nolint:tagliatelle
+		TestCount   int                   `json:"test_count"`   //nolint:tagliatelle
+		LastSeen    time.Time             `json:"last_seen"`    //nolint:tagliatelle
+		LikelyMatch *DatasetMatchResponse `json:"likely_match"` //nolint:tagliatelle
+	}
+
+	// DatasetMatchResponse represents a candidate match for an orphan dataset.
+	DatasetMatchResponse struct {
+		DatasetURN  string  `json:"dataset_urn"` //nolint:tagliatelle
+		Confidence  float64 `json:"confidence"`
+		MatchReason string  `json:"match_reason"` //nolint:tagliatelle
+	}
+
+	// SuggestedPatternResponse represents a pattern suggestion derived from orphan→match pairs.
+	SuggestedPatternResponse struct {
+		Pattern         string   `json:"pattern"`
+		Canonical       string   `json:"canonical"`
+		ResolvesCount   int      `json:"resolves_count"`   //nolint:tagliatelle
+		OrphansResolved []string `json:"orphans_resolved"` //nolint:tagliatelle
 	}
 )
 

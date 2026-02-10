@@ -11,6 +11,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/correlation"
 )
 
@@ -699,83 +700,90 @@ func (s *LineageStore) QueryDownstreamWithParents(
 	return results, nil
 }
 
-// QueryOrphanNamespaces implements correlation.Store.
-// Returns namespaces that appear in validation tests but have no corresponding
-// data producer output edges.
+// QueryOrphanDatasets implements correlation.Store.
+// Returns datasets that have test results but no corresponding data producer output edges.
+//
+// For each orphan dataset, it attempts to find a likely match among produced datasets
+// by comparing extracted table names.
 //
 // Orphan Detection Logic:
-//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
-//   - Validator namespaces: Namespaces from test_results joined to datasets and job_runs
-//   - Orphan = Validator namespace NOT IN Producer namespaces
+//   - Orphan = Dataset with test results but NOT in the set of datasets with output edges
 //
-// Namespace Alias Resolution:
-//
-//	If a resolver is configured (via WithAliasResolver), aliases are applied at query time
-//	using VALUES clause + LEFT JOIN. This allows orphan namespaces to be resolved to
-//	canonical namespaces, enabling cross-tool correlation for both historical and new data.
-//
-// This identifies namespace aliasing issues where different tools use different formats:
-//   - GE might emit: "postgres_prod"
-//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+// Likely Match Algorithm:
+//   - Extract table name from orphan URN using canonicalization.ExtractTableName()
+//   - Extract table name from each produced dataset URN
+//   - If exact match found, set LikelyMatch with Confidence=1.0
 //
 // Returns:
-//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
-//   - Empty slice if no orphan namespaces exist (healthy state)
+//   - Slice of OrphanDataset sorted by test_count DESC (most impactful first)
+//   - Each orphan includes LikelyMatch if a candidate was found
+//   - Empty slice if no orphan datasets exist (healthy state)
 //   - Error if query fails or context is cancelled
 //
 // Performance:
-//   - Queries test_results, datasets, lineage_edges, job_runs tables
-//   - Filters out empty namespaces
-//   - Typical query time: 10-100ms depending on data volume
-func (s *LineageStore) QueryOrphanNamespaces(ctx context.Context) ([]correlation.OrphanNamespace, error) {
-	// TODO: Implement pattern-aware orphan detection in 4.X.3
-	// For now, use the basic query without pattern resolution
-	return s.queryOrphanNamespacesWithOutAliases(ctx)
-}
-
-// queryOrphanNamespacesWithOutAliases executes the original orphan detection query
-// without alias resolution. Used when no resolver is configured.
-func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) ([]correlation.OrphanNamespace, error) {
+//   - Queries test_results and lineage_edges tables
+//   - Table name extraction done in Go (not SQL) for flexibility
+//   - Typical query time: 20-100ms depending on data volume
+func (s *LineageStore) QueryOrphanDatasets(ctx context.Context) ([]correlation.OrphanDataset, error) {
 	start := time.Now()
 
+	// Query orphan datasets (datasets with test results but no output edges)
+	orphans, err := s.queryTestedDatasetsWithoutProducer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Early return if no orphans
+	if len(orphans) == 0 {
+		s.logger.Info("No orphan datasets detected",
+			slog.Duration("duration", time.Since(start)))
+
+		return orphans, nil
+	}
+
+	// Query produced datasets indexed by table name for matching
+	producedByTableName, err := s.queryProducedDatasetsByTableName(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Match orphans to produced datasets by table name
+	matchOrphansToProduced(orphans, producedByTableName)
+
+	duration := time.Since(start)
+	s.logger.Info("Queried orphan datasets",
+		slog.Duration("duration", duration),
+		slog.Int("orphan_count", len(orphans)),
+		slog.Int("produced_count", len(producedByTableName)))
+
+	return orphans, nil
+}
+
+// queryTestedDatasetsWithoutProducer queries datasets with test results but no output edges.
+func (s *LineageStore) queryTestedDatasetsWithoutProducer(ctx context.Context) ([]correlation.OrphanDataset, error) {
 	query := `
-		WITH producer_namespaces AS (
-			-- Namespaces that have output lineage edges (data producers)
-			SELECT DISTINCT d.namespace
-			FROM lineage_edges le
-			JOIN datasets d ON le.dataset_urn = d.dataset_urn
-			WHERE le.edge_type = 'output'
-			  AND d.namespace != ''
+		WITH produced_datasets AS (
+			SELECT DISTINCT dataset_urn
+			FROM lineage_edges
+			WHERE edge_type = 'output'
 		),
-		validator_namespaces AS (
-			-- Namespaces from test results (validators)
+		tested_datasets AS (
 			SELECT
-				d.namespace,
-				jr.producer_name,
-				MAX(tr.executed_at) AS last_seen,
-				COUNT(*) AS event_count
-			FROM test_results tr
-			JOIN datasets d ON tr.dataset_urn = d.dataset_urn
-			JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
-			WHERE d.namespace != ''
-			GROUP BY d.namespace, jr.producer_name
+				dataset_urn,
+				COUNT(*) AS test_count,
+				MAX(executed_at) AS last_seen
+			FROM test_results
+			GROUP BY dataset_urn
 		)
-		-- Orphans: validator namespaces not in producer namespaces
-		SELECT
-			vn.namespace,
-			vn.producer_name,
-			vn.last_seen,
-			vn.event_count
-		FROM validator_namespaces vn
-		WHERE vn.namespace NOT IN (SELECT namespace FROM producer_namespaces)
-		ORDER BY vn.event_count DESC, vn.namespace, vn.producer_name
+		SELECT td.dataset_urn, td.test_count, td.last_seen
+		FROM tested_datasets td
+		WHERE td.dataset_urn NOT IN (SELECT dataset_urn FROM produced_datasets)
+		ORDER BY td.test_count DESC, td.dataset_urn
 	`
 
 	rows, err := s.conn.QueryContext(ctx, query)
 	if err != nil {
-		s.logger.Error("Failed to query orphan namespaces",
-			slog.Any("error", err),
-			slog.Duration("duration", time.Since(start)))
+		s.logger.Error("Failed to query orphan datasets", slog.Any("error", err))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
@@ -784,102 +792,139 @@ func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) 
 		_ = rows.Close()
 	}()
 
-	var results []correlation.OrphanNamespace
+	var orphans []correlation.OrphanDataset
 
 	for rows.Next() {
-		var r correlation.OrphanNamespace
+		var o correlation.OrphanDataset
 
-		if err := rows.Scan(&r.Namespace, &r.Producer, &r.LastSeen, &r.EventCount); err != nil {
-			s.logger.Error("Failed to scan orphan namespace row", slog.Any("error", err))
+		if err := rows.Scan(&o.DatasetURN, &o.TestCount, &o.LastSeen); err != nil {
+			s.logger.Error("Failed to scan orphan dataset row", slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
 
-		results = append(results, r)
+		orphans = append(orphans, o)
 	}
 
 	if err := rows.Err(); err != nil {
-		s.logger.Error("Error iterating orphan namespace rows", slog.Any("error", err))
+		s.logger.Error("Error iterating orphan dataset rows", slog.Any("error", err))
 
 		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	s.logger.Info("Queried orphan namespaces",
-		slog.Duration("duration", time.Since(start)),
-		slog.Int("result_count", len(results)))
+	return orphans, nil
+}
 
-	return results, nil
+// queryProducedDatasetsByTableName queries produced datasets and indexes them by extracted table name.
+func (s *LineageStore) queryProducedDatasetsByTableName(ctx context.Context) (map[string]string, error) {
+	query := `
+		SELECT DISTINCT dataset_urn
+		FROM lineage_edges
+		WHERE edge_type = 'output'
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		s.logger.Error("Failed to query produced datasets", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	tableNameToProduced := make(map[string]string)
+
+	for rows.Next() {
+		var producedURN string
+
+		if err := rows.Scan(&producedURN); err != nil {
+			s.logger.Error("Failed to scan produced dataset row", slog.Any("error", err))
+
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		tableName := canonicalization.ExtractTableName(producedURN)
+		if tableName != "" {
+			// First match wins (deterministic ordering from query)
+			if _, exists := tableNameToProduced[tableName]; !exists {
+				tableNameToProduced[tableName] = producedURN
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		s.logger.Error("Error iterating produced dataset rows", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return tableNameToProduced, nil
+}
+
+// matchOrphansToProduced matches orphan datasets to produced datasets by table name.
+func matchOrphansToProduced(orphans []correlation.OrphanDataset, tableNameToProduced map[string]string) {
+	for i := range orphans {
+		orphanTableName := canonicalization.ExtractTableName(orphans[i].DatasetURN)
+		if orphanTableName == "" {
+			continue
+		}
+
+		if producedURN, found := tableNameToProduced[orphanTableName]; found {
+			orphans[i].LikelyMatch = &correlation.DatasetMatch{
+				DatasetURN:  producedURN,
+				Confidence:  1.0,
+				MatchReason: "exact_table_name",
+			}
+		}
+	}
 }
 
 // QueryCorrelationHealth implements correlation.Store.
 // Returns overall correlation health metrics including correlation rate,
-// total datasets, and orphan namespaces.
+// dataset counts, orphan datasets, and suggested patterns.
 //
 // Correlation Rate Calculation:
-//   - Numerator: Incidents where dataset namespace has producer output edges
+//   - Numerator: Incidents where dataset has producer output edges
 //   - Denominator: All incidents from incident_correlation_view
 //   - If denominator = 0, returns 1.0 (no incidents = healthy)
 //
 // Returns:
-//   - Pointer to Health with metrics
+//   - Pointer to Health with metrics, orphans, and suggested patterns
 //   - Error if query fails or context is cancelled
 //
 // Performance:
-//   - Calls QueryOrphanNamespaces internally
+//   - Calls QueryOrphanDatasets internally
 //   - Queries incident_correlation_view for rate calculation
+//   - Calls SuggestPatterns for pattern recommendations
 //   - Typical query time: 50-200ms
 func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation.Health, error) {
 	start := time.Now()
 
-	// Query orphan namespaces first
-	orphans, err := s.QueryOrphanNamespaces(ctx)
+	// Query orphan datasets first
+	orphans, err := s.QueryOrphanDatasets(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build set of orphan namespaces for efficient lookup
-	orphanNSSet := make(map[string]bool)
-	for _, o := range orphans {
-		orphanNSSet[o.Namespace] = true
-	}
+	// Generate pattern suggestions from orphans
+	suggestedPatterns := correlation.SuggestPatterns(orphans)
 
-	// Query correlation rate and total datasets
-	query := `
-		WITH all_failed_tests AS (
-			-- Total failed/error tests across all datasets
-			SELECT COUNT(*) AS total_incidents
-			FROM test_results
-			WHERE status IN ('failed', 'error')
-		),
-		correlated_incidents AS (
-			-- Incidents that have lineage correlation (in the view)
-			SELECT COUNT(*) AS correlated_count
-			FROM incident_correlation_view
-		),
-		dataset_stats AS (
-			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
-			FROM test_results
-		)
-		SELECT
-			COALESCE(a.total_incidents, 0) AS total_incidents,
-			COALESCE(c.correlated_count, 0) AS correlated_incidents,
-			COALESCE(d.total_datasets, 0) AS total_datasets
-		FROM all_failed_tests a, correlated_incidents c, dataset_stats d
-	`
-
-	var totalIncidents, correlatedIncidents, totalDatasets int
-
-	err = s.conn.QueryRowContext(ctx, query).Scan(&totalIncidents, &correlatedIncidents, &totalDatasets)
+	// Query health statistics
+	stats, err := s.queryHealthStats(ctx)
 	if err != nil {
-		// Handle case where no data exists (query returns no rows)
 		if errors.Is(err, sql.ErrNoRows) {
 			s.logger.Info("Queried correlation health (empty state)",
 				slog.Duration("duration", time.Since(start)))
 
 			return &correlation.Health{
-				CorrelationRate:  1.0, // No incidents = healthy
-				TotalDatasets:    0,
-				OrphanNamespaces: orphans,
+				CorrelationRate:    1.0, // No incidents = healthy
+				TotalDatasets:      0,
+				ProducedDatasets:   0,
+				CorrelatedDatasets: 0,
+				OrphanDatasets:     orphans,
+				SuggestedPatterns:  suggestedPatterns,
 			}, nil
 		}
 
@@ -892,23 +937,83 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 
 	// Calculate correlation rate (avoid division by zero)
 	correlationRate := 1.0
-
-	if totalIncidents > 0 {
-		correlationRate = float64(correlatedIncidents) / float64(totalIncidents)
+	if stats.totalIncidents > 0 {
+		correlationRate = float64(stats.correlatedIncidents) / float64(stats.totalIncidents)
 	}
 
 	duration := time.Since(start)
 	s.logger.Info("Queried correlation health",
 		slog.Duration("duration", duration),
 		slog.Float64("correlation_rate", correlationRate),
-		slog.Int("total_incidents", totalIncidents),
-		slog.Int("correlated_incidents", correlatedIncidents),
-		slog.Int("total_datasets", totalDatasets),
-		slog.Int("orphan_namespaces", len(orphans)))
+		slog.Int("total_datasets", stats.totalDatasets),
+		slog.Int("produced_datasets", stats.producedDatasets),
+		slog.Int("correlated_datasets", stats.correlatedDatasets),
+		slog.Int("orphan_datasets", len(orphans)),
+		slog.Int("suggested_patterns", len(suggestedPatterns)))
 
 	return &correlation.Health{
-		CorrelationRate:  correlationRate,
-		TotalDatasets:    totalDatasets,
-		OrphanNamespaces: orphans,
+		CorrelationRate:    correlationRate,
+		TotalDatasets:      stats.totalDatasets,
+		ProducedDatasets:   stats.producedDatasets,
+		CorrelatedDatasets: stats.correlatedDatasets,
+		OrphanDatasets:     orphans,
+		SuggestedPatterns:  suggestedPatterns,
 	}, nil
+}
+
+// healthStats holds correlation health statistics.
+type healthStats struct {
+	totalIncidents      int
+	correlatedIncidents int
+	totalDatasets       int
+	producedDatasets    int
+	correlatedDatasets  int
+}
+
+// queryHealthStats queries database for health statistics.
+func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, error) {
+	query := `
+		WITH all_failed_tests AS (
+			SELECT COUNT(*) AS total_incidents
+			FROM test_results
+			WHERE status IN ('failed', 'error')
+		),
+		correlated_incidents AS (
+			SELECT COUNT(*) AS correlated_count
+			FROM incident_correlation_view
+		),
+		tested_datasets AS (
+			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
+			FROM test_results
+		),
+		produced_datasets AS (
+			SELECT COUNT(DISTINCT dataset_urn) AS produced_count
+			FROM lineage_edges
+			WHERE edge_type = 'output'
+		),
+		correlated_datasets AS (
+			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			FROM test_results tr
+			WHERE EXISTS (
+				SELECT 1 FROM lineage_edges le
+				WHERE le.dataset_urn = tr.dataset_urn AND le.edge_type = 'output'
+			)
+		)
+		SELECT
+			COALESCE(a.total_incidents, 0),
+			COALESCE(c.correlated_count, 0),
+			COALESCE(t.total_datasets, 0),
+			COALESCE(p.produced_count, 0),
+			COALESCE(cd.correlated_count, 0)
+		FROM all_failed_tests a, correlated_incidents c, tested_datasets t, produced_datasets p, correlated_datasets cd
+	`
+
+	var stats healthStats
+
+	err := s.conn.QueryRowContext(ctx, query).Scan(
+		&stats.totalIncidents, &stats.correlatedIncidents, &stats.totalDatasets,
+		&stats.producedDatasets, &stats.correlatedDatasets,
+	)
+
+	return &stats, err
 }

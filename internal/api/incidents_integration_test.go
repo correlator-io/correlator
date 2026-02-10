@@ -360,7 +360,7 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 	_, err = ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 
-	t.Run("OrphanNamespace_DetectedInHealthEndpoint", func(t *testing.T) {
+	t.Run("OrphanDataset_DetectedInHealthEndpoint", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
 		req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -374,21 +374,20 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err, "Failed to parse response")
 
-		// Verify orphan namespace is detected
+		// Verify orphan dataset is detected
 		var foundOrphan bool
 
-		for _, o := range response.OrphanNamespaces {
-			if o.Namespace == orphanNamespace {
+		for _, o := range response.OrphanDatasets {
+			if o.DatasetURN == orphanDatasetURN {
 				foundOrphan = true
 
-				assert.Equal(t, "great_expectations", o.Producer)
-				assert.GreaterOrEqual(t, o.EventCount, 1)
+				assert.GreaterOrEqual(t, o.TestCount, 1)
 
 				break
 			}
 		}
 
-		assert.True(t, foundOrphan, "Should detect orphan namespace: %s", orphanNamespace)
+		assert.True(t, foundOrphan, "Should detect orphan dataset: %s", orphanDatasetURN)
 	})
 
 	t.Run("OrphanIncident_NotInIncidentList", func(t *testing.T) {

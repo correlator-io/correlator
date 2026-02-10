@@ -40,7 +40,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 
 		assert.InDelta(t, 1.0, response.CorrelationRate, 0.001, "Empty state should be healthy (rate 1.0)")
 		assert.Equal(t, 0, response.TotalDatasets, "No datasets")
-		assert.Empty(t, response.OrphanNamespaces, "No orphan namespaces")
+		assert.Empty(t, response.OrphanDatasets, "No orphan namespaces")
 	})
 
 	t.Run("CorrelationHealth_WithCorrelatedData", func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 
 		assert.InDelta(t, 1.0, response.CorrelationRate, 0.001, "All correlated = rate 1.0")
 		assert.GreaterOrEqual(t, response.TotalDatasets, 1, "Should have at least 1 dataset")
-		assert.Empty(t, response.OrphanNamespaces, "No orphan namespaces")
+		assert.Empty(t, response.OrphanDatasets, "No orphan namespaces")
 	})
 
 	t.Run("CorrelationHealth_WithOrphanNamespace", func(t *testing.T) {
@@ -101,23 +101,22 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		require.NoError(t, err, "Failed to parse response")
 
 		// Verify orphan namespace is detected
-		assert.NotEmpty(t, response.OrphanNamespaces, "Should have orphan namespaces")
+		assert.NotEmpty(t, response.OrphanDatasets, "Should have orphan namespaces")
 
-		// Find the orphan namespace we created
+		// Find the orphan dataset we created
 		var foundOrphan bool
 
-		for _, o := range response.OrphanNamespaces {
-			if o.Namespace == orphanNamespace {
+		for _, o := range response.OrphanDatasets {
+			if o.DatasetURN == orphanDatasetURN {
 				foundOrphan = true
 
-				assert.Equal(t, "great_expectations", o.Producer)
-				assert.GreaterOrEqual(t, o.EventCount, 1)
+				assert.GreaterOrEqual(t, o.TestCount, 1)
 
 				break
 			}
 		}
 
-		assert.True(t, foundOrphan, "Should find our orphan namespace: %s", orphanNamespace)
+		assert.True(t, foundOrphan, "Should find our orphan dataset: %s", orphanDatasetURN)
 	})
 
 	t.Run("CorrelationHealth_MixedState", func(t *testing.T) {
@@ -157,7 +156,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 
 		// Rate should be less than 1.0 since we have orphan data
 		assert.Less(t, response.CorrelationRate, 1.0, "Should have rate < 1.0 with orphan data")
-		assert.NotEmpty(t, response.OrphanNamespaces, "Should have orphan namespaces")
+		assert.NotEmpty(t, response.OrphanDatasets, "Should have orphan namespaces")
 	})
 
 	t.Run("CorrelationHealth_RequiresAuth", func(t *testing.T) {

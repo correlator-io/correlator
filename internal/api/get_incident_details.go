@@ -67,20 +67,20 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 		downstream = nil
 	}
 
-	orphanNamespaces, err := s.correlationStore.QueryOrphanNamespaces(ctx)
+	orphanDatasets, err := s.correlationStore.QueryOrphanDatasets(ctx)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "Failed to query orphan namespaces",
+		s.logger.ErrorContext(ctx, "Failed to query orphan datasets",
 			"correlation_id", correlationID,
 			"incident_id", id,
 			"error", err.Error(),
 		)
 		// Non-fatal: continue with empty orphan set
-		orphanNamespaces = nil
+		orphanDatasets = nil
 	}
 
-	orphanNSSet := buildOrphanNamespaceSet(orphanNamespaces)
+	orphanDatasetSet := buildOrphanDatasetSet(orphanDatasets)
 
-	response := mapIncidentToDetail(incident, downstream, orphanNSSet)
+	response := mapIncidentToDetail(incident, downstream, orphanDatasetSet)
 
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -100,11 +100,11 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 }
 
 // mapIncidentToDetail converts a domain Incident and downstream results to API response.
-// The orphanNSSet is used to determine the correlation status.
+// The orphanDatasetSet is used to determine the correlation status.
 func mapIncidentToDetail(
 	inc *correlation.Incident,
 	downstream []correlation.DownstreamResult,
-	orphanNSSet map[string]bool,
+	orphanDatasetSet map[string]bool,
 ) IncidentDetailResponse {
 	response := IncidentDetailResponse{
 		ID: strconv.FormatInt(inc.TestResultID, 10),
@@ -122,7 +122,7 @@ func mapIncidentToDetail(
 			Namespace: inc.DatasetNS,
 		},
 		Downstream:        mapDownstreamResults(downstream),
-		CorrelationStatus: determineCorrelationStatus(inc, orphanNSSet),
+		CorrelationStatus: determineCorrelationStatus(inc, orphanDatasetSet),
 	}
 
 	// Include job details if correlated
@@ -164,19 +164,19 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 //
 // Status Logic:
 //   - "unknown": No job correlation (JobRunID is empty)
-//   - "orphan": Namespace aliasing issue (namespace in orphan set)
+//   - "orphan": Dataset URN aliasing issue (dataset in orphan set)
 //   - "correlated": Fully correlated with data-producing job
 //
 // Note: "unknown" takes priority over "orphan" because it indicates a more
 // fundamental correlation failure (no job association at all).
-func determineCorrelationStatus(inc *correlation.Incident, orphanNSSet map[string]bool) string {
+func determineCorrelationStatus(inc *correlation.Incident, orphanDatasetSet map[string]bool) string {
 	// No job correlation at all
 	if inc.JobRunID == "" {
 		return CorrelationStatusUnknown
 	}
 
-	// Namespace aliasing issue
-	if orphanNSSet[inc.DatasetNS] {
+	// Dataset URN aliasing issue
+	if orphanDatasetSet[inc.DatasetURN] {
 		return CorrelationStatusOrphan
 	}
 

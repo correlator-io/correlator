@@ -149,32 +149,37 @@ type Store interface {
 	// not downstream. Use QueryLineageImpact with maxDepth=-1 to get direct outputs.
 	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
 
-	// QueryOrphanNamespaces returns namespaces that appear in validation tests
-	// but have no corresponding data producer output edges.
+	// QueryOrphanDatasets returns datasets that have test results but no corresponding
+	// data producer output edges.
 	//
 	// Orphan Detection Logic:
-	//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
-	//   - Validator namespaces: Namespaces from test_results joined to datasets
-	//   - Orphan = Validator namespace NOT IN Producer namespaces
+	//   - Produced datasets: Datasets with lineage_edges where edge_type='output'
+	//   - Tested datasets: Datasets with test_results
+	//   - Orphan = Tested dataset NOT IN Produced datasets
 	//
-	// This identifies namespace aliasing issues where tools use different formats:
-	//   - GE might emit: "postgres_prod"
-	//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+	// This identifies Entity Resolution issues where different tools emit different
+	// URN formats for the same logical dataset:
+	//   - GE might emit: "demo_postgres/customers"
+	//   - dbt might emit: "postgresql://demo/marts.customers"
+	//
+	// For each orphan, the method attempts to find a likely match among produced
+	// datasets by comparing extracted table names.
 	//
 	// Returns:
-	//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
-	//   - Empty slice if no orphan namespaces exist (healthy state)
+	//   - Slice of OrphanDataset sorted by test_count DESC (most impactful first)
+	//   - Each orphan includes LikelyMatch if a candidate was found
+	//   - Empty slice if no orphan datasets exist (healthy state)
 	//   - Error if query fails or context is cancelled
 	//
 	// Performance:
-	//   - Queries test_results, datasets, lineage_edges tables
-	//   - Filters out empty/null namespaces
-	//   - Typical query time: 10-100ms depending on data volume
+	//   - Queries test_results, lineage_edges tables
+	//   - Table name extraction done in Go (not SQL)
+	//   - Typical query time: 20-100ms depending on data volume
 	//
 	// Used by:
 	//   - GET /api/v1/health/correlation endpoint
-	//   - Incident list/detail handlers (for has_correlation_issue field)
-	QueryOrphanNamespaces(ctx context.Context) ([]OrphanNamespace, error)
+	//   - Pattern suggestion algorithm
+	QueryOrphanDatasets(ctx context.Context) ([]OrphanDataset, error)
 
 	// QueryCorrelationHealth returns overall correlation health metrics.
 	//
