@@ -333,3 +333,56 @@ func TestResolver_GetPatternCount_NilResolver(t *testing.T) {
 	var r *Resolver
 	assert.Equal(t, 0, r.GetPatternCount())
 }
+
+// ==============================================================================
+// Concurrency Tests
+// ==============================================================================
+
+func TestResolver_ConcurrentAccess(t *testing.T) {
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+			{Pattern: "old_ns/{schema}/{table}", Canonical: "new_ns/{schema}.{table}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	// Test URNs
+	testURNs := []string{
+		"demo_postgres/customers",
+		"demo_postgres/orders",
+		"old_ns/public/users",
+		"unmatched/dataset",
+	}
+
+	// Run concurrent Resolve calls
+	const goroutines = 100
+
+	const iterations = 100
+
+	done := make(chan bool, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < iterations; j++ {
+				for _, urn := range testURNs {
+					_ = r.Resolve(urn)
+					_, _ = r.Match(urn)
+					_ = r.GetPatternCount()
+				}
+			}
+
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	// Verify resolver still works correctly after concurrent access
+	assert.Equal(t, "postgresql://demo/marts.customers", r.Resolve("demo_postgres/customers"))
+	assert.Equal(t, "new_ns/public.users", r.Resolve("old_ns/public/users"))
+	assert.Equal(t, 2, r.GetPatternCount())
+}

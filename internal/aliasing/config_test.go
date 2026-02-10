@@ -64,7 +64,7 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
-	// Invalid YAML
+	// Invalid YAML syntax
 	content := `
 dataset_patterns:
   - pattern: [invalid yaml
@@ -74,10 +74,10 @@ dataset_patterns:
 
 	cfg, err := LoadConfig(configPath)
 
-	// Invalid YAML should return empty config with no error (graceful degradation)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.DatasetPatterns)
+	// Invalid YAML should return error (fail fast for user errors)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.Nil(t, cfg)
 }
 
 func TestLoadConfig_YAMLWithOnlyComments(t *testing.T) {

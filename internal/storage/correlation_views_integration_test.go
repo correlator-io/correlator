@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 
+	"github.com/correlator-io/correlator/internal/aliasing"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
 )
@@ -1111,4 +1113,556 @@ func TestDetectOrphanDatasets_HealthyState(t *testing.T) {
 	orphans, err := store.QueryOrphanDatasets(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, orphans, "Should return no orphans when dataset has producer output edge")
+}
+
+// =============================================================================
+// Pattern Resolution Tests (Task 4.X.6)
+// =============================================================================
+//
+// These tests verify that QueryIncidents applies pattern resolution to correlate
+// incidents across different URN formats (TC-002 Entity Resolution).
+
+// TestQueryIncidents_WithPatternResolution tests TC-002: GE test failures correlate
+// to dbt-produced datasets via pattern matching.
+//
+// This is the core test for the Entity Resolution feature where:
+//   - dbt produces: postgresql://demo/marts.customers
+//   - GE tests: demo_postgres/customers (different URN format, same logical table)
+//   - Pattern: demo_postgres/{name} → postgresql://demo/marts.{name}
+//   - Expected: GE incident correlates to dbt job run
+func TestQueryIncidents_WithPatternResolution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Setup TC-002 scenario
+	now := time.Now()
+
+	// Job runs
+	dbtJobRunID := "dbt:" + uuid.New().String()
+	geJobRunID := "great_expectations:" + uuid.New().String()
+
+	// dbt produces in canonical format
+	dbtNamespace := "postgresql://demo/marts"
+	dbtDatasetURN := dbtNamespace + ".customers"
+
+	// GE tests in different format (same logical table)
+	geNamespace := "demo_postgres"
+	geDatasetURN := geNamespace + "/customers"
+
+	// Insert job runs
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, completed_at, producer_name
+		)
+		VALUES
+			($1, $2, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
+			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
+	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+	require.NoError(t, err)
+
+	// Insert datasets
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace)
+		VALUES ($1, 'customers', $2), ($3, 'customers', $4)
+	`, dbtDatasetURN, dbtNamespace, geDatasetURN, geNamespace)
+	require.NoError(t, err)
+
+	// dbt produces output (has lineage edge)
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		VALUES ($1, $2, 'output')
+	`, dbtJobRunID, dbtDatasetURN)
+	require.NoError(t, err)
+
+	// GE has test results on the GE-format URN (which is orphan without pattern resolution)
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+		)
+		VALUES
+			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found 3 nulls', $3, 100),
+			('unique_customers_email', 'unique', $1, $2, 'failed', 'Found 2 duplicates', $4, 150)
+	`, geDatasetURN, geJobRunID, now, now.Add(1*time.Minute))
+	require.NoError(t, err)
+
+	// Create pattern resolver: demo_postgres/{name} → postgresql://demo/marts.{name}
+	patternCfg := &aliasing.Config{
+		DatasetPatterns: []aliasing.DatasetPattern{
+			{
+				Pattern:   "demo_postgres/{name}",
+				Canonical: "postgresql://demo/marts.{name}",
+			},
+		},
+	}
+	resolver := aliasing.NewResolver(patternCfg)
+	require.Equal(t, 1, resolver.GetPatternCount(), "Should have 1 pattern")
+
+	// Verify pattern resolves correctly (sanity check)
+	resolved := resolver.Resolve(geDatasetURN)
+	require.Equal(t, dbtDatasetURN, resolved, "Pattern should resolve GE URN to dbt URN")
+
+	// Create LineageStore WITH pattern resolver
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour, WithAliasResolver(resolver))
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Refresh views (needed for incident_correlation_view)
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Test: Query incidents with pattern resolution
+	result, err := store.QueryIncidents(ctx, nil, nil)
+	require.NoError(t, err)
+
+	// TC-002 Core Assertion: GE incidents should correlate to dbt job run
+	assert.Len(t, result.Incidents, 2, "Should have 2 incidents (both GE test failures)")
+
+	// Verify each incident correlates to the dbt job run (not GE job run)
+	for _, incident := range result.Incidents {
+		assert.Equal(t, dbtDatasetURN, incident.DatasetURN,
+			"Incident should show canonical dataset URN (dbt format)")
+		assert.Equal(t, dbtJobRunID, incident.JobRunID,
+			"Incident should correlate to dbt job run (producer)")
+		assert.Equal(t, "dbt", incident.ProducerName,
+			"Producer should be dbt")
+		assert.Equal(t, "dbt_transform_customers", incident.JobName,
+			"Job name should be dbt transform job")
+	}
+}
+
+// TestQueryIncidents_WithPatternResolution_MultipleDatasets tests pattern resolution
+// across multiple datasets with the same pattern.
+func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Setup: Multiple datasets resolved by same pattern
+	now := time.Now()
+	dbtJobRunID := "dbt:" + uuid.New().String()
+	geJobRunID := "great_expectations:" + uuid.New().String()
+
+	// dbt produces two tables
+	dbtCustomersURN := "postgresql://demo/marts.customers"
+	dbtOrdersURN := "postgresql://demo/marts.orders"
+
+	// GE tests in different format
+	geCustomersURN := "demo_postgres/customers"
+	geOrdersURN := "demo_postgres/orders"
+
+	// Insert job runs
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, completed_at, producer_name
+		)
+		VALUES
+			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
+			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
+	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+	require.NoError(t, err)
+
+	// Insert datasets
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace)
+		VALUES
+			($1, 'customers', 'postgresql://demo/marts'),
+			($2, 'orders', 'postgresql://demo/marts'),
+			($3, 'customers', 'demo_postgres'),
+			($4, 'orders', 'demo_postgres')
+	`, dbtCustomersURN, dbtOrdersURN, geCustomersURN, geOrdersURN)
+	require.NoError(t, err)
+
+	// dbt produces both tables
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		VALUES ($1, $2, 'output'), ($1, $3, 'output')
+	`, dbtJobRunID, dbtCustomersURN, dbtOrdersURN)
+	require.NoError(t, err)
+
+	// GE tests both tables (fails on customers, passes on orders)
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+		)
+		VALUES
+			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
+			('not_null_orders_id', 'not_null', $4, $2, 'failed', 'Found nulls', $5, 100)
+	`, geCustomersURN, geJobRunID, now, geOrdersURN, now.Add(1*time.Minute))
+	require.NoError(t, err)
+
+	// Create pattern resolver
+	patternCfg := &aliasing.Config{
+		DatasetPatterns: []aliasing.DatasetPattern{
+			{
+				Pattern:   "demo_postgres/{name}",
+				Canonical: "postgresql://demo/marts.{name}",
+			},
+		},
+	}
+	resolver := aliasing.NewResolver(patternCfg)
+
+	// Create LineageStore WITH pattern resolver
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour, WithAliasResolver(resolver))
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Refresh views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Test: Query incidents
+	result, err := store.QueryIncidents(ctx, nil, nil)
+	require.NoError(t, err)
+
+	// Should have 2 incidents (one per dataset), both correlated to dbt job
+	assert.Len(t, result.Incidents, 2, "Should have 2 incidents")
+
+	// Build map for easier assertion
+	incidentsByDataset := make(map[string]*correlation.Incident)
+	for i := range result.Incidents {
+		incidentsByDataset[result.Incidents[i].DatasetURN] = &result.Incidents[i]
+	}
+
+	// Verify customers incident
+	customersIncident, ok := incidentsByDataset[dbtCustomersURN]
+	require.True(t, ok, "Should have customers incident with canonical URN")
+	assert.Equal(t, dbtJobRunID, customersIncident.JobRunID)
+
+	// Verify orders incident
+	ordersIncident, ok := incidentsByDataset[dbtOrdersURN]
+	require.True(t, ok, "Should have orders incident with canonical URN")
+	assert.Equal(t, dbtJobRunID, ordersIncident.JobRunID)
+}
+
+// TestQueryIncidents_NoPatternResolver tests that without resolver, uncorrelated
+// incidents are not returned (existing behavior).
+func TestQueryIncidents_NoPatternResolver(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Setup: Same data as TC-002 but WITHOUT pattern resolver
+	now := time.Now()
+	dbtJobRunID := "dbt:" + uuid.New().String()
+	geJobRunID := "great_expectations:" + uuid.New().String()
+
+	dbtDatasetURN := "postgresql://demo/marts.customers"
+	geDatasetURN := "demo_postgres/customers"
+
+	// Insert job runs
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, completed_at, producer_name
+		)
+		VALUES
+			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
+			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
+	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+	require.NoError(t, err)
+
+	// Insert datasets
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace)
+		VALUES ($1, 'customers', 'postgresql://demo/marts'), ($2, 'customers', 'demo_postgres')
+	`, dbtDatasetURN, geDatasetURN)
+	require.NoError(t, err)
+
+	// dbt produces output
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		VALUES ($1, $2, 'output')
+	`, dbtJobRunID, dbtDatasetURN)
+	require.NoError(t, err)
+
+	// GE tests with different URN format
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+		)
+		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
+	`, geDatasetURN, geJobRunID, now)
+	require.NoError(t, err)
+
+	// Create LineageStore WITHOUT pattern resolver
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour) // No WithAliasResolver
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Refresh views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Test: Without pattern resolver, GE incident should NOT be correlated
+	result, err := store.QueryIncidents(ctx, nil, nil)
+	require.NoError(t, err)
+
+	// The GE test failure is on a dataset_urn that has no output edge (orphan)
+	// So it won't appear in incident_correlation_view
+	assert.Empty(t, result.Incidents, "Without pattern resolver, orphan incidents are not returned")
+}
+
+// TestCorrelationHealth_WithPatternResolution tests that correlation rate improves
+// when patterns are configured.
+func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Setup TC-002 scenario
+	now := time.Now()
+	dbtJobRunID := "dbt:" + uuid.New().String()
+	geJobRunID := "great_expectations:" + uuid.New().String()
+
+	dbtDatasetURN := "postgresql://demo/marts.customers"
+	geDatasetURN := "demo_postgres/customers"
+
+	// Insert job runs
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, completed_at, producer_name
+		)
+		VALUES
+			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
+			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
+	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+	require.NoError(t, err)
+
+	// Insert datasets
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace)
+		VALUES ($1, 'customers', 'postgresql://demo/marts'), ($2, 'customers', 'demo_postgres')
+	`, dbtDatasetURN, geDatasetURN)
+	require.NoError(t, err)
+
+	// dbt produces output
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		VALUES ($1, $2, 'output')
+	`, dbtJobRunID, dbtDatasetURN)
+	require.NoError(t, err)
+
+	// GE tests with different URN format
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+		)
+		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
+	`, geDatasetURN, geJobRunID, now)
+	require.NoError(t, err)
+
+	// Create pattern resolver
+	patternCfg := &aliasing.Config{
+		DatasetPatterns: []aliasing.DatasetPattern{
+			{
+				Pattern:   "demo_postgres/{name}",
+				Canonical: "postgresql://demo/marts.{name}",
+			},
+		},
+	}
+	resolver := aliasing.NewResolver(patternCfg)
+
+	// Create LineageStore WITH pattern resolver
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour, WithAliasResolver(resolver))
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Refresh views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Test: Correlation health should show 100% with pattern resolution
+	health, err := store.QueryCorrelationHealth(ctx)
+	require.NoError(t, err)
+
+	// With pattern resolution, the GE test failure should correlate
+	// The correlation rate should be 100% (1 correlated / 1 total)
+	assert.InDelta(t, 1.0, health.CorrelationRate, 0.001,
+		"With pattern resolution, correlation rate should be 100%")
+	assert.Empty(t, health.OrphanDatasets,
+		"With pattern resolution, no orphan datasets should exist")
+}
+
+// TestQueryIncidents_WithPatternResolution_LargeDataset tests pagination with many incidents.
+// This verifies memory-efficient pagination (two-phase query approach).
+func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	now := time.Now()
+	dbtJobRunID := "dbt:" + uuid.New().String()
+	geJobRunID := "great_expectations:" + uuid.New().String()
+
+	// Insert job runs
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, completed_at, producer_name
+		)
+		VALUES
+			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
+			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
+	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+	require.NoError(t, err)
+
+	// Insert 100 datasets and test results (simulating larger dataset)
+	const numDatasets = 100
+
+	for i := range numDatasets {
+		tableName := fmt.Sprintf("table_%03d", i)
+		dbtURN := "postgresql://demo/marts." + tableName
+		geURN := "demo_postgres/" + tableName
+
+		// Insert datasets
+		_, err := testDB.Connection.ExecContext(ctx, `
+			INSERT INTO datasets (dataset_urn, name, namespace)
+			VALUES ($1, $2, 'postgresql://demo/marts'), ($3, $2, 'demo_postgres')
+		`, dbtURN, tableName, geURN)
+		require.NoError(t, err)
+
+		// dbt produces output
+		_, err = testDB.Connection.ExecContext(ctx, `
+			INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+			VALUES ($1, $2, 'output')
+		`, dbtJobRunID, dbtURN)
+		require.NoError(t, err)
+
+		// GE tests in different format
+		_, err = testDB.Connection.ExecContext(ctx, `
+			INSERT INTO test_results (
+				test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			)
+			VALUES ($1, 'not_null', $2, $3, 'failed', 'Found nulls', $4, 100)
+		`, fmt.Sprintf("not_null_%s_id", tableName), geURN, geJobRunID, now.Add(time.Duration(i)*time.Second))
+		require.NoError(t, err)
+	}
+
+	// Create pattern resolver
+	patternCfg := &aliasing.Config{
+		DatasetPatterns: []aliasing.DatasetPattern{
+			{
+				Pattern:   "demo_postgres/{name}",
+				Canonical: "postgresql://demo/marts.{name}",
+			},
+		},
+	}
+	resolver := aliasing.NewResolver(patternCfg)
+
+	// Create LineageStore with resolver
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour, WithAliasResolver(resolver))
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Refresh views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Test pagination with pattern resolution
+	pageSize := 10
+	pagination := &correlation.Pagination{Offset: 0, Limit: pageSize}
+
+	result, err := store.QueryIncidents(ctx, nil, pagination)
+	require.NoError(t, err)
+
+	// Verify pagination works correctly
+	assert.Equal(t, numDatasets, result.Total, "Total should be %d", numDatasets)
+	assert.Len(t, result.Incidents, pageSize, "Should return exactly page size")
+
+	// Verify all incidents correlate to dbt job
+	for _, incident := range result.Incidents {
+		assert.Equal(t, dbtJobRunID, incident.JobRunID, "Should correlate to dbt job")
+		assert.Equal(t, "dbt", incident.ProducerName)
+		assert.Contains(t, incident.DatasetURN, "postgresql://demo/marts.",
+			"Should use canonical URN")
+	}
+
+	// Test second page
+	pagination.Offset = 10
+	result2, err := store.QueryIncidents(ctx, nil, pagination)
+	require.NoError(t, err)
+
+	assert.Equal(t, numDatasets, result2.Total, "Total should still be %d", numDatasets)
+	assert.Len(t, result2.Incidents, pageSize, "Should return second page")
+
+	// Verify no overlap between pages
+	page1IDs := make(map[int64]bool)
+	for _, inc := range result.Incidents {
+		page1IDs[inc.TestResultID] = true
+	}
+
+	for _, inc := range result2.Incidents {
+		assert.False(t, page1IDs[inc.TestResultID], "Pages should not overlap")
+	}
+
+	t.Logf("Successfully paginated %d incidents with pattern resolution", numDatasets)
 }

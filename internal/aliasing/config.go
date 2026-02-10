@@ -16,6 +16,7 @@ package aliasing
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -59,15 +60,19 @@ const (
 	ConfigPathEnvVar = "CORRELATOR_CONFIG_PATH"
 )
 
+// ErrInvalidConfig is returned when the configuration file has invalid YAML syntax.
+var ErrInvalidConfig = errors.New("invalid config file")
+
 // LoadConfig loads pattern configuration from a YAML file at the given path.
 //
 // Behavior:
 //   - Returns empty config (not error) if file doesn't exist - patterns are optional
-//   - Returns empty config + logs warning if YAML is invalid (graceful degradation)
+//   - Returns error if YAML syntax is invalid - user should fix the typo
 //   - Returns populated config on success
 //
-// This graceful degradation ensures the server can start even without patterns
-// configured, as dataset pattern aliasing is an optional feature.
+// The distinction between missing file (OK) and invalid YAML (error) is intentional:
+// missing patterns is a valid deployment state, but invalid YAML is a user error
+// that should be surfaced immediately (fail fast).
 func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{},
@@ -97,12 +102,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		// Invalid YAML - log warning and continue with empty config
-		slog.Warn("Failed to parse config file, continuing without patterns",
+		// Invalid YAML syntax - fail fast so user can fix the typo
+		slog.Error("Invalid YAML in config file",
 			slog.String("path", path),
 			slog.String("error", err.Error()))
 
-		return &Config{DatasetPatterns: []DatasetPattern{}}, nil
+		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidConfig, path, err)
 	}
 
 	// Ensure slice is initialized even if YAML had nil/empty section

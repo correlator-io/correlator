@@ -60,6 +60,10 @@ const (
 	// batchSleepDuration is the sleep time between batches to avoid overwhelming the database.
 	batchSleepDuration = 100 * time.Millisecond
 	producerURLParts   = 4
+	// run states.
+	stateComplete = "COMPLETE"
+	stateFail     = "FAIL"
+	stateAbort    = "ABORT"
 )
 
 type (
@@ -734,7 +738,7 @@ func (s *LineageStore) executeJobRunUpsert(
 	stateHistoryJSON, metadataJSON []byte,
 ) error {
 	var completedAt time.Time
-	if newState == "COMPLETE" || newState == "FAIL" || newState == "ABORT" { //nolint:goconst
+	if newState == stateComplete || newState == stateFail || newState == stateAbort {
 		completedAt = event.EventTime // Set completed_at only for terminal states
 	}
 
