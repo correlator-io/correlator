@@ -615,3 +615,172 @@ func TestGenerateDatasetURN_MultiToolNormalization(t *testing.T) {
 		})
 	}
 }
+
+// ==============================================================================
+// Unit Tests: Table Name Extraction (for orphan dataset matching)
+// ==============================================================================
+
+func TestExtractTableName(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// Simple namespace/table format
+		{
+			name:     "simple namespace/table",
+			input:    "demo_postgres/customers",
+			expected: "customers",
+		},
+		{
+			name:     "simple namespace/table with underscores",
+			input:    "demo_postgres/stg_customers",
+			expected: "stg_customers",
+		},
+
+		// PostgreSQL with schema prefix
+		{
+			name:     "postgresql with schema.table",
+			input:    "postgresql://demo/marts.customers",
+			expected: "customers",
+		},
+		{
+			name:     "postgresql with schema.stg_table",
+			input:    "postgresql://demo/staging.stg_customers",
+			expected: "stg_customers",
+		},
+		{
+			name:     "postgresql with db.schema.table",
+			input:    "postgresql://host/mydb.public.orders",
+			expected: "orders",
+		},
+
+		// S3 with file paths
+		{
+			name:     "s3 with parquet extension",
+			input:    "s3://bucket/data/customers.parquet",
+			expected: "customers",
+		},
+		{
+			name:     "s3 with csv extension",
+			input:    "s3://bucket/path/orders.csv",
+			expected: "orders",
+		},
+		{
+			name:     "s3 with json extension",
+			input:    "s3://bucket/events.json",
+			expected: "events",
+		},
+		{
+			name:     "s3 nested path with extension",
+			input:    "s3://bucket/data/warehouse/fact_sales.parquet",
+			expected: "fact_sales",
+		},
+
+		// Kafka topics
+		{
+			name:     "kafka topic",
+			input:    "kafka://cluster/user-events",
+			expected: "user-events",
+		},
+		{
+			name:     "kafka with dot notation",
+			input:    "kafka://cluster/topic.events",
+			expected: "events",
+		},
+
+		// BigQuery
+		{
+			name:     "bigquery project.dataset.table",
+			input:    "bigquery/myproject.analytics.customers",
+			expected: "customers",
+		},
+
+		// Edge cases
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "just table name",
+			input:    "customers",
+			expected: "customers",
+		},
+		{
+			name:     "table with multiple dots",
+			input:    "schema.subschema.table",
+			expected: "table",
+		},
+
+		// Case normalization
+		{
+			name:     "uppercase table name",
+			input:    "namespace/CUSTOMERS",
+			expected: "customers",
+		},
+		{
+			name:     "mixed case table name",
+			input:    "postgresql://demo/marts.CustomerOrders",
+			expected: "customerorders",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractTableName(tc.input)
+			if result != tc.expected {
+				t.Errorf("ExtractTableName(%q) = %q, expected %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractTableName_MatchesSameTable(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Test that different URN formats for the same table extract to the same name
+	// This is the key use case for orphan dataset matching
+	testCases := []struct {
+		name string
+		urn1 string
+		urn2 string
+	}{
+		{
+			name: "dbt vs GE format for customers",
+			urn1: "postgresql://demo/marts.customers",
+			urn2: "demo_postgres/customers",
+		},
+		{
+			name: "dbt vs GE format for orders",
+			urn1: "postgresql://demo/marts.orders",
+			urn2: "demo_postgres/orders",
+		},
+		{
+			name: "different namespaces same table",
+			urn1: "postgres://prod/public.users",
+			urn2: "mydb/users",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			table1 := ExtractTableName(tc.urn1)
+			table2 := ExtractTableName(tc.urn2)
+
+			if table1 != table2 {
+				t.Errorf("Table name mismatch:\n"+
+					"  URN 1: %q → %q\n"+
+					"  URN 2: %q → %q\n"+
+					"These should extract to the same table name for orphan matching",
+					tc.urn1, table1, tc.urn2, table2)
+			}
+		})
+	}
+}
