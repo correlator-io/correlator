@@ -122,25 +122,25 @@ func main() {
 		)
 	}
 
-	// Load namespace alias configuration (optional - graceful degradation)
-	aliasConfig, err := aliasing.LoadConfigFromEnv()
+	// Load dataset pattern configuration (optional - graceful degradation)
+	patternConfig, err := aliasing.LoadConfigFromEnv()
 	if err != nil {
-		logger.Warn("Failed to load alias config, continuing without aliases",
+		logger.Warn("Failed to load dataset pattern config, continuing without dataset patterns",
 			slog.String("error", err.Error()))
 
-		aliasConfig = &aliasing.Config{}
+		patternConfig = &aliasing.Config{}
 	}
 
-	resolver := aliasing.NewResolver(aliasConfig)
+	resolver := aliasing.NewResolver(patternConfig)
 
-	logger.Info("Namespace alias configuration loaded",
-		slog.Int("alias_count", resolver.GetAliasCount()))
+	logger.Info("Dataset pattern configuration loaded",
+		slog.Int("pattern_count", resolver.GetPatternCount()))
 
-	// Log individual aliases at debug level for troubleshooting
-	for alias, canonical := range resolver.GetAliases() {
-		logger.Debug("Configured namespace alias",
-			slog.String("alias", alias),
-			slog.String("canonical", canonical))
+	// Log individual patterns at debug level for troubleshooting
+	for _, pattern := range patternConfig.DatasetPatterns {
+		logger.Debug("Configured dataset pattern",
+			slog.String("pattern", pattern.Pattern),
+			slog.String("canonical", pattern.Canonical))
 	}
 
 	lineageStore, err := storage.NewLineageStore(

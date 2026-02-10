@@ -10,14 +10,15 @@ import (
 )
 
 func TestLoadConfig_ValidYAML(t *testing.T) {
-	// Create temp file with valid YAML
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
 	content := `
-namespace_aliases:
-  postgres_prod: "postgresql://prod-db:5432/mydb"
-  postgres://prod-db:5432: "postgresql://prod-db:5432/mydb"
+dataset_patterns:
+  - pattern: "demo_postgres/{name}"
+    canonical: "postgresql://demo/marts.{name}"
+  - pattern: "old_namespace/{name}"
+    canonical: "new_namespace/{name}"
 `
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
@@ -26,17 +27,19 @@ namespace_aliases:
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Len(t, cfg.NamespaceAliases, 2)
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", cfg.NamespaceAliases["postgres_prod"])
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", cfg.NamespaceAliases["postgres://prod-db:5432"])
+	assert.Len(t, cfg.DatasetPatterns, 2)
+	assert.Equal(t, "demo_postgres/{name}", cfg.DatasetPatterns[0].Pattern)
+	assert.Equal(t, "postgresql://demo/marts.{name}", cfg.DatasetPatterns[0].Canonical)
+	assert.Equal(t, "old_namespace/{name}", cfg.DatasetPatterns[1].Pattern)
+	assert.Equal(t, "new_namespace/{name}", cfg.DatasetPatterns[1].Canonical)
 }
 
-func TestLoadConfig_EmptyAliasesSection(t *testing.T) {
+func TestLoadConfig_EmptyPatternsSection(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
 	content := `
-namespace_aliases:
+dataset_patterns:
 `
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
@@ -45,7 +48,7 @@ namespace_aliases:
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
 func TestLoadConfig_MissingFile(t *testing.T) {
@@ -54,17 +57,17 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 	// Missing file should return empty config, no error (graceful degradation)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
 func TestLoadConfig_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
-	// Invalid YAML - tabs used for indentation incorrectly
+	// Invalid YAML
 	content := `
-namespace_aliases:
-  key: [invalid yaml
+dataset_patterns:
+  - pattern: [invalid yaml
 `
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
@@ -74,7 +77,7 @@ namespace_aliases:
 	// Invalid YAML should return empty config with no error (graceful degradation)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
 func TestLoadConfig_YAMLWithOnlyComments(t *testing.T) {
@@ -92,29 +95,7 @@ func TestLoadConfig_YAMLWithOnlyComments(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
-}
-
-//nolint:gosmopolitan // testing unicode support intentionally
-func TestLoadConfig_UnicodeInNamespaces(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "correlator.yaml")
-
-	content := `
-namespace_aliases:
-  生产数据库: "postgresql://prod-db:5432/mydb"
-  données_prod: "postgresql://prod-db:5432/mydb"
-`
-	err := os.WriteFile(configPath, []byte(content), 0644)
-	require.NoError(t, err)
-
-	cfg, err := LoadConfig(configPath)
-
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-	assert.Len(t, cfg.NamespaceAliases, 2)
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", cfg.NamespaceAliases["生产数据库"])
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", cfg.NamespaceAliases["données_prod"])
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
 func TestLoadConfig_EmptyFile(t *testing.T) {
@@ -128,14 +109,14 @@ func TestLoadConfig_EmptyFile(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
-func TestLoadConfig_NoAliasesKey(t *testing.T) {
+func TestLoadConfig_NoPatternsKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
-	// Valid YAML but no namespace_aliases key
+	// Valid YAML but no dataset_patterns key
 	content := `
 some_other_config:
   key: value
@@ -147,7 +128,7 @@ some_other_config:
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Empty(t, cfg.NamespaceAliases)
+	assert.Empty(t, cfg.DatasetPatterns)
 }
 
 func TestLoadConfigFromEnv_DefaultPath(t *testing.T) {
@@ -167,8 +148,9 @@ func TestLoadConfigFromEnv_CustomPath(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "custom-config.yaml")
 
 	content := `
-namespace_aliases:
-  test_alias: "canonical_value"
+dataset_patterns:
+  - pattern: "test/{name}"
+    canonical: "canonical/{name}"
 `
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
@@ -180,19 +162,19 @@ namespace_aliases:
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Len(t, cfg.NamespaceAliases, 1)
-	assert.Equal(t, "canonical_value", cfg.NamespaceAliases["test_alias"])
+	assert.Len(t, cfg.DatasetPatterns, 1)
+	assert.Equal(t, "test/{name}", cfg.DatasetPatterns[0].Pattern)
+	assert.Equal(t, "canonical/{name}", cfg.DatasetPatterns[0].Canonical)
 }
 
-func TestLoadConfig_SpecialCharactersInNamespaces(t *testing.T) {
+func TestLoadConfig_MultipleVariables(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
-	// Test namespaces with special characters (common in connection strings)
 	content := `
-namespace_aliases:
-  "postgres://user:pass@host:5432/db": "postgresql://prod-db:5432/mydb" # pragma: allowlist secret
-  "snowflake://account.snowflakecomputing.com/warehouse/prod": "canonical_snowflake"
+dataset_patterns:
+  - pattern: "{namespace}/{schema}/{table}"
+    canonical: "postgresql://prod/{schema}.{table}"
 `
 	err := os.WriteFile(configPath, []byte(content), 0644)
 	require.NoError(t, err)
@@ -201,9 +183,48 @@ namespace_aliases:
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Len(t, cfg.NamespaceAliases, 2)
-	assert.Equal(t, "postgresql://prod-db:5432/mydb",
-		cfg.NamespaceAliases["postgres://user:pass@host:5432/db"]) // pragma: allowlist secret
-	assert.Equal(t, "canonical_snowflake",
-		cfg.NamespaceAliases["snowflake://account.snowflakecomputing.com/warehouse/prod"])
+	assert.Len(t, cfg.DatasetPatterns, 1)
+	assert.Equal(t, "{namespace}/{schema}/{table}", cfg.DatasetPatterns[0].Pattern)
+}
+
+func TestLoadConfig_PathCapture(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "correlator.yaml")
+
+	content := `
+dataset_patterns:
+  - pattern: "s3://old-bucket/{path*}"
+    canonical: "s3://new-bucket/{path*}"
+`
+	err := os.WriteFile(configPath, []byte(content), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadConfig(configPath)
+
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Len(t, cfg.DatasetPatterns, 1)
+	assert.Equal(t, "s3://old-bucket/{path*}", cfg.DatasetPatterns[0].Pattern)
+	assert.Equal(t, "s3://new-bucket/{path*}", cfg.DatasetPatterns[0].Canonical)
+}
+
+func TestLoadConfig_SpecialCharactersInPatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "correlator.yaml")
+
+	// Test patterns with special characters (common in URNs)
+	content := `
+dataset_patterns:
+  - pattern: "postgres://host:5432/{name}"
+    canonical: "postgresql://host/{name}"
+`
+	err := os.WriteFile(configPath, []byte(content), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadConfig(configPath)
+
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Len(t, cfg.DatasetPatterns, 1)
+	assert.Equal(t, "postgres://host:5432/{name}", cfg.DatasetPatterns[0].Pattern)
 }

@@ -727,13 +727,9 @@ func (s *LineageStore) QueryDownstreamWithParents(
 //   - Queries test_results, datasets, lineage_edges, job_runs tables
 //   - Filters out empty namespaces
 //   - Typical query time: 10-100ms depending on data volume
-//   - With aliases: minimal overhead from VALUES clause join
 func (s *LineageStore) QueryOrphanNamespaces(ctx context.Context) ([]correlation.OrphanNamespace, error) {
-	// Use alias-aware query if resolver is configured with aliases
-	if s.resolver != nil && s.resolver.GetAliasCount() > 0 {
-		return s.queryOrphanNamespacesWithAliases(ctx)
-	}
-
+	// TODO: Implement pattern-aware orphan detection in 4.X.3
+	// For now, use the basic query without pattern resolution
 	return s.queryOrphanNamespacesWithOutAliases(ctx)
 }
 
@@ -811,106 +807,6 @@ func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) 
 	s.logger.Info("Queried orphan namespaces",
 		slog.Duration("duration", time.Since(start)),
 		slog.Int("result_count", len(results)))
-
-	return results, nil
-}
-
-// queryOrphanNamespacesWithAliases executes orphan detection with alias resolution.
-// Uses VALUES clause + unnest() + LEFT JOIN for scalable alias mapping.
-func (s *LineageStore) queryOrphanNamespacesWithAliases(ctx context.Context) ([]correlation.OrphanNamespace, error) {
-	start := time.Now()
-
-	aliasKeys, canonicalValues := s.resolver.GetAliasSlices()
-
-	s.logger.Debug("Querying orphan namespaces with alias resolution",
-		slog.Int("alias_count", len(aliasKeys)))
-
-	// Query with alias resolution using VALUES clause and LEFT JOIN
-	// This approach scales well and uses standard SQL join semantics
-	query := `
-		WITH aliases(alias, canonical) AS (
-			-- Build alias lookup table from parameters
-			SELECT unnest($1::text[]), unnest($2::text[])
-		),
-		resolved_datasets AS (
-			-- Resolve dataset namespaces using alias map
-			SELECT
-				d.dataset_urn,
-				COALESCE(a.canonical, d.namespace) AS namespace
-			FROM datasets d
-			LEFT JOIN aliases a ON d.namespace = a.alias
-		),
-		producer_namespaces AS (
-			-- Namespaces that have output lineage edges (data producers)
-			-- Uses resolved namespaces for matching
-			SELECT DISTINCT rd.namespace
-			FROM lineage_edges le
-			JOIN resolved_datasets rd ON le.dataset_urn = rd.dataset_urn
-			WHERE le.edge_type = 'output'
-			  AND rd.namespace != ''
-		),
-		validator_namespaces AS (
-			-- Namespaces from test results (validators)
-			-- Uses resolved namespaces for matching
-			SELECT
-				rd.namespace,
-				jr.producer_name,
-				MAX(tr.executed_at) AS last_seen,
-				COUNT(*) AS event_count
-			FROM test_results tr
-			JOIN resolved_datasets rd ON tr.dataset_urn = rd.dataset_urn
-			JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
-			WHERE rd.namespace != ''
-			GROUP BY rd.namespace, jr.producer_name
-		)
-		-- Orphans: resolved validator namespaces not in resolved producer namespaces
-		SELECT
-			vn.namespace,
-			vn.producer_name,
-			vn.last_seen,
-			vn.event_count
-		FROM validator_namespaces vn
-		WHERE vn.namespace NOT IN (SELECT namespace FROM producer_namespaces)
-		ORDER BY vn.event_count DESC, vn.namespace, vn.producer_name
-	`
-
-	rows, err := s.conn.QueryContext(ctx, query, pq.Array(aliasKeys), pq.Array(canonicalValues))
-	if err != nil {
-		s.logger.Error("Failed to query orphan namespaces with aliases",
-			slog.Any("error", err),
-			slog.Duration("duration", time.Since(start)))
-
-		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
-	}
-
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var results []correlation.OrphanNamespace
-
-	for rows.Next() {
-		var r correlation.OrphanNamespace
-
-		if err := rows.Scan(&r.Namespace, &r.Producer, &r.LastSeen, &r.EventCount); err != nil {
-			s.logger.Error("Failed to scan orphan namespace row", slog.Any("error", err))
-
-			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
-		}
-
-		results = append(results, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		s.logger.Error("Error iterating orphan namespace rows", slog.Any("error", err))
-
-		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
-	}
-
-	s.logger.Info("Queried orphan namespaces with aliases",
-		slog.Duration("duration", time.Since(start)),
-		slog.Int("result_count", len(results)),
-		slog.Int("alias_count", len(aliasKeys)))
 
 	return results, nil
 }
