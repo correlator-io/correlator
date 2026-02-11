@@ -1,8 +1,27 @@
 version: 2
 
 models:
+  - name: orders
+    description: "Orders mart enriched with customer information. First mart in the pipeline."
+    columns:
+      - name: order_id
+        description: "Unique identifier for the order"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Foreign key to customers"
+        tests:
+          - not_null
+      - name: customer_name
+        description: "Customer name (joined from stg_customers)"
+      - name: order_total
+        description: "Total amount of the order"
+        tests:
+          - not_null
+
   - name: customers
-    description: "Customer mart with aggregated order statistics"
+    description: "Customer mart with aggregated order statistics. Depends on orders mart."
     columns:
       - name: customer_id
         description: "Unique identifier for the customer"
@@ -19,22 +38,5 @@ models:
           - not_null
       - name: total_amount
         description: "Total amount spent by the customer"
-        tests:
-          - not_null
-
-  - name: orders
-    description: "Orders mart enriched with customer information"
-    columns:
-      - name: order_id
-        description: "Unique identifier for the order"
-        tests:
-          - unique
-          - not_null
-      - name: customer_id
-        description: "Foreign key to customers"
-        tests:
-          - not_null
-      - name: order_total
-        description: "Total amount of the order"
         tests:
           - not_null

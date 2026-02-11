@@ -1,5 +1,6 @@
 -- Orders mart model
 -- Enriches orders with customer information
+-- This is the FIRST mart to be built (no mart dependencies)
 
 with orders as (
     select * from {{ ref('stg_orders') }}

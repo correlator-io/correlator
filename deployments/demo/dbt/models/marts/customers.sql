@@ -1,12 +1,16 @@
 -- Customers mart model
 -- Aggregates customer data with order statistics
+-- DEPENDS ON marts.orders (cascading dependency pattern)
 
 with customers as (
     select * from {{ ref('stg_customers') }}
 ),
 
+-- Reference the MART orders, not staging orders
+-- This creates a realistic cascading dependency:
+-- stg_orders -> marts.orders -> marts.customers
 orders as (
-    select * from {{ ref('stg_orders') }}
+    select * from {{ ref('orders') }}
 ),
 
 customer_orders as (
