@@ -20,6 +20,9 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
   const hasDownstream = downstream.length > 0;
   const isOrphan = correlationStatus === "orphan";
 
+  // Count unique datasets (same dataset may appear at multiple depths via different paths)
+  const uniqueDownstreamCount = new Set(downstream.map((d) => d.urn)).size;
+
   return (
     <div className="space-y-6">
       {/* Back navigation and header */}
@@ -64,7 +67,7 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
           <h3 className="font-medium">Downstream Impact</h3>
           {hasDownstream && (
             <span className="text-sm text-muted-foreground">
-              ({downstream.length} dataset{downstream.length !== 1 ? "s" : ""})
+              ({uniqueDownstreamCount} dataset{uniqueDownstreamCount !== 1 ? "s" : ""})
             </span>
           )}
         </div>
