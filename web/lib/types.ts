@@ -54,6 +54,9 @@ export interface DownstreamDataset {
   parentUrn: string; // For building lineage tree
 }
 
+/**
+ * @deprecated Use OrphanDataset instead. Kept for backwards compatibility.
+ */
 export interface OrphanNamespace {
   namespace: string;
   producer: Producer;
@@ -62,10 +65,46 @@ export interface OrphanNamespace {
   suggestedAlias: string | null;
 }
 
+// ============================================================
+// Dataset Pattern Aliasing Types
+// ============================================================
+
+/**
+ * A likely match for an orphan dataset based on structural matching.
+ */
+export interface DatasetMatch {
+  datasetUrn: string;
+  confidence: number; // 0-1, where 1 = exact match
+  matchReason: "exact_table_name" | "fuzzy_match" | "no_match";
+}
+
+/**
+ * A dataset with test results that can't be matched to a producing job.
+ */
+export interface OrphanDataset {
+  datasetUrn: string;
+  testCount: number;
+  lastSeen: string; // ISO 8601
+  likelyMatch: DatasetMatch | null;
+}
+
+/**
+ * A suggested pattern transformation to resolve orphan datasets.
+ */
+export interface SuggestedPattern {
+  pattern: string; // e.g., "demo_postgres/{name}"
+  canonical: string; // e.g., "postgresql://demo/marts.{name}"
+  resolvesCount: number;
+  orphansResolved: string[]; // URNs of orphan datasets this pattern fixes
+}
+
 export interface CorrelationHealth {
   correlationRate: number; // 0-1
   totalDatasets: number;
-  orphanNamespaces: OrphanNamespace[];
+  producedDatasets: number; // Datasets with producers (outputs only)
+  correlatedDatasets: number; // Produced datasets with test correlation
+  orphanDatasets: OrphanDataset[];
+  suggestedPatterns: SuggestedPattern[];
 }
 
 // API response types

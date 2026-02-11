@@ -3,66 +3,51 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 export function HealthSkeleton() {
   return (
-    <div className="space-y-8">
-      {/* Metrics cards */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <MetricCardSkeleton />
-        <MetricCardSkeleton />
-        <MetricCardSkeleton />
-      </div>
+    <div className="space-y-6">
+      {/* Status header skeleton */}
+      <Skeleton className="h-16 w-full rounded-lg" />
 
-      {/* Orphan namespaces section */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-5 w-5" />
-          <Skeleton className="h-6 w-40" />
-        </div>
-        <Skeleton className="h-4 w-full max-w-lg" />
-
-        {/* Table skeleton */}
-        <div className="rounded-lg border">
-          <div className="p-4 space-y-3">
-            <div className="flex gap-4">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-4 w-20" />
-              <Skeleton className="h-4 w-28" />
-            </div>
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex gap-4">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 w-28" />
-              </div>
-            ))}
+      {/* Suggested fix card skeleton */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-5 w-5" />
+            <Skeleton className="h-5 w-28" />
           </div>
-        </div>
-      </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-4 w-64" />
+          <Skeleton className="h-32 w-full rounded-lg" />
+          <Skeleton className="h-3 w-80" />
+        </CardContent>
+      </Card>
 
-      {/* How to fix section */}
+      {/* Affected datasets skeleton */}
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-5 w-5" />
-          <Skeleton className="h-6 w-28" />
+        <Skeleton className="h-4 w-40" />
+        <div className="space-y-3">
+          <OrphanDatasetCardSkeleton />
+          <OrphanDatasetCardSkeleton />
         </div>
-        <Skeleton className="h-4 w-full max-w-md" />
-        <Skeleton className="h-40 w-full rounded-lg" />
       </div>
     </div>
   );
 }
 
-function MetricCardSkeleton() {
+function OrphanDatasetCardSkeleton() {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <Skeleton className="h-4 w-24" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton className="h-8 w-16" />
-        <Skeleton className="h-3 w-20 mt-2" />
-      </CardContent>
-    </Card>
+    <div className="rounded-lg border bg-card p-4 space-y-3">
+      <div>
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-3 w-32 mt-2" />
+      </div>
+      <div className="flex items-start gap-2">
+        <Skeleton className="h-4 w-4 mt-0.5" />
+        <div className="space-y-1">
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-3 w-40" />
+        </div>
+      </div>
+    </div>
   );
 }

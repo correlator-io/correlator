@@ -6,7 +6,9 @@ import type {
   IncidentDetail,
   IncidentListResponse,
   CorrelationHealth,
-  OrphanNamespace,
+  OrphanDataset,
+  DatasetMatch,
+  SuggestedPattern,
   Producer,
   TestStatus,
   CorrelationStatus,
@@ -136,6 +138,9 @@ export interface ApiIncidentDetailResponse {
   correlation_status: string;
 }
 
+/**
+ * @deprecated Use ApiOrphanDataset instead
+ */
 export interface ApiOrphanNamespace {
   namespace: string;
   producer: string;
@@ -144,10 +149,37 @@ export interface ApiOrphanNamespace {
   suggested_alias: string | null;
 }
 
+// ============================================================
+// Dataset Pattern Aliasing API Types
+// ============================================================
+
+export interface ApiDatasetMatch {
+  dataset_urn: string;
+  confidence: number;
+  match_reason: string;
+}
+
+export interface ApiOrphanDataset {
+  dataset_urn: string;
+  test_count: number;
+  last_seen: string;
+  likely_match: ApiDatasetMatch | null;
+}
+
+export interface ApiSuggestedPattern {
+  pattern: string;
+  canonical: string;
+  resolves_count: number;
+  orphans_resolved: string[];
+}
+
 export interface ApiCorrelationHealthResponse {
   correlation_rate: number;
   total_datasets: number;
-  orphan_namespaces: ApiOrphanNamespace[];
+  produced_datasets: number;
+  correlated_datasets: number;
+  orphan_datasets: ApiOrphanDataset[];
+  suggested_patterns: ApiSuggestedPattern[];
 }
 
 // ============================================================
@@ -212,13 +244,29 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
   };
 }
 
-function transformOrphanNamespace(api: ApiOrphanNamespace): OrphanNamespace {
+function transformDatasetMatch(api: ApiDatasetMatch): DatasetMatch {
   return {
-    namespace: api.namespace,
-    producer: api.producer as Producer,
+    datasetUrn: api.dataset_urn,
+    confidence: api.confidence,
+    matchReason: api.match_reason as DatasetMatch["matchReason"],
+  };
+}
+
+function transformOrphanDataset(api: ApiOrphanDataset): OrphanDataset {
+  return {
+    datasetUrn: api.dataset_urn,
+    testCount: api.test_count,
     lastSeen: api.last_seen,
-    eventCount: api.event_count,
-    suggestedAlias: api.suggested_alias,
+    likelyMatch: api.likely_match ? transformDatasetMatch(api.likely_match) : null,
+  };
+}
+
+function transformSuggestedPattern(api: ApiSuggestedPattern): SuggestedPattern {
+  return {
+    pattern: api.pattern,
+    canonical: api.canonical,
+    resolvesCount: api.resolves_count,
+    orphansResolved: api.orphans_resolved,
   };
 }
 
@@ -228,7 +276,10 @@ function transformCorrelationHealth(
   return {
     correlationRate: api.correlation_rate,
     totalDatasets: api.total_datasets,
-    orphanNamespaces: api.orphan_namespaces.map(transformOrphanNamespace),
+    producedDatasets: api.produced_datasets,
+    correlatedDatasets: api.correlated_datasets,
+    orphanDatasets: api.orphan_datasets.map(transformOrphanDataset),
+    suggestedPatterns: api.suggested_patterns.map(transformSuggestedPattern),
   };
 }
 
@@ -293,6 +344,8 @@ export async function fetchCorrelationHealth(): Promise<CorrelationHealth> {
 export const __testing__ = {
   transformIncident,
   transformIncidentDetail,
-  transformOrphanNamespace,
+  transformDatasetMatch,
+  transformOrphanDataset,
+  transformSuggestedPattern,
   transformCorrelationHealth,
 };

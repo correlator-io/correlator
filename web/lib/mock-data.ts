@@ -226,32 +226,41 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
 };
 
 /**
- * Mock correlation health data showing orphan namespaces
+ * Mock correlation health data showing orphan datasets
  */
 export const MOCK_CORRELATION_HEALTH: CorrelationHealth = {
-  correlationRate: 0.87,
-  totalDatasets: 47,
-  orphanNamespaces: [
+  correlationRate: 0.67,
+  totalDatasets: 6,
+  producedDatasets: 4,
+  correlatedDatasets: 4,
+  orphanDatasets: [
     {
-      namespace: "postgres_prod",
-      producer: "great_expectations",
+      datasetUrn: "demo_postgres/customers",
+      testCount: 5,
       lastSeen: "2026-01-23T10:36:00Z",
-      eventCount: 12,
-      suggestedAlias: "postgresql://prod/public",
+      likelyMatch: {
+        datasetUrn: "postgresql://demo/marts.customers",
+        confidence: 1,
+        matchReason: "exact_table_name",
+      },
     },
     {
-      namespace: "snowflake://analytics",
-      producer: "airflow",
-      lastSeen: "2026-01-22T14:00:00Z",
-      eventCount: 8,
-      suggestedAlias: null,
+      datasetUrn: "demo_postgres/orders",
+      testCount: 5,
+      lastSeen: "2026-01-23T10:30:00Z",
+      likelyMatch: {
+        datasetUrn: "postgresql://demo/marts.orders",
+        confidence: 1,
+        matchReason: "exact_table_name",
+      },
     },
+  ],
+  suggestedPatterns: [
     {
-      namespace: "bigquery:project.dataset",
-      producer: "dbt",
-      lastSeen: "2026-01-23T06:00:00Z",
-      eventCount: 5,
-      suggestedAlias: null,
+      pattern: "demo_postgres/{name}",
+      canonical: "postgresql://demo/marts.{name}",
+      resolvesCount: 2,
+      orphansResolved: ["demo_postgres/customers", "demo_postgres/orders"],
     },
   ],
 };
