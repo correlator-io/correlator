@@ -406,6 +406,8 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 		err := json.Unmarshal(rr.Body.Bytes(), &response)
 		require.NoError(t, err, "Failed to parse response")
 
+		assert.Equal(t, 1, response.OrphanCount, "Should report 1 orphan dataset")
+
 		// Verify orphan incident is NOT in the list (by design)
 		for _, inc := range response.Incidents {
 			assert.NotContains(t, inc.DatasetURN, orphanNamespace,

@@ -105,10 +105,11 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := IncidentListResponse{
-		Incidents: summaries,
-		Total:     result.Total,
-		Limit:     params.limit,
-		Offset:    params.offset,
+		Incidents:   summaries,
+		Total:       result.Total,
+		Limit:       params.limit,
+		Offset:      params.offset,
+		OrphanCount: len(orphanDatasetSet),
 	}
 
 	data, err := json.Marshal(response)

@@ -9,10 +9,11 @@ type (
 	// IncidentListResponse represents the response for GET /api/v1/incidents.
 	// Contains a paginated list of incidents with metadata for pagination.
 	IncidentListResponse struct {
-		Incidents []IncidentSummary `json:"incidents"`
-		Total     int               `json:"total"`
-		Limit     int               `json:"limit"`
-		Offset    int               `json:"offset"`
+		Incidents   []IncidentSummary `json:"incidents"`
+		Total       int               `json:"total"`
+		Limit       int               `json:"limit"`
+		Offset      int               `json:"offset"`
+		OrphanCount int               `json:"orphan_count"` //nolint:tagliatelle
 	}
 
 	// IncidentSummary represents a single incident in the list view.

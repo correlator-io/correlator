@@ -514,6 +514,7 @@ components:
         - total
         - limit
         - offset
+        - orphan_count
       properties:
         incidents:
           type: array
@@ -528,6 +529,9 @@ components:
         offset:
           type: integer
           description: Page offset
+        orphan_count:
+          type: integer
+          description: Number of datasets with test failures but no producer correlation (not shown in incidents list)
 
     IncidentSummary:
       type: object
