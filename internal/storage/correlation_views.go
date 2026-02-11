@@ -515,74 +515,6 @@ type failedTestResult struct {
 	DurationMs sql.NullInt64
 }
 
-// queryFailedTestResults queries all test results with failed/error status.
-func (s *LineageStore) queryFailedTestResults(
-	ctx context.Context,
-	filter *correlation.IncidentFilter,
-) ([]failedTestResult, error) {
-	query := `
-		SELECT
-			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
-			tr.status, tr.message, tr.executed_at, tr.duration_ms
-		FROM test_results tr
-		WHERE tr.status IN ('failed', 'error')
-	`
-
-	var args []any
-
-	paramIndex := 1
-
-	// Apply time filters
-	if filter != nil {
-		if filter.TestExecutedAfter != nil {
-			query += fmt.Sprintf(" AND tr.executed_at > $%d", paramIndex)
-			paramIndex++
-
-			args = append(args, *filter.TestExecutedAfter)
-		}
-
-		if filter.TestExecutedBefore != nil {
-			query += fmt.Sprintf(" AND tr.executed_at < $%d", paramIndex)
-
-			args = append(args, *filter.TestExecutedBefore)
-		}
-	}
-
-	query += " ORDER BY tr.executed_at DESC"
-
-	rows, err := s.conn.QueryContext(ctx, query, args...)
-	if err != nil {
-		s.logger.Error("Failed to query failed test results", slog.Any("error", err))
-
-		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
-	}
-
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var results []failedTestResult
-
-	for rows.Next() {
-		var r failedTestResult
-
-		if err := rows.Scan(
-			&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
-			&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs,
-		); err != nil {
-			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
-		}
-
-		results = append(results, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
-	}
-
-	return results, nil
-}
-
 // producerJobInfo holds information about a job that produces a dataset.
 type producerJobInfo struct {
 	JobRunID         string
@@ -1232,20 +1164,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 func (s *LineageStore) QueryOrphanDatasets(ctx context.Context) ([]correlation.OrphanDataset, error) {
 	start := time.Now()
 
-	// Query produced datasets (needed for orphan detection and matching)
-	producedByTableName, err := s.queryProducedDatasetsByTableName(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build URN set for pattern resolution
-	producedURNSet := make(map[string]bool)
-	for _, urn := range producedByTableName {
-		producedURNSet[urn] = true
-	}
-
-	// Delegate to internal function
-	orphans, err := s.queryOrphanDatasetsWithProduced(ctx, producedByTableName, producedURNSet)
+	orphans, _, err := s.findTrueOrphans(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,8 +1172,7 @@ func (s *LineageStore) QueryOrphanDatasets(ctx context.Context) ([]correlation.O
 	duration := time.Since(start)
 	s.logger.Info("Queried orphan datasets",
 		slog.Duration("duration", duration),
-		slog.Int("orphan_count", len(orphans)),
-		slog.Int("produced_count", len(producedByTableName)))
+		slog.Int("orphan_count", len(orphans)))
 
 	return orphans, nil
 }
@@ -1427,20 +1345,8 @@ func (s *LineageStore) queryProducedDatasetsByTableName(ctx context.Context) (ma
 func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation.Health, error) {
 	start := time.Now()
 
-	// Query produced datasets ONCE (used by both orphan detection and correlation rate)
-	producedByTableName, err := s.queryProducedDatasetsByTableName(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build URN set for pattern resolution
-	producedURNSet := make(map[string]bool)
-	for _, urn := range producedByTableName {
-		producedURNSet[urn] = true
-	}
-
-	// Query orphan datasets (pass pre-queried data to avoid duplicate query)
-	orphans, err := s.queryOrphanDatasetsWithProduced(ctx, producedByTableName, producedURNSet)
+	// Query orphan datasets and "known" producers
+	orphans, knownProducedURNs, err := s.findTrueOrphans(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1473,7 +1379,7 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 	}
 
 	// Calculate correlation rate (pass pre-queried data to avoid duplicate query)
-	correlationRate := s.calculateCorrelationRateWithProduced(ctx, stats, producedURNSet)
+	correlationRate := s.calculateCorrelationRateWithProduced(ctx, stats, knownProducedURNs)
 
 	duration := time.Since(start)
 	s.logger.Info("Queried correlation health",
@@ -1495,11 +1401,30 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 	}, nil
 }
 
-// queryOrphanDatasetsWithProduced is an internal version that accepts pre-queried produced data.
-func (s *LineageStore) queryOrphanDatasetsWithProduced(
+// findTrueOrphans filters down to "real" orphans after pattern resolution.
+func (s *LineageStore) findTrueOrphans(ctx context.Context) ([]correlation.OrphanDataset, map[string]bool, error) {
+	tableNameToProducedURN, err := s.queryProducedDatasetsByTableName(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// these are the "known" producers
+	knownProducedURNs := make(map[string]bool)
+	for _, urn := range tableNameToProducedURN {
+		knownProducedURNs[urn] = true
+	}
+
+	orphans, err := s.findUnresolvedOrphanDatasets(ctx, tableNameToProducedURN, knownProducedURNs)
+
+	return orphans, knownProducedURNs, err
+}
+
+// findUnresolvedOrphanDatasets returns true orphan datasets.
+// It filters out pattern-resolved matches and enriching with likely matches.
+func (s *LineageStore) findUnresolvedOrphanDatasets(
 	ctx context.Context,
-	producedByTableName map[string]string,
-	producedURNSet map[string]bool,
+	tableNameToProducedURN map[string]string,
+	knownProducedURNs map[string]bool,
 ) ([]correlation.OrphanDataset, error) {
 	// Query orphan datasets (datasets with test results but no output edges)
 	orphans, err := s.queryTestedDatasetsWithoutProducer(ctx)
@@ -1518,7 +1443,7 @@ func (s *LineageStore) queryOrphanDatasetsWithProduced(
 		// Check if this orphan resolves to a produced dataset via patterns
 		if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
 			resolved := s.resolver.Resolve(o.DatasetURN)
-			if producedURNSet[resolved] {
+			if knownProducedURNs[resolved] {
 				continue // Resolved via pattern - not an orphan
 			}
 		}
@@ -1526,7 +1451,7 @@ func (s *LineageStore) queryOrphanDatasetsWithProduced(
 		// Try to find likely match by table name
 		orphanTableName := canonicalization.ExtractTableName(o.DatasetURN)
 		if orphanTableName != "" {
-			if producedURN, found := producedByTableName[orphanTableName]; found {
+			if producedURN, found := tableNameToProducedURN[orphanTableName]; found {
 				o.LikelyMatch = &correlation.DatasetMatch{
 					DatasetURN:  producedURN,
 					Confidence:  1.0,
@@ -1542,6 +1467,7 @@ func (s *LineageStore) queryOrphanDatasetsWithProduced(
 }
 
 // calculateCorrelationRateWithProduced calculates rate using pre-queried produced data.
+// Uses dataset-based formula: correlated_tested_datasets / total_tested_datasets.
 func (s *LineageStore) calculateCorrelationRateWithProduced(
 	ctx context.Context,
 	stats *healthStats,
@@ -1549,93 +1475,115 @@ func (s *LineageStore) calculateCorrelationRateWithProduced(
 ) float64 {
 	// Use pattern-resolved rate if patterns are configured
 	if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
-		rate, err := s.calculatePatternResolvedRateWithProduced(ctx, stats.totalIncidents, producedURNSet)
+		rate, err := s.calculatePatternResolvedRateWithProduced(ctx, stats.totalFailedTestedDatasets, producedURNSet)
 		if err != nil {
 			s.logger.Error("Failed to calculate pattern-resolved correlation rate",
 				slog.Any("error", err))
 
-			return s.calculateDatabaseCorrelationRate(stats)
+			return s.calculateCorrelationRate(stats)
 		}
 
 		return rate
 	}
 
-	return s.calculateDatabaseCorrelationRate(stats)
+	return s.calculateCorrelationRate(stats)
 }
 
-// calculateDatabaseCorrelationRate calculates correlation rate from database stats.
-func (s *LineageStore) calculateDatabaseCorrelationRate(stats *healthStats) float64 {
-	if stats.totalIncidents > 0 {
-		return float64(stats.correlatedIncidents) / float64(stats.totalIncidents)
+// calculateCorrelationRate calculates correlation rate from database stats.
+// Formula: correlated_tested_datasets / total_tested_datasets
+// Where both counts are DISTINCT dataset URNs with failed/error test results.
+func (s *LineageStore) calculateCorrelationRate(stats *healthStats) float64 {
+	if stats.totalFailedTestedDatasets > 0 {
+		return float64(stats.correlatedFailedTestedDatasets) / float64(stats.totalFailedTestedDatasets)
 	}
 
-	return 1.0 // No incidents = healthy
+	return 1.0 // No failed tests = healthy
 }
 
 // calculatePatternResolvedRateWithProduced calculates pattern-resolved rate using pre-queried data.
+// Uses dataset-based formula: correlated_tested_datasets / total_tested_datasets
+// Where datasets are counted as DISTINCT URNs, not individual test rows.
 func (s *LineageStore) calculatePatternResolvedRateWithProduced(
 	ctx context.Context,
-	totalIncidents int,
+	totalTestedDatasets int,
 	producedURNSet map[string]bool,
 ) (float64, error) {
-	if totalIncidents == 0 {
+	if totalTestedDatasets == 0 {
 		return 1.0, nil
 	}
 
-	// Get all failed test results
-	failedTests, err := s.queryFailedTestResults(ctx, nil)
+	// Query distinct dataset URNs with failed tests
+	query := `
+		SELECT DISTINCT dataset_urn
+		FROM test_results
+		WHERE status IN ('failed', 'error')
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	if len(failedTests) == 0 {
-		return 1.0, nil
-	}
+	defer func() {
+		_ = rows.Close()
+	}()
 
-	// Count correlated incidents
-	correlated := 0
+	// Count distinct datasets that resolve to produced datasets
+	correlatedCount := 0
 
-	for _, tr := range failedTests {
-		resolved := s.resolver.Resolve(tr.DatasetURN)
+	for rows.Next() {
+		var datasetURN string
+
+		if err := rows.Scan(&datasetURN); err != nil {
+			return 0, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		resolved := s.resolver.Resolve(datasetURN)
 		if producedURNSet[resolved] {
-			correlated++
+			correlatedCount++
 		}
 	}
 
-	return float64(correlated) / float64(len(failedTests)), nil
-}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
 
-// healthStats holds correlation health statistics.
-type healthStats struct {
-	totalIncidents      int
-	correlatedIncidents int
-	totalDatasets       int
-	producedDatasets    int
-	correlatedDatasets  int
+	return float64(correlatedCount) / float64(totalTestedDatasets), nil
 }
 
 // queryHealthStats queries database for health statistics.
+// All metrics use DISTINCT dataset_urn counts for accurate correlation rate calculation.
 func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, error) {
 	query := `
-		WITH all_failed_tests AS (
-			SELECT COUNT(*) AS total_incidents
+		WITH failed_tested_datasets AS (
+			-- Distinct datasets with failed/error tests (denominator for correlation rate)
+			SELECT COUNT(DISTINCT dataset_urn) AS total_count
 			FROM test_results
 			WHERE status IN ('failed', 'error')
 		),
-		correlated_incidents AS (
-			SELECT COUNT(*) AS correlated_count
-			FROM incident_correlation_view
+		correlated_failed_datasets AS (
+			-- Distinct datasets with failed tests AND producer output edges (numerator)
+			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			FROM test_results tr
+			WHERE tr.status IN ('failed', 'error')
+			AND EXISTS (
+				SELECT 1 FROM lineage_edges le
+				WHERE le.dataset_urn = tr.dataset_urn AND le.edge_type = 'output'
+			)
 		),
-		tested_datasets AS (
+		all_tested_datasets AS (
+			-- Distinct datasets with any test results
 			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
 			FROM test_results
 		),
 		produced_datasets AS (
+			-- Distinct datasets with output edges
 			SELECT COUNT(DISTINCT dataset_urn) AS produced_count
 			FROM lineage_edges
 			WHERE edge_type = 'output'
 		),
 		correlated_datasets AS (
+			-- Distinct datasets with both tests (any status) AND output edges
 			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
 			FROM test_results tr
 			WHERE EXISTS (
@@ -1644,18 +1592,19 @@ func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, erro
 			)
 		)
 		SELECT
-			COALESCE(a.total_incidents, 0),
-			COALESCE(c.correlated_count, 0),
-			COALESCE(t.total_datasets, 0),
-			COALESCE(p.produced_count, 0),
+			COALESCE(ftd.total_count, 0),
+			COALESCE(cfd.correlated_count, 0),
+			COALESCE(atd.total_datasets, 0),
+			COALESCE(pd.produced_count, 0),
 			COALESCE(cd.correlated_count, 0)
-		FROM all_failed_tests a, correlated_incidents c, tested_datasets t, produced_datasets p, correlated_datasets cd
+		FROM failed_tested_datasets ftd, correlated_failed_datasets cfd,
+		     all_tested_datasets atd, produced_datasets pd, correlated_datasets cd
 	`
 
 	var stats healthStats
 
 	err := s.conn.QueryRowContext(ctx, query).Scan(
-		&stats.totalIncidents, &stats.correlatedIncidents, &stats.totalDatasets,
+		&stats.totalFailedTestedDatasets, &stats.correlatedFailedTestedDatasets, &stats.totalDatasets,
 		&stats.producedDatasets, &stats.correlatedDatasets,
 	)
 

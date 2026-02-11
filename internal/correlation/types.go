@@ -247,18 +247,21 @@ type (
 	// configuration issues that prevent cross-tool correlation.
 	//
 	// Fields:
-	//   - CorrelationRate: Ratio of correlated incidents to total incidents (0.0-1.0)
-	//   - TotalDatasets: Count of distinct datasets with test results
+	//   - CorrelationRate: Ratio of correlated tested datasets to total tested datasets (0.0-1.0)
+	//   - TotalDatasets: Count of distinct datasets with test results (any status)
+	//   - ProducedDatasets: Count of distinct datasets with producer output edges
+	//   - CorrelatedDatasets: Count of distinct datasets with both tests AND output edges
 	//   - OrphanDatasets: List of datasets requiring pattern configuration
+	//   - SuggestedPatterns: Auto-generated patterns to resolve orphan datasets
 	//
 	// Correlation Rate Calculation:
 	//
-	//	correlation_rate = correlated_incidents / total_incidents
+	//	correlation_rate = correlated_tested_datasets / total_tested_datasets
 	//
 	// Where:
-	//   - correlated_incidents = incidents where dataset has producer output edges
-	//   - total_incidents = all incidents from incident_correlation_view
-	//   - If total_incidents = 0, returns 1.0 (no incidents = healthy)
+	//   - correlated_tested_datasets = distinct datasets with failed tests AND producer output edges
+	//   - total_tested_datasets = distinct datasets with failed/error test results
+	//   - If total_tested_datasets = 0, returns 1.0 (no failed tests = healthy)
 	//
 	// Used by:
 	//   - correlation.Store.QueryCorrelationHealth() - Returns this type
