@@ -102,6 +102,12 @@ type (
 		// test results (any status) AND producer output edges.
 		correlatedDatasets int
 	}
+
+	// correlatedTest holds a test ID and its pattern-resolved dataset URN.
+	correlatedTest struct {
+		TestID      int64
+		ResolvedURN string
+	}
 )
 
 // NewConnection returns a new Database Connection.
