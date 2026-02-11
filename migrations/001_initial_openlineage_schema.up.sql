@@ -458,20 +458,22 @@ COMMENT ON MATERIALIZED VIEW incident_correlation_view IS
     'Correlates test failures to the job runs that produced the failing datasets. Core view for incident analysis.';
 
 -- View 2: Lineage Impact Analysis
+-- Tracks downstream impact FROM a source job: "If this job fails, what datasets are affected?"
 CREATE MATERIALIZED VIEW lineage_impact_analysis AS
 WITH RECURSIVE downstream AS (
-    -- Base case: Direct outputs of all jobs
+    -- Base case: Direct outputs of all jobs (depth 0)
+    -- source_job_run_id = the job we're analyzing impact for (stays constant)
+    -- current_dataset_urn = the dataset at this depth in the downstream chain
     SELECT
-        jr.job_run_id,
-        jr.job_name,
-        jr.job_namespace,
-        jr.current_state AS job_status,
-        le.dataset_urn,
-        d.name AS dataset_name,
-        d.namespace AS dataset_namespace,
+        jr.job_run_id AS source_job_run_id,
+        jr.job_name AS source_job_name,
+        jr.job_namespace AS source_job_namespace,
+        jr.current_state AS source_job_status,
+        le.dataset_urn AS current_dataset_urn,
+        d.name AS current_dataset_name,
+        d.namespace AS current_dataset_namespace,
         0 AS depth,
-        ARRAY[jr.job_run_id::TEXT] AS job_path,
-        ARRAY[le.dataset_urn::TEXT] AS dataset_path
+        ARRAY[le.dataset_urn::TEXT] AS visited_datasets
     FROM job_runs jr
     JOIN lineage_edges le ON jr.job_run_id = le.job_run_id
     JOIN datasets d ON le.dataset_urn = d.dataset_urn
@@ -479,59 +481,58 @@ WITH RECURSIVE downstream AS (
 
     UNION ALL
 
-    -- Recursive case: Find jobs that consume downstream datasets
+    -- Recursive case: Find datasets produced by jobs that consume current dataset
+    -- Keep source_job_run_id constant (we're tracking impact FROM that job)
+    -- Move to the next dataset in the downstream chain
     SELECT
-        jr_next.job_run_id,
-        jr_next.job_name,
-        jr_next.job_namespace,
-        jr_next.current_state AS job_status,
-        le_next_output.dataset_urn,
-        d_next.name AS dataset_name,
-        d_next.namespace AS dataset_namespace,
+        ds.source_job_run_id,
+        ds.source_job_name,
+        ds.source_job_namespace,
+        ds.source_job_status,
+        le_next_output.dataset_urn AS current_dataset_urn,
+        d_next.name AS current_dataset_name,
+        d_next.namespace AS current_dataset_namespace,
         ds.depth + 1,
-        ds.job_path || jr_next.job_run_id::TEXT,
-        ds.dataset_path || le_next_output.dataset_urn::TEXT
+        ds.visited_datasets || le_next_output.dataset_urn::TEXT
     FROM downstream ds
-    JOIN lineage_edges le_next_input ON ds.dataset_urn = le_next_input.dataset_urn
+    -- Find jobs that consume the current dataset
+    JOIN lineage_edges le_next_input ON ds.current_dataset_urn = le_next_input.dataset_urn
         AND le_next_input.edge_type = 'input'
     JOIN job_runs jr_next ON le_next_input.job_run_id = jr_next.job_run_id
+    -- Find what those jobs output (the next downstream datasets)
     JOIN lineage_edges le_next_output ON jr_next.job_run_id = le_next_output.job_run_id
         AND le_next_output.edge_type = 'output'
     JOIN datasets d_next ON le_next_output.dataset_urn = d_next.dataset_urn
-
     WHERE ds.depth < 10
-        AND NOT (jr_next.job_run_id = ANY(ds.job_path))
-        AND NOT (le_next_output.dataset_urn = ANY(ds.dataset_path))
+        -- Prevent cycles: don't revisit datasets we've already seen
+        AND NOT (le_next_output.dataset_urn = ANY(ds.visited_datasets))
 )
--- Use DISTINCT ON to prevent duplicate rows when multiple paths exist to the same
--- (job_run_id, dataset_urn, depth) combination. Keeps the shortest path (min job_path_length).
-SELECT DISTINCT ON (job_run_id, dataset_urn, depth)
-    job_run_id,
-    job_name,
-    job_namespace,
-    job_status,
-    dataset_urn,
-    dataset_name,
-    dataset_namespace,
+-- Deduplicate: same source job may reach same dataset via multiple paths
+-- Keep the shortest path (minimum depth)
+SELECT DISTINCT ON (source_job_run_id, current_dataset_urn)
+    source_job_run_id AS job_run_id,
+    source_job_name AS job_name,
+    source_job_namespace AS job_namespace,
+    source_job_status AS job_status,
+    current_dataset_urn AS dataset_urn,
+    current_dataset_name AS dataset_name,
+    current_dataset_namespace AS dataset_namespace,
     depth,
-    array_length(job_path, 1) AS job_path_length,
-    array_length(dataset_path, 1) AS dataset_path_length
+    array_length(visited_datasets, 1) AS dataset_path_length
 FROM downstream
-ORDER BY job_run_id, dataset_urn, depth, array_length(job_path, 1);
+ORDER BY source_job_run_id, current_dataset_urn, depth;
 
 -- UNIQUE index required for CONCURRENTLY refresh
+-- Now unique on (job_run_id, dataset_urn) since we deduplicate to shortest path
 CREATE UNIQUE INDEX idx_lineage_impact_analysis_pk
-    ON lineage_impact_analysis (job_run_id, dataset_urn, depth);
+    ON lineage_impact_analysis (job_run_id, dataset_urn);
 
 -- Additional indexes
-CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_dataset_urn
-    ON lineage_impact_analysis (dataset_urn);
-
 CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_depth
     ON lineage_impact_analysis (depth, job_run_id);
 
 COMMENT ON MATERIALIZED VIEW lineage_impact_analysis IS
-    'Recursive downstream impact analysis: finds all datasets and jobs affected by a job run failure. Uses DISTINCT ON to deduplicate multiple paths. Max depth: 10 levels.';
+    'Downstream impact analysis: finds all datasets affected by a source job run. Answers "if this job fails, what datasets are impacted?" Uses DISTINCT ON to keep shortest path. Max depth: 10 levels.';
 
 -- View 3: Recent Incidents Summary
 CREATE MATERIALIZED VIEW recent_incidents_summary AS
