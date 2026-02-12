@@ -11,7 +11,6 @@ import {
   formatRelativeTime,
   formatAbsoluteTime,
   extractDatasetName,
-  formatIncidentTitle,
 } from "@/lib/utils";
 import type { Incident } from "@/lib/types";
 
@@ -35,7 +34,6 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
   } = incident;
 
   const datasetName = extractDatasetName(datasetUrn);
-  const incidentTitle = formatIncidentTitle(datasetUrn, testType, testName);
 
   return (
     <TooltipProvider>
@@ -47,38 +45,29 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
           )}
         >
           {/* Header: INC-{id} · Human-readable title */}
-          <CardHeader className="pb-2 pt-4 px-4">
+          <CardHeader className="pb-1 pt-4 px-4">
             <div className="flex items-center gap-2">
               <StatusDot status={testStatus} className="h-2.5 w-2.5 flex-shrink-0" />
               <CardTitle className="text-sm font-medium leading-tight flex-1 min-w-0">
                 <span className="text-muted-foreground">INC-{id}</span>
                 <span className="mx-1.5 text-muted-foreground/50">·</span>
-                <span className="group-hover:text-primary">{incidentTitle}</span>
+                <span className="group-hover:text-primary">{testName}</span>
               </CardTitle>
               <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
             </div>
           </CardHeader>
 
           <CardContent className="px-4 pb-4 pt-0 space-y-3">
-            {/* Test and Dataset info */}
+            {/* Type and Dataset info */}
             <div className="text-sm space-y-1 pl-[18px]">
               <p>
-                <span className="text-muted-foreground">Test:</span>{" "}
-                <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                  {testName}
-                </code>
+                <span className="text-muted-foreground">Type:</span>{" "}
+                <span>{testType}</span>
               </p>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <p className="truncate">
-                    <span className="text-muted-foreground">Dataset:</span>{" "}
-                    <span className="font-medium">{datasetName}</span>
-                  </p>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-mono text-xs">{datasetUrn}</p>
-                </TooltipContent>
-              </Tooltip>
+              <p className="truncate">
+                <span className="text-muted-foreground">Dataset:</span>{" "}
+                <span className="font-medium">{datasetName}</span>
+              </p>
             </div>
 
             {/* Job and metadata row */}

@@ -53,3 +53,8 @@ __pycache__/
 deployments/demo/dbt/.user.yml
 deployments/demo/dbt/logs/
 deployments/demo/dbt/target/
+
+# screenshots
+*.png
+
+.secrets.baseline
