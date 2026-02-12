@@ -593,6 +593,7 @@ components:
         - id
         - test
         - dataset
+        - upstream
         - downstream
         - correlation_status
       properties:
@@ -607,8 +608,14 @@ components:
           $ref: '#/components/schemas/JobDetail'
           nullable: true
           description: Null if uncorrelated
+        upstream:
+          type: array
+          description: Datasets consumed to produce the tested dataset (data provenance)
+          items:
+            $ref: '#/components/schemas/UpstreamDataset'
         downstream:
           type: array
+          description: Datasets affected by this dataset (impact analysis)
           items:
             $ref: '#/components/schemas/DownstreamDataset'
         correlation_status:
@@ -693,6 +700,7 @@ components:
         - name
         - depth
         - parentUrn
+        - producer
       properties:
         urn:
           type: string
@@ -700,10 +708,39 @@ components:
           type: string
         depth:
           type: integer
-          description: Hops from original dataset
+          description: Hops downstream from original dataset
         parentUrn:
           type: string
           description: Parent dataset URN for tree visualization
+        producer:
+          type: string
+          description: Tool that produced this dataset (e.g., "dbt", "airflow")
+
+    UpstreamDataset:
+      type: object
+      description: An upstream dataset in the data lineage tree (data provenance)
+      required:
+        - urn
+        - name
+        - depth
+        - childUrn
+        - producer
+      properties:
+        urn:
+          type: string
+          description: Dataset URN
+        name:
+          type: string
+          description: Human-readable dataset name
+        depth:
+          type: integer
+          description: Hops upstream from the tested dataset (1 = direct input)
+        childUrn:
+          type: string
+          description: Child dataset URN - the dataset this upstream feeds into
+        producer:
+          type: string
+          description: Tool that produced this upstream dataset (e.g., "dbt", "airflow")
 
     # Correlation Health Schemas
     CorrelationHealthResponse:

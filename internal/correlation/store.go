@@ -149,6 +149,46 @@ type Store interface {
 	// not downstream. Use QueryLineageImpact with maxDepth=-1 to get direct outputs.
 	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
 
+	// QueryUpstreamWithChildren queries upstream datasets with child URN relationships.
+	// This enables the frontend to build a lineage tree visualization showing data provenance.
+	//
+	// This is the inverse of QueryDownstreamWithParents:
+	//   - Downstream: "What datasets are affected if this job fails?" (follows consumers)
+	//   - Upstream: "What datasets were consumed to produce this output?" (follows producers)
+	//
+	// The query performs a recursive traversal starting from the job's direct inputs,
+	// following output→input relationships through producing jobs backward.
+	//
+	// Parameters:
+	//   - datasetURN: The root dataset URN (typically the tested dataset from the incident).
+	//     This becomes the childURN for depth=1 results, anchoring the tree.
+	//   - jobRunID: Job run ID that produced the root dataset
+	//   - maxDepth: Maximum recursion depth (typically 3-10)
+	//
+	// Returns:
+	//   - Slice of UpstreamResult with child_urn for tree building
+	//   - Depth=1: Direct inputs to the job, childURN = datasetURN (the root)
+	//   - Depth=2+: Upstream of those inputs, childURN = previous level's dataset
+	//   - Each result includes the producer tool that created that upstream dataset
+	//   - Empty slice if no upstream datasets (job has no inputs)
+	//   - Error if query fails or context is cancelled
+	//
+	// The ChildURN field represents the "feeds into" relationship:
+	// the upstream dataset was consumed to produce the child dataset.
+	//
+	// Example: If job transforms staging.customers → marts.customers (tested):
+	//   - UpstreamResult{URN: "staging.customers", Depth: 1, ChildURN: "marts.customers"}
+	//   - UpstreamResult{URN: "raw_customers", Depth: 2, ChildURN: "staging.customers"}
+	//
+	// Performance:
+	//   - Uses recursive CTE (efficient in PostgreSQL)
+	//   - Joins job_runs table to get producer information
+	//   - Typical query time: 5-30ms depending on graph size
+	//   - maxDepth prevents runaway recursion
+	QueryUpstreamWithChildren(
+		ctx context.Context, datasetURN string, jobRunID string, maxDepth int,
+	) ([]UpstreamResult, error)
+
 	// QueryOrphanDatasets returns datasets that have test results but no corresponding
 	// data producer output edges.
 	//

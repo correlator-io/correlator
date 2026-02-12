@@ -13,12 +13,12 @@ import (
 const defaultMaxDepth = 10
 
 // handleGetIncidentDetails handles GET /api/v1/incidents/{id}.
-// Returns detailed incident information with downstream impact.
+// Returns detailed incident information with upstream and downstream lineage.
 //
 // Path Parameters:
 //   - id: Test result ID (numeric string)
 //
-// Response: IncidentDetailResponse with test, dataset, job, and downstream info.
+// Response: IncidentDetailResponse with test, dataset, job, upstream, and downstream info.
 func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	correlationID := middleware.GetCorrelationID(ctx)
@@ -67,6 +67,20 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 		downstream = nil
 	}
 
+	upstream, err := s.correlationStore.QueryUpstreamWithChildren(
+		ctx, incident.DatasetURN, incident.JobRunID, defaultMaxDepth)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to query upstream",
+			"correlation_id", correlationID,
+			"incident_id", id,
+			"dataset_urn", incident.DatasetURN,
+			"job_run_id", incident.JobRunID,
+			"error", err.Error(),
+		)
+		// Non-fatal: continue with empty upstream
+		upstream = nil
+	}
+
 	orphanDatasets, err := s.correlationStore.QueryOrphanDatasets(ctx)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "Failed to query orphan datasets",
@@ -80,7 +94,7 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 
 	orphanDatasetSet := buildOrphanDatasetSet(orphanDatasets)
 
-	response := mapIncidentToDetail(incident, downstream, orphanDatasetSet)
+	response := mapIncidentToDetail(incident, upstream, downstream, orphanDatasetSet)
 
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -99,10 +113,11 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(data)
 }
 
-// mapIncidentToDetail converts a domain Incident and downstream results to API response.
+// mapIncidentToDetail converts a domain Incident with lineage results to API response.
 // The orphanDatasetSet is used to determine the correlation status.
 func mapIncidentToDetail(
 	inc *correlation.Incident,
+	upstream []correlation.UpstreamResult,
 	downstream []correlation.DownstreamResult,
 	orphanDatasetSet map[string]bool,
 ) IncidentDetailResponse {
@@ -121,6 +136,7 @@ func mapIncidentToDetail(
 			Name:      inc.DatasetName,
 			Namespace: inc.DatasetNS,
 		},
+		Upstream:          mapUpstreamResults(upstream),
 		Downstream:        mapDownstreamResults(downstream),
 		CorrelationStatus: determineCorrelationStatus(inc, orphanDatasetSet),
 	}
@@ -141,6 +157,26 @@ func mapIncidentToDetail(
 	return response
 }
 
+// mapUpstreamResults converts domain UpstreamResult slice to API response slice.
+func mapUpstreamResults(results []correlation.UpstreamResult) []UpstreamDataset {
+	if len(results) == 0 {
+		return []UpstreamDataset{}
+	}
+
+	datasets := make([]UpstreamDataset, 0, len(results))
+	for _, r := range results {
+		datasets = append(datasets, UpstreamDataset{
+			URN:      r.DatasetURN,
+			Name:     r.DatasetName,
+			Depth:    r.Depth,
+			ChildURN: r.ChildURN,
+			Producer: r.Producer,
+		})
+	}
+
+	return datasets
+}
+
 // mapDownstreamResults converts domain DownstreamResult slice to API response slice.
 func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDataset {
 	if len(results) == 0 {
@@ -154,6 +190,7 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 			Name:      r.DatasetName,
 			Depth:     r.Depth,
 			ParentURN: r.ParentURN,
+			Producer:  r.Producer,
 		})
 	}
 

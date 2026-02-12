@@ -329,6 +329,134 @@ func TestQueryLineageImpact(t *testing.T) {
 	assert.Empty(t, impact, "Should return empty slice for non-existent job")
 }
 
+// TestQueryUpstreamWithChildren tests the QueryUpstreamWithChildren function.
+// This is the inverse of downstream - tracing data provenance backward through lineage.
+func TestQueryUpstreamWithChildren(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Setup test data: 3-level lineage chain
+	// job1 -> datasetA -> job2 -> datasetB -> job3 -> datasetC
+	// Upstream from job3/datasetC: datasetB (depth 1), datasetA (depth 2)
+	now := time.Now()
+	jobRunID1 := "airflow:" + uuid.New().String()
+	jobRunID2 := "airflow:" + uuid.New().String()
+	jobRunID3 := "dbt:" + uuid.New().String()
+	datasetA := "urn:postgres:warehouse:public.raw_orders"
+	datasetB := "urn:postgres:warehouse:public.staged_orders"
+	datasetC := "urn:postgres:warehouse:public.fact_orders"
+
+	// Insert job runs (with producer info)
+	_, err := testDB.Connection.ExecContext(ctx, `
+		INSERT INTO job_runs (
+		  job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+		)
+		VALUES
+			($1, $2, 'extract_orders', 'etl', 'COMPLETE', 'COMPLETE', $3, $4, 'airflow'),
+			($5, $6, 'stage_orders', 'etl', 'COMPLETE', 'COMPLETE', $7, $8, 'airflow'),
+			($9, $10, 'transform_orders', 'dbt', 'COMPLETE', 'COMPLETE', $11, $12, 'dbt')
+	`, jobRunID1, uuid.New().String(), now, now.Add(-10*time.Minute),
+		jobRunID2, uuid.New().String(), now, now.Add(-8*time.Minute),
+		jobRunID3, uuid.New().String(), now, now.Add(-5*time.Minute))
+	require.NoError(t, err)
+
+	// Insert datasets
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace)
+		VALUES
+			($1, 'raw_orders', 'public'),
+			($2, 'staged_orders', 'public'),
+			($3, 'fact_orders', 'public')
+	`, datasetA, datasetB, datasetC)
+	require.NoError(t, err)
+
+	// Create lineage chain: job1 -> datasetA -> job2 -> datasetB -> job3 -> datasetC
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		VALUES
+			($1, $2, 'output'),  -- job1 produces datasetA
+			($3, $2, 'input'),   -- job2 consumes datasetA
+			($3, $4, 'output'),  -- job2 produces datasetB
+			($5, $4, 'input'),   -- job3 consumes datasetB
+			($5, $6, 'output')   -- job3 produces datasetC
+	`, jobRunID1, datasetA,
+		jobRunID2, datasetB,
+		jobRunID3, datasetC)
+	require.NoError(t, err)
+
+	// Create LineageStore
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Test 1: Query upstream from job3/datasetC (should get datasetB at depth 1, datasetA at depth 2)
+	upstream, err := store.QueryUpstreamWithChildren(ctx, datasetC, jobRunID3, 10)
+	require.NoError(t, err)
+
+	assert.Len(t, upstream, 2, "Should have 2 upstream datasets")
+
+	// Verify depth 1 (direct input)
+	var depth1Results []correlation.UpstreamResult
+
+	for _, r := range upstream {
+		if r.Depth == 1 {
+			depth1Results = append(depth1Results, r)
+		}
+	}
+
+	require.Len(t, depth1Results, 1, "Should have 1 dataset at depth 1")
+	assert.Equal(t, datasetB, depth1Results[0].DatasetURN, "Depth 1 should be datasetB")
+	assert.Equal(t, datasetC, depth1Results[0].ChildURN, "ChildURN should be root dataset")
+	assert.Equal(t, "airflow", depth1Results[0].Producer, "Producer should be airflow (job2)")
+
+	// Verify depth 2 (upstream of upstream)
+	var depth2Results []correlation.UpstreamResult
+
+	for _, r := range upstream {
+		if r.Depth == 2 {
+			depth2Results = append(depth2Results, r)
+		}
+	}
+
+	require.Len(t, depth2Results, 1, "Should have 1 dataset at depth 2")
+	assert.Equal(t, datasetA, depth2Results[0].DatasetURN, "Depth 2 should be datasetA")
+	assert.Equal(t, datasetB, depth2Results[0].ChildURN, "ChildURN should be datasetB")
+	assert.Equal(t, "airflow", depth2Results[0].Producer, "Producer should be airflow (job1)")
+
+	// Test 2: Query with maxDepth = 1 (should only get datasetB)
+	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetC, jobRunID3, 1)
+	require.NoError(t, err)
+
+	assert.Len(t, upstream, 1, "Should have 1 upstream dataset with maxDepth=1")
+	assert.Equal(t, datasetB, upstream[0].DatasetURN)
+	assert.Equal(t, 1, upstream[0].Depth)
+
+	// Test 3: Query from job1 (no inputs - should return empty)
+	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetA, jobRunID1, 10)
+	require.NoError(t, err)
+
+	assert.Empty(t, upstream, "Job1 has no inputs, upstream should be empty")
+
+	// Test 4: Non-existent job run should return empty slice
+	upstream, err = store.QueryUpstreamWithChildren(ctx, "non-existent-urn", "non-existent-id", 10)
+	require.NoError(t, err)
+
+	assert.Empty(t, upstream, "Should return empty slice for non-existent job")
+}
+
 // TestQueryCorrelationHealth_EmptyState tests correlation health with no data.
 func TestQueryCorrelationHealth_EmptyState(t *testing.T) {
 	if testing.Short() {

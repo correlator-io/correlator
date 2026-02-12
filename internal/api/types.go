@@ -35,12 +35,13 @@ type (
 	}
 
 	// IncidentDetailResponse represents the response for GET /api/v1/incidents/{id}.
-	// Contains full incident information including test details, dataset, job, and downstream impact.
+	// Contains full incident information including test details, dataset, job, and lineage.
 	IncidentDetailResponse struct {
 		ID                string              `json:"id"`
 		Test              TestDetail          `json:"test"`
 		Dataset           DatasetDetail       `json:"dataset"`
 		Job               *JobDetail          `json:"job"` // nil if uncorrelated
+		Upstream          []UpstreamDataset   `json:"upstream"`
 		Downstream        []DownstreamDataset `json:"downstream"`
 		CorrelationStatus string              `json:"correlation_status"` //nolint:tagliatelle
 	}
@@ -81,6 +82,18 @@ type (
 		Name      string `json:"name"`
 		Depth     int    `json:"depth"`
 		ParentURN string `json:"parentUrn"` // Parent dataset URN for tree building
+		Producer  string `json:"producer"`  // Tool that produced this dataset (e.g., "dbt")
+	}
+
+	// UpstreamDataset represents an upstream dataset in the lineage tree.
+	// This is the inverse of DownstreamDataset - showing data provenance.
+	// The ChildURN field enables frontend to build tree visualization.
+	UpstreamDataset struct {
+		URN      string `json:"urn"`
+		Name     string `json:"name"`
+		Depth    int    `json:"depth"`
+		ChildURN string `json:"childUrn"` // Child dataset URN (what this feeds into)
+		Producer string `json:"producer"` // Tool that produced this dataset (e.g., "dbt")
 	}
 
 	// CorrelationHealthResponse represents the response for GET /api/v1/health/correlation.

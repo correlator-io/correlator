@@ -205,6 +205,35 @@ type (
 		DatasetName string
 		Depth       int
 		ParentURN   string
+		Producer    string
+	}
+
+	// UpstreamResult represents an upstream dataset with child relationship.
+	// This type is used for building lineage tree visualizations showing data provenance.
+	//
+	// Upstream traversal answers: "What datasets were consumed to produce this dataset?"
+	// This is the inverse of downstream traversal (DownstreamResult).
+	//
+	// Fields:
+	//   - DatasetURN: Unique resource name of the upstream dataset (input to some job)
+	//   - DatasetName: Human-readable dataset name
+	//   - Depth: Number of hops upstream from the starting job (1 = direct input, 2+ = further back)
+	//   - ChildURN: URN of the dataset that this upstream dataset feeds into
+	//   - Producer: Tool that produced this upstream dataset (e.g., "dbt", "airflow")
+	//
+	// The ChildURN field enables the frontend to build a tree structure from
+	// the flat list of results. It represents the "feeds into" relationship:
+	// this upstream dataset was consumed to produce the child dataset.
+	//
+	// Example lineage: raw_data → staging_data → mart_data
+	//   - UpstreamResult{URN: "staging_data", Depth: 1, ChildURN: "mart_data", Producer: "dbt"}
+	//   - UpstreamResult{URN: "raw_data", Depth: 2, ChildURN: "staging_data", Producer: "dbt"}
+	UpstreamResult struct {
+		DatasetURN  string
+		DatasetName string
+		Depth       int
+		ChildURN    string
+		Producer    string
 	}
 
 	// OrphanNamespace represents a namespace that appears in validation tests

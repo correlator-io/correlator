@@ -1043,9 +1043,11 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				le.dataset_urn,
 				d.name AS dataset_name,
 				0 AS depth,
-				le.dataset_urn AS parent_urn
+				le.dataset_urn AS parent_urn,
+				COALESCE(jr.producer_name, '') AS producer
 			FROM lineage_edges le
 				JOIN datasets d ON le.dataset_urn = d.dataset_urn
+				LEFT JOIN job_runs jr ON le.job_run_id = jr.job_run_id
 			WHERE le.job_run_id = $1
 			  AND le.edge_type = 'output'
 
@@ -1056,7 +1058,8 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				le_out.dataset_urn,
 				d.name,
 				dt.depth + 1,
-				dt.dataset_urn AS parent_urn
+				dt.dataset_urn AS parent_urn,
+				COALESCE(jr.producer_name, '') AS producer
 			FROM downstream_tree dt
 				-- Find jobs that consume this dataset as input
 				JOIN lineage_edges le_in ON dt.dataset_urn = le_in.dataset_urn
@@ -1065,11 +1068,12 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				JOIN lineage_edges le_out ON le_in.job_run_id = le_out.job_run_id
 					AND le_out.edge_type = 'output'
 				JOIN datasets d ON le_out.dataset_urn = d.dataset_urn
+				LEFT JOIN job_runs jr ON le_out.job_run_id = jr.job_run_id
 			WHERE dt.depth < $2
 			  -- Prevent self-loops
 			  AND le_out.dataset_urn != dt.dataset_urn
 		)
-		SELECT DISTINCT dataset_urn, dataset_name, depth, parent_urn
+		SELECT DISTINCT dataset_urn, dataset_name, depth, parent_urn, producer
 		FROM downstream_tree
 		WHERE depth > 0
 		ORDER BY depth, dataset_urn
@@ -1094,7 +1098,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 	for rows.Next() {
 		var r correlation.DownstreamResult
 
-		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ParentURN); err != nil {
+		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ParentURN, &r.Producer); err != nil {
 			s.logger.Error("Failed to scan downstream with parents row",
 				slog.Any("error", err))
 
@@ -1113,6 +1117,124 @@ func (s *LineageStore) QueryDownstreamWithParents(
 
 	s.logger.Info("Queried downstream with parents",
 		slog.Duration("duration", time.Since(start)),
+		slog.String("job_run_id", jobRunID),
+		slog.Int("max_depth", maxDepth),
+		slog.Int("result_count", len(results)))
+
+	return results, nil
+}
+
+// QueryUpstreamWithChildren implements correlation.Store.
+// Queries upstream datasets with child URN relationships for tree visualization.
+//
+// This is the inverse of QueryDownstreamWithParents:
+//   - Downstream: follows output→input→output chain forward (consumers)
+//   - Upstream: follows input→output→input chain backward (producers)
+//
+// Parameters:
+//   - datasetURN: The root dataset URN (childURN for depth=1 results)
+//   - jobRunID: Job run ID that produced the root dataset
+//   - maxDepth: Maximum recursion depth (typically 3-10)
+//
+// Returns:
+//   - Slice of UpstreamResult with child_urn for tree building
+//   - Empty slice if job has no inputs
+//   - Error if query fails or context is cancelled
+//
+// Performance:
+//   - Uses recursive CTE (efficient in PostgreSQL)
+//   - Joins job_runs to get producer information
+//   - Typical query time: 5-30ms depending on graph size
+//   - maxDepth prevents runaway recursion
+func (s *LineageStore) QueryUpstreamWithChildren(
+	ctx context.Context,
+	datasetURN string,
+	jobRunID string,
+	maxDepth int,
+) ([]correlation.UpstreamResult, error) {
+	start := time.Now()
+
+	query := `
+		WITH RECURSIVE upstream_tree AS (
+			SELECT
+				le.dataset_urn,
+				d.name AS dataset_name,
+				1 AS depth,
+				$1::text AS child_urn,
+				COALESCE(jr.producer_name, '') AS producer
+			FROM lineage_edges le
+				JOIN datasets d ON le.dataset_urn = d.dataset_urn
+				LEFT JOIN lineage_edges le_prod ON le.dataset_urn = le_prod.dataset_urn
+					AND le_prod.edge_type = 'output'
+				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
+			WHERE le.job_run_id = $2
+			  AND le.edge_type = 'input'
+
+			UNION ALL
+
+			SELECT
+				le_in.dataset_urn,
+				d.name,
+				ut.depth + 1,
+				ut.dataset_urn AS child_urn,
+				COALESCE(jr.producer_name, '') AS producer
+			FROM upstream_tree ut
+				JOIN lineage_edges le_out ON ut.dataset_urn = le_out.dataset_urn
+					AND le_out.edge_type = 'output'
+				JOIN lineage_edges le_in ON le_out.job_run_id = le_in.job_run_id
+					AND le_in.edge_type = 'input'
+				JOIN datasets d ON le_in.dataset_urn = d.dataset_urn
+				LEFT JOIN lineage_edges le_prod ON le_in.dataset_urn = le_prod.dataset_urn
+					AND le_prod.edge_type = 'output'
+				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
+			WHERE ut.depth < $3
+			  AND le_in.dataset_urn != ut.dataset_urn
+		)
+		SELECT DISTINCT dataset_urn, dataset_name, depth, child_urn, producer
+		FROM upstream_tree
+		ORDER BY depth, dataset_urn
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, datasetURN, jobRunID, maxDepth)
+	if err != nil {
+		s.logger.Error("Failed to query upstream with children",
+			slog.Any("error", err),
+			slog.String("dataset_urn", datasetURN),
+			slog.String("job_run_id", jobRunID),
+			slog.Int("max_depth", maxDepth))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var results []correlation.UpstreamResult
+
+	for rows.Next() {
+		var r correlation.UpstreamResult
+
+		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ChildURN, &r.Producer); err != nil {
+			s.logger.Error("Failed to scan upstream with children row",
+				slog.Any("error", err))
+
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		s.logger.Error("Error iterating upstream with children rows",
+			slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried upstream with children",
+		slog.Duration("duration", time.Since(start)),
+		slog.String("dataset_urn", datasetURN),
 		slog.String("job_run_id", jobRunID),
 		slog.Int("max_depth", maxDepth),
 		slog.Int("result_count", len(results)))
