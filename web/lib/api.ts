@@ -12,6 +12,8 @@ import type {
   Producer,
   TestStatus,
   CorrelationStatus,
+  UpstreamDataset,
+  DownstreamDataset,
 } from "./types";
 
 // API base URL - defaults to localhost:8080 for development
@@ -128,6 +130,15 @@ interface ApiDownstreamDataset {
   name: string;
   depth: number;
   parentUrn: string; // Already camelCase in API
+  producer?: string;
+}
+
+interface ApiUpstreamDataset {
+  urn: string;
+  name: string;
+  depth: number;
+  childUrn: string; // Already camelCase in API
+  producer?: string;
 }
 
 export interface ApiIncidentDetailResponse {
@@ -135,6 +146,7 @@ export interface ApiIncidentDetailResponse {
   test: ApiTestDetail;
   dataset: ApiDatasetDetail;
   job: ApiJobDetail | null;
+  upstream: ApiUpstreamDataset[];
   downstream: ApiDownstreamDataset[];
   correlation_status: string;
 }
@@ -255,11 +267,19 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
           completedAt: api.job.completed_at,
         }
       : null,
-    downstream: api.downstream.map((d) => ({
+    upstream: (api.upstream || []).map((u): UpstreamDataset => ({
+      urn: u.urn,
+      name: u.name,
+      depth: u.depth,
+      childUrn: u.childUrn, // Already camelCase
+      producer: u.producer ? normalizeProducer(u.producer) : undefined,
+    })),
+    downstream: (api.downstream || []).map((d): DownstreamDataset => ({
       urn: d.urn,
       name: d.name,
       depth: d.depth,
       parentUrn: d.parentUrn, // Already camelCase
+      producer: d.producer ? normalizeProducer(d.producer) : undefined,
     })),
     correlationStatus: api.correlation_status as CorrelationStatus,
   };

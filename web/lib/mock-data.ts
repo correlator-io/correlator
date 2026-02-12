@@ -141,6 +141,14 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       startedAt: "2026-01-23T10:25:00Z",
       completedAt: "2026-01-23T10:28:45Z",
     },
+    upstream: [
+      {
+        urn: "postgresql://prod/public.stg_orders",
+        name: "stg_orders",
+        depth: 1,
+        childUrn: "postgresql://prod/public.orders",
+      },
+    ],
     downstream: [
       {
         urn: "postgresql://prod/public.fct_daily_revenue",
@@ -174,6 +182,7 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       namespace: "postgres_prod.public",
     },
     job: null, // No correlation - orphan namespace!
+    upstream: [],
     downstream: [],
     correlationStatus: "orphan",
   },
@@ -201,6 +210,7 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       startedAt: "2026-01-23T09:10:00Z",
       completedAt: "2026-01-23T09:14:30Z",
     },
+    upstream: [],
     downstream: [
       {
         urn: "postgresql://prod/public.fct_customer_ltv",

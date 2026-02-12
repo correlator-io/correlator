@@ -1,14 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, GitBranch } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "./status-badge";
+import { useState } from "react";
+import { IncidentHeader } from "./incident-header";
+import { ImpactSummary } from "./impact-summary";
 import { TestDetailsCard } from "./test-details-card";
 import { JobDetailsCard } from "./job-details-card";
 import { CorrelationWarning } from "./correlation-warning";
-import { NoDownstreamImpact } from "./no-downstream-impact";
-import { DownstreamGraph } from "@/components/lineage/downstream-graph";
+import { LineageGraph } from "@/components/lineage/lineage-graph";
 import type { IncidentDetail as IncidentDetailType } from "@/lib/types";
 
 interface IncidentDetailProps {
@@ -16,35 +14,51 @@ interface IncidentDetailProps {
 }
 
 export function IncidentDetail({ incident }: IncidentDetailProps) {
-  const { test, dataset, job, downstream, correlationStatus } = incident;
-  const hasDownstream = downstream.length > 0;
+  const { id, test, dataset, job, upstream, downstream, correlationStatus } = incident;
   const isOrphan = correlationStatus === "orphan";
+  const hasLineage = upstream.length > 0 || downstream.length > 0;
 
-  // Count unique datasets (same dataset may appear at multiple depths via different paths)
-  const uniqueDownstreamCount = new Set(downstream.map((d) => d.urn)).size;
+  // Lineage graph expanded state - collapsed by default on mobile
+  const [isLineageExpanded, setIsLineageExpanded] = useState(() => {
+    // Default to expanded on desktop, collapsed on mobile
+    if (typeof window !== "undefined") {
+      return window.innerWidth >= 768;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-6">
-      {/* Back navigation and header */}
-      <div className="flex items-start gap-4">
-        <Button variant="ghost" size="icon" asChild className="flex-shrink-0 mt-0.5">
-          <Link href="/incidents">
-            <ArrowLeft className="h-5 w-5" />
-            <span className="sr-only">Back to incidents</span>
-          </Link>
-        </Button>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h2 className="text-lg font-semibold truncate">{test.name}</h2>
-            <StatusBadge status={test.status} />
-          </div>
-          <p className="text-sm text-muted-foreground mt-1 font-mono truncate">
-            {dataset.urn}
-          </p>
-        </div>
-      </div>
+      {/* Header with back button, title, and copy link */}
+      <IncidentHeader
+        id={id}
+        testName={test.name}
+        testStatus={test.status}
+        executedAt={test.executedAt}
+      />
 
-      {/* Main content grid */}
+      {/* Impact Summary - always visible first */}
+      <ImpactSummary
+        upstream={upstream}
+        downstream={downstream}
+        isOrphan={isOrphan}
+        isExpanded={isLineageExpanded}
+        onToggleExpand={() => setIsLineageExpanded(!isLineageExpanded)}
+      />
+
+      {/* Lineage Graph - collapsible, shown right after impact summary */}
+      {isLineageExpanded && hasLineage && !isOrphan && (
+        <div className="rounded-lg border">
+          <LineageGraph
+            currentDataset={dataset}
+            upstream={upstream}
+            downstream={downstream}
+            className="h-[400px] w-full"
+          />
+        </div>
+      )}
+
+      {/* Main content grid: Test details and Job details */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Left column: Test details */}
         <TestDetailsCard test={test} dataset={dataset} />
@@ -57,40 +71,6 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
             namespace={dataset.namespace}
             producer={incident.test.type.includes("expect") ? "Great Expectations" : "Unknown"}
           />
-        )}
-      </div>
-
-      {/* Downstream impact section */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <GitBranch className="h-5 w-5 text-muted-foreground" />
-          <h3 className="font-medium">Downstream Impact</h3>
-          {hasDownstream && (
-            <span className="text-sm text-muted-foreground">
-              ({uniqueDownstreamCount} dataset{uniqueDownstreamCount !== 1 ? "s" : ""})
-            </span>
-          )}
-        </div>
-
-        {isOrphan ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center text-muted-foreground">
-            <p className="text-sm">
-              Cannot determine downstream impact without correlation.
-            </p>
-            <p className="text-xs mt-1">
-              Fix the namespace mismatch to see affected datasets.
-            </p>
-          </div>
-        ) : hasDownstream ? (
-          <div className="rounded-lg border">
-            <DownstreamGraph
-              sourceDataset={dataset}
-              downstream={downstream}
-              className="h-[350px] w-full"
-            />
-          </div>
-        ) : (
-          <NoDownstreamImpact datasetName={dataset.name} />
         )}
       </div>
     </div>

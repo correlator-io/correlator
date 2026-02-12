@@ -43,6 +43,7 @@ export interface IncidentDetail {
     startedAt: string; // ISO 8601
     completedAt: string; // ISO 8601
   } | null;
+  upstream: UpstreamDataset[];
   downstream: DownstreamDataset[];
   correlationStatus: CorrelationStatus;
 }
@@ -52,6 +53,15 @@ export interface DownstreamDataset {
   name: string;
   depth: number;
   parentUrn: string; // For building lineage tree
+  producer?: Producer;
+}
+
+export interface UpstreamDataset {
+  urn: string;
+  name: string;
+  depth: number;
+  childUrn: string; // What this dataset feeds into
+  producer?: Producer;
 }
 
 /**

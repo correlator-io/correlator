@@ -142,14 +142,9 @@ export function extractColumnFromTestName(testName: string): string | null {
 }
 
 /**
- * Format an incident title for display.
+ * Format an incident title for display (full version with test type).
  *
- * Format: "{table}.{column} {test_type} failure" or "{table} {test_type} failure"
- *
- * Examples:
- * - "customers.customer_id uniqueness failure"
- * - "stg_orders uniqueness failure"
- * - "orders not_null failure"
+ * @deprecated Use formatIncidentId instead for the simpler INC-{id} · {test_name} format.
  */
 export function formatIncidentTitle(
   datasetUrn: string,
@@ -166,4 +161,17 @@ export function formatIncidentTitle(
   }
 
   return `${tableName} ${testTypeDisplay} failure`;
+}
+
+/**
+ * Format incident ID with test name for display.
+ *
+ * Format: "INC-{id} · {testName}"
+ *
+ * Examples:
+ * - "INC-50 · unique(customer_id)"
+ * - "INC-51 · not_null(email)"
+ */
+export function formatIncidentId(id: string, testName: string): string {
+  return `INC-${id} · ${testName}`;
 }
