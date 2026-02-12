@@ -95,6 +95,7 @@ interface ApiIncidentListResponse {
   total: number;
   limit: number;
   offset: number;
+  orphan_count?: number; // Optional for backward compatibility
 }
 
 interface ApiTestDetail {
@@ -190,6 +191,26 @@ export interface ApiCorrelationHealthResponse {
 // Current `as` casts assume the API contract is correct. If the backend returns
 // unexpected enum values (e.g., a new status), TypeScript won't catch it at runtime.
 
+/**
+ * Normalize producer field from API format to frontend format.
+ * API returns "correlator-dbt", "correlator-airflow", etc.
+ * Frontend expects "dbt", "airflow", "great_expectations", "unknown".
+ */
+function normalizeProducer(apiProducer: string): Producer {
+  // Strip "correlator-" prefix if present
+  const normalized = apiProducer.replace(/^correlator-/, "");
+
+  // Map to known producer types
+  const producerMap: Record<string, Producer> = {
+    dbt: "dbt",
+    airflow: "airflow",
+    great_expectations: "great_expectations",
+    ge: "great_expectations", // alias
+  };
+
+  return producerMap[normalized] ?? "unknown";
+}
+
 function transformIncident(api: ApiIncidentSummary): Incident {
   return {
     id: api.id,
@@ -198,7 +219,7 @@ function transformIncident(api: ApiIncidentSummary): Incident {
     testStatus: api.test_status as TestStatus,
     datasetUrn: api.dataset_urn,
     datasetName: api.dataset_name,
-    producer: api.producer as Producer,
+    producer: normalizeProducer(api.producer),
     jobName: api.job_name,
     jobRunId: api.job_run_id,
     downstreamCount: api.downstream_count,
@@ -228,7 +249,7 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
           name: api.job.name,
           namespace: api.job.namespace,
           runId: api.job.run_id,
-          producer: api.job.producer as Producer,
+          producer: normalizeProducer(api.job.producer),
           status: api.job.status,
           startedAt: api.job.started_at,
           completedAt: api.job.completed_at,
@@ -318,6 +339,7 @@ export async function fetchIncidents(
     total: response.total,
     limit: response.limit,
     offset: response.offset,
+    orphanCount: response.orphan_count ?? 0,
   };
 }
 

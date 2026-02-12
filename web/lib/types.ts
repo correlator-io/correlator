@@ -113,6 +113,7 @@ export interface IncidentListResponse {
   total: number;
   limit: number;
   offset: number;
+  orphanCount: number; // Datasets with test failures but no producer correlation
 }
 
 export type IncidentDetailResponse = IncidentDetail;

@@ -68,3 +68,102 @@ export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - 1) + "…";
 }
+
+// ============================================================
+// Incident Formatting Utilities
+// ============================================================
+
+/**
+ * Extract a human-readable dataset name from a URN.
+ *
+ * Examples:
+ * - "postgresql://demo/marts.customers" → "marts.customers"
+ * - "postgresql://demo/staging.stg_orders" → "staging.stg_orders"
+ * - "demo_postgres/orders" → "orders"
+ * - "orders" → "orders"
+ */
+export function extractDatasetName(datasetUrn: string): string {
+  // Try to match schema.table pattern after a slash
+  const schemaTableMatch = datasetUrn.match(/\/([^/]+\.[^/]+)$/);
+  if (schemaTableMatch) {
+    return schemaTableMatch[1];
+  }
+
+  // Try to get last segment after slash
+  const parts = datasetUrn.split("/").filter(Boolean);
+  if (parts.length > 0) {
+    return parts[parts.length - 1];
+  }
+
+  // Fallback to original
+  return datasetUrn;
+}
+
+/**
+ * Extract the table name (without schema) from a dataset name.
+ *
+ * Examples:
+ * - "marts.customers" → "customers"
+ * - "staging.stg_orders" → "stg_orders"
+ * - "orders" → "orders"
+ */
+export function extractTableName(datasetName: string): string {
+  const parts = datasetName.split(".");
+  return parts[parts.length - 1];
+}
+
+/**
+ * Map test type to human-readable display name.
+ */
+export function mapTestType(testType: string): string {
+  const typeMap: Record<string, string> = {
+    unique: "uniqueness",
+    not_null: "not_null",
+    accepted_values: "accepted_values",
+    relationships: "relationships",
+    freshness: "freshness",
+    dataQualityAssertion: "data quality",
+  };
+
+  return typeMap[testType] || "test";
+}
+
+/**
+ * Extract column name from test name if available.
+ *
+ * Examples:
+ * - "unique(customer_id)" → "customer_id"
+ * - "not_null(email)" → "email"
+ * - "row_count_check" → null
+ */
+export function extractColumnFromTestName(testName: string): string | null {
+  const match = testName.match(/\(([^)]+)\)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Format an incident title for display.
+ *
+ * Format: "{table}.{column} {test_type} failure" or "{table} {test_type} failure"
+ *
+ * Examples:
+ * - "customers.customer_id uniqueness failure"
+ * - "stg_orders uniqueness failure"
+ * - "orders not_null failure"
+ */
+export function formatIncidentTitle(
+  datasetUrn: string,
+  testType: string,
+  testName: string
+): string {
+  const datasetName = extractDatasetName(datasetUrn);
+  const tableName = extractTableName(datasetName);
+  const columnName = extractColumnFromTestName(testName);
+  const testTypeDisplay = mapTestType(testType);
+
+  if (columnName) {
+    return `${tableName}.${columnName} ${testTypeDisplay} failure`;
+  }
+
+  return `${tableName} ${testTypeDisplay} failure`;
+}
