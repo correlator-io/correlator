@@ -50,18 +50,34 @@ export function LineageGraph({
   downstream,
   className,
 }: LineageGraphProps) {
-  // Build nodes and edges for vertical layout
+  // Build nodes and edges for horizontal layout (left-to-right)
   const { nodes, edges } = useMemo(() => {
     const initialNodes: Node[] = [];
     const initialEdges: Edge[] = [];
 
-    // Node spacing for vertical layout
-    const nodeSpacingX = 200;
-    const nodeSpacingY = 120;
+    // Node spacing for horizontal layout
+    const nodeSpacingX = 250;
+    const nodeSpacingY = 100;
 
-    // Dedupe upstream and downstream by URN
-    const uniqueUpstream = [...new Map(upstream.map((u) => [u.urn, u])).values()];
-    const uniqueDownstream = [...new Map(downstream.map((d) => [d.urn, d])).values()];
+    // Dedupe upstream and downstream by URN, keeping the entry with MINIMUM depth
+    // This ensures nodes are positioned at their closest distance to the current dataset
+    const upstreamMap = new Map<string, UpstreamDataset>();
+    upstream.forEach((u) => {
+      const existing = upstreamMap.get(u.urn);
+      if (!existing || u.depth < existing.depth) {
+        upstreamMap.set(u.urn, u);
+      }
+    });
+    const uniqueUpstream = [...upstreamMap.values()];
+
+    const downstreamMap = new Map<string, DownstreamDataset>();
+    downstream.forEach((d) => {
+      const existing = downstreamMap.get(d.urn);
+      if (!existing || d.depth < existing.depth) {
+        downstreamMap.set(d.urn, d);
+      }
+    });
+    const uniqueDownstream = [...downstreamMap.values()];
 
     // Group upstream by depth (for positioning)
     const upstreamByDepth = new Map<number, UpstreamDataset[]>();
@@ -82,15 +98,15 @@ export function LineageGraph({
     // Calculate max depth for upstream positioning
     const maxUpstreamDepth = Math.max(0, ...uniqueUpstream.map((u) => u.depth));
 
-    // Position upstream nodes (above current)
-    // Higher depth = further up
+    // Position upstream nodes (to the left of current)
+    // Higher depth = further left
     upstreamByDepth.forEach((datasets, depth) => {
-      const yPos = -(maxUpstreamDepth - depth + 1) * nodeSpacingY;
+      const xPos = -(maxUpstreamDepth - depth + 1) * nodeSpacingX;
       datasets.forEach((ds, index) => {
-        const xOffset = (index - (datasets.length - 1) / 2) * nodeSpacingX;
+        const yOffset = (index - (datasets.length - 1) / 2) * nodeSpacingY;
         initialNodes.push({
           id: ds.urn,
-          position: { x: xOffset, y: yPos },
+          position: { x: xPos, y: yOffset },
           data: {
             label: ds.name,
             direction: "upstream" as const,
@@ -112,14 +128,14 @@ export function LineageGraph({
       type: "dataset",
     });
 
-    // Position downstream nodes (below current)
+    // Position downstream nodes (to the right of current)
     downstreamByDepth.forEach((datasets, depth) => {
-      const yPos = depth * nodeSpacingY;
+      const xPos = depth * nodeSpacingX;
       datasets.forEach((ds, index) => {
-        const xOffset = (index - (datasets.length - 1) / 2) * nodeSpacingX;
+        const yOffset = (index - (datasets.length - 1) / 2) * nodeSpacingY;
         initialNodes.push({
           id: ds.urn,
-          position: { x: xOffset, y: yPos },
+          position: { x: xPos, y: yOffset },
           data: {
             label: ds.name,
             direction: "downstream" as const,
@@ -140,8 +156,8 @@ export function LineageGraph({
           id: edgeId,
           source: u.urn,
           target: u.childUrn,
-          sourceHandle: "bottom",
-          targetHandle: "top",
+          sourceHandle: "right",
+          targetHandle: "left",
         });
       }
     });
@@ -152,13 +168,40 @@ export function LineageGraph({
       const edgeId = `${d.parentUrn}-${d.urn}`;
       // Avoid duplicate edges
       if (!initialEdges.some((e) => e.id === edgeId)) {
-        initialEdges.push({
-          id: edgeId,
-          source: d.parentUrn,
-          target: d.urn,
-          sourceHandle: "bottom",
-          targetHandle: "top",
-        });
+        // Check if source and target are both downstream nodes at the same depth
+        // If so, use top/bottom handles for a cleaner vertical connection
+        const sourceNode = downstreamMap.get(d.parentUrn);
+        const targetNode = downstreamMap.get(d.urn);
+
+        // Only use same-level logic if BOTH nodes are found in downstream map
+        // (not the current/affected node which isn't in the map)
+        const bothAreDownstream = sourceNode !== undefined && targetNode !== undefined;
+        const sameLevelEdge = bothAreDownstream && sourceNode.depth === targetNode.depth;
+
+        if (sameLevelEdge) {
+          // Determine vertical position to choose top vs bottom handle
+          const depthGroup = downstreamByDepth.get(sourceNode.depth) || [];
+          const sourceIndex = depthGroup.findIndex(ds => ds.urn === d.parentUrn);
+          const targetIndex = depthGroup.findIndex(ds => ds.urn === d.urn);
+          const sourceAboveTarget = sourceIndex < targetIndex;
+
+          initialEdges.push({
+            id: edgeId,
+            source: d.parentUrn,
+            target: d.urn,
+            sourceHandle: sourceAboveTarget ? "bottom-source" : "top-source",
+            targetHandle: sourceAboveTarget ? "top-target" : "bottom-target",
+          });
+        } else {
+          // Different depths - use left/right handles
+          initialEdges.push({
+            id: edgeId,
+            source: d.parentUrn,
+            target: d.urn,
+            sourceHandle: "right",
+            targetHandle: "left",
+          });
+        }
       }
     });
 

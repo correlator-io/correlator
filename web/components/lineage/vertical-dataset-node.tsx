@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
-import { Database, AlertCircle, ArrowDown, ArrowUp } from "lucide-react";
+import { Database, AlertCircle, ArrowLeft, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface VerticalDatasetNodeProps {
@@ -32,11 +32,24 @@ export const VerticalDatasetNode = memo(function VerticalDatasetNode({
           : "border-border hover:border-muted-foreground/50"
       )}
     >
-      {/* Top handle for incoming connections */}
+      {/* Left handle for incoming connections (cross-depth) */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left"
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
+      {/* Top handles for same-depth connections */}
       <Handle
         type="target"
         position={Position.Top}
-        id="top"
+        id="top-target"
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top-source"
         className="!bg-muted-foreground !w-2 !h-2"
       />
 
@@ -44,9 +57,9 @@ export const VerticalDatasetNode = memo(function VerticalDatasetNode({
         {isCurrent ? (
           <AlertCircle className="h-4 w-4 text-status-failed flex-shrink-0" />
         ) : isUpstream ? (
-          <ArrowUp className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <ArrowLeft className="h-4 w-4 text-muted-foreground flex-shrink-0" />
         ) : isDownstream ? (
-          <ArrowDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
         ) : (
           <Database className="h-4 w-4 text-muted-foreground flex-shrink-0" />
         )}
@@ -68,18 +81,31 @@ export const VerticalDatasetNode = memo(function VerticalDatasetNode({
               {isUpstream ? (
                 depth === 1 ? "Direct source" : `${depth} hops upstream`
               ) : (
-                depth === 1 ? "Direct consumer" : `${depth} hops downstream`
+                depth === 1 ? "Direct" : `${depth} hops`
               )}
             </p>
           )}
         </div>
       </div>
 
-      {/* Bottom handle for outgoing connections */}
+      {/* Right handle for outgoing connections (cross-depth) */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="right"
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
+      {/* Bottom handles for same-depth connections */}
       <Handle
         type="source"
         position={Position.Bottom}
-        id="bottom"
+        id="bottom-source"
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="bottom-target"
         className="!bg-muted-foreground !w-2 !h-2"
       />
     </div>

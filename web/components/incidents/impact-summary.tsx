@@ -19,9 +19,25 @@ export function ImpactSummary({
   isExpanded,
   onToggleExpand,
 }: ImpactSummaryProps) {
-  // Count unique datasets (same dataset may appear at multiple depths)
-  const uniqueDownstream = [...new Map(downstream.map((d) => [d.urn, d])).values()];
-  const uniqueUpstream = [...new Map(upstream.map((u) => [u.urn, u])).values()];
+  // Dedupe by URN, keeping the entry with MINIMUM depth
+  // This ensures datasets are classified by their closest relationship
+  const downstreamMap = new Map<string, DownstreamDataset>();
+  downstream.forEach((d) => {
+    const existing = downstreamMap.get(d.urn);
+    if (!existing || d.depth < existing.depth) {
+      downstreamMap.set(d.urn, d);
+    }
+  });
+  const uniqueDownstream = [...downstreamMap.values()];
+
+  const upstreamMap = new Map<string, UpstreamDataset>();
+  upstream.forEach((u) => {
+    const existing = upstreamMap.get(u.urn);
+    if (!existing || u.depth < existing.depth) {
+      upstreamMap.set(u.urn, u);
+    }
+  });
+  const uniqueUpstream = [...upstreamMap.values()];
 
   const downstreamCount = uniqueDownstream.length;
   const upstreamCount = uniqueUpstream.length;
