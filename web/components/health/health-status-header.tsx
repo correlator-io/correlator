@@ -79,7 +79,9 @@ export function HealthStatusHeader({
         <span className={cn("font-medium", config.textClass)}>{statusMessage}</span>
       </div>
       <div className="text-sm text-muted-foreground">
-        {percentage}% correlated · {correlatedDatasets} of {totalDatasets} datasets
+        {correlationRate >= 1
+          ? `${percentage}% correlated · ${correlatedDatasets} datasets`
+          : `${percentage}% correlated · ${correlatedDatasets} of ${totalDatasets} datasets`}
       </div>
     </div>
   );
