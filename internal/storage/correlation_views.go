@@ -871,7 +871,11 @@ func (s *LineageStore) QueryRecentIncidents(
 }
 
 // QueryIncidentByID implements correlation.Store.
-// Queries a single incident by test_result_id from the incident_correlation_view.
+// Queries a single incident by test_result_id.
+//
+// When a pattern resolver is configured (via WithAliasResolver), this method
+// applies pattern-based URN resolution to correlate test failures across
+// different URN formats. Without a resolver, only exact URN matches are found.
 //
 // Parameters:
 //   - testResultID: Test result ID (primary key)
@@ -880,6 +884,20 @@ func (s *LineageStore) QueryRecentIncidents(
 //   - Pointer to Incident (nil if not found, no error)
 //   - Error if query fails or context is cancelled
 func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64) (*correlation.Incident, error) {
+	if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
+		return s.queryIncidentByIDWithPatternResolution(ctx, testResultID)
+	}
+
+	// Fall back to view-based query (exact match only)
+	return s.queryIncidentByIDFromView(ctx, testResultID)
+}
+
+// queryIncidentByIDFromView queries a single incident from the incident_correlation_view.
+// This is the original implementation, used when no pattern resolver is configured.
+func (s *LineageStore) queryIncidentByIDFromView(
+	ctx context.Context,
+	testResultID int64,
+) (*correlation.Incident, error) {
 	start := time.Now()
 
 	query := `
@@ -911,23 +929,124 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.logger.Info("Incident not found",
+			s.logger.Info("Incident not found in view",
 				slog.Duration("duration", time.Since(start)),
 				slog.Int64("id", testResultID))
 
 			return nil, nil //nolint:nilnil // Not found returns nil incident, not an error
 		}
 
-		s.logger.Error("Failed to query incident by ID",
+		s.logger.Error("Failed to query incident by ID from view",
 			slog.Any("error", err),
 			slog.Int64("id", testResultID))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	s.logger.Info("Queried incident by ID",
+	s.logger.Info("Queried incident by ID from view",
 		slog.Duration("duration", time.Since(start)),
 		slog.Int64("id", testResultID))
+
+	return &r, nil
+}
+
+// queryIncidentByIDWithPatternResolution queries a single incident with pattern-based URN resolution.
+// This enables correlation across different URN formats (e.g., GE → dbt).
+//
+// Algorithm:
+//  1. Get test result by ID
+//  2. Check if status is failed/error (only incidents are correlatable)
+//  3. Apply pattern resolution to dataset URN
+//  4. Look up producer job using resolved URN
+//  5. Assemble incident with test data + producer data
+func (s *LineageStore) queryIncidentByIDWithPatternResolution(
+	ctx context.Context,
+	testResultID int64,
+) (*correlation.Incident, error) {
+	start := time.Now()
+
+	testResult, err := s.getTestResultByID(ctx, testResultID)
+	if err != nil {
+		return nil, err
+	}
+
+	if testResult == nil {
+		s.logger.Info("Test result not found",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID))
+
+		return nil, nil //nolint:nilnil // Not found returns nil incident, not an error
+	}
+
+	if testResult.Status != statusFailed && testResult.Status != "error" {
+		s.logger.Info("Test result is not failed/error, not an incident",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID),
+			slog.String("status", testResult.Status))
+
+		return nil, nil //nolint:nilnil // Not an incident
+	}
+
+	resolvedURN := s.resolver.Resolve(testResult.DatasetURN)
+
+	producersByURN, err := s.getProducerJobsByDatasetURN(ctx, []string{resolvedURN})
+	if err != nil {
+		return nil, err
+	}
+
+	producer, found := producersByURN[resolvedURN]
+	if !found {
+		s.logger.Info("No producer found for resolved URN",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID),
+			slog.String("original_urn", testResult.DatasetURN),
+			slog.String("resolved_urn", resolvedURN))
+
+		return nil, nil //nolint:nilnil // No producer = not correlatable
+	}
+
+	incident := s.assembleIncident(*testResult, resolvedURN, producer)
+
+	s.logger.Info("Queried incident by ID with pattern resolution",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int64("id", testResultID),
+		slog.String("original_urn", testResult.DatasetURN),
+		slog.String("resolved_urn", resolvedURN),
+		slog.String("producer", producer.ProducerName))
+
+	return &incident, nil
+}
+
+// getTestResultByID queries a single test result by ID.
+// Returns nil if not found (not an error).
+func (s *LineageStore) getTestResultByID(ctx context.Context, testResultID int64) (*failedTestResult, error) {
+	query := `
+		SELECT
+			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
+			tr.status, tr.message, tr.executed_at, tr.duration_ms
+		FROM test_results tr
+		WHERE tr.id = $1
+	`
+
+	row := s.conn.QueryRowContext(ctx, query, testResultID)
+
+	var r failedTestResult
+
+	err := row.Scan(
+		&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
+		&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil //nolint:nilnil // Not found returns nil, not an error
+		}
+
+		s.logger.Error("Failed to query test result by ID",
+			slog.Any("error", err),
+			slog.Int64("id", testResultID))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
 
 	return &r, nil
 }
