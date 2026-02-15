@@ -95,13 +95,10 @@ export function LineageGraph({
       downstreamByDepth.set(d.depth, list);
     });
 
-    // Calculate max depth for upstream positioning
-    const maxUpstreamDepth = Math.max(0, ...uniqueUpstream.map((u) => u.depth));
-
     // Position upstream nodes (to the left of current)
-    // Higher depth = further left
+    // Higher depth = further left (depth 1 closest to current, depth 2 further away)
     upstreamByDepth.forEach((datasets, depth) => {
-      const xPos = -(maxUpstreamDepth - depth + 1) * nodeSpacingX;
+      const xPos = -depth * nodeSpacingX;
       datasets.forEach((ds, index) => {
         const yOffset = (index - (datasets.length - 1) / 2) * nodeSpacingY;
         initialNodes.push({
