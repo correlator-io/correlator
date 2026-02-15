@@ -635,6 +635,7 @@ components:
         - message
         - executed_at
         - duration_ms
+        - producer
       properties:
         name:
           type: string
@@ -650,6 +651,9 @@ components:
         duration_ms:
           type: integer
           format: int64
+        producer:
+          type: string
+          description: Tool that ran this test (e.g., "correlator-ge", "correlator-dbt")
 
     DatasetDetail:
       type: object

@@ -54,6 +54,7 @@ type (
 		Message    string    `json:"message"`
 		ExecutedAt time.Time `json:"executed_at"` //nolint:tagliatelle
 		DurationMs int64     `json:"duration_ms"` //nolint:tagliatelle
+		Producer   string    `json:"producer"`
 	}
 
 	// DatasetDetail contains dataset information for incident detail view.

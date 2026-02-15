@@ -72,6 +72,7 @@ type (
 		TestMessage      string
 		TestExecutedAt   time.Time
 		TestDurationMs   int64
+		TestProducerName string
 		DatasetURN       string
 		DatasetName      string
 		DatasetNS        string

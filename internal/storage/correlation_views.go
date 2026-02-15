@@ -406,7 +406,7 @@ func (s *LineageStore) getTestResultsByIDs(
 	query := `
 		SELECT
 			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
-			tr.status, tr.message, tr.executed_at, tr.duration_ms
+			tr.status, tr.message, tr.executed_at, tr.duration_ms, tr.producer_name
 		FROM test_results tr
 		WHERE tr.id = ANY($1)
 		ORDER BY tr.executed_at DESC
@@ -428,7 +428,7 @@ func (s *LineageStore) getTestResultsByIDs(
 
 		if err := rows.Scan(
 			&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
-			&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs,
+			&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs, &r.ProducerName,
 		); err != nil {
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
@@ -451,13 +451,14 @@ func (s *LineageStore) assembleIncident(
 ) correlation.Incident {
 	incident := correlation.Incident{
 		// Test result fields
-		TestResultID:   testResult.ID,
-		TestName:       testResult.TestName,
-		TestType:       testResult.TestType,
-		TestStatus:     testResult.Status,
-		TestMessage:    testResult.Message.String,
-		TestExecutedAt: testResult.ExecutedAt,
-		TestDurationMs: testResult.DurationMs.Int64,
+		TestResultID:     testResult.ID,
+		TestName:         testResult.TestName,
+		TestType:         testResult.TestType,
+		TestStatus:       testResult.Status,
+		TestMessage:      testResult.Message.String,
+		TestExecutedAt:   testResult.ExecutedAt,
+		TestDurationMs:   testResult.DurationMs.Int64,
+		TestProducerName: testResult.ProducerName,
 		// Dataset fields (use canonical/resolved URN)
 		DatasetURN:  resolvedURN,
 		DatasetName: producer.DatasetName,
@@ -491,15 +492,16 @@ func (s *LineageStore) assembleIncident(
 
 // failedTestResult holds a failed/error test result for pattern resolution.
 type failedTestResult struct {
-	ID         int64
-	TestName   string
-	TestType   string
-	DatasetURN string
-	JobRunID   string
-	Status     string
-	Message    sql.NullString
-	ExecutedAt time.Time
-	DurationMs sql.NullInt64
+	ID           int64
+	TestName     string
+	TestType     string
+	DatasetURN   string
+	JobRunID     string
+	Status       string
+	Message      sql.NullString
+	ExecutedAt   time.Time
+	DurationMs   sql.NullInt64
+	ProducerName string
 }
 
 // producerJobInfo holds information about a job that produces a dataset.
@@ -1023,7 +1025,7 @@ func (s *LineageStore) getTestResultByID(ctx context.Context, testResultID int64
 	query := `
 		SELECT
 			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
-			tr.status, tr.message, tr.executed_at, tr.duration_ms
+			tr.status, tr.message, tr.executed_at, tr.duration_ms, tr.producer_name
 		FROM test_results tr
 		WHERE tr.id = $1
 	`
@@ -1034,7 +1036,7 @@ func (s *LineageStore) getTestResultByID(ctx context.Context, testResultID int64
 
 	err := row.Scan(
 		&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
-		&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs,
+		&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs, &r.ProducerName,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

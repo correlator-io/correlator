@@ -130,6 +130,7 @@ func mapIncidentToDetail(
 			Message:    inc.TestMessage,
 			ExecutedAt: inc.TestExecutedAt,
 			DurationMs: inc.TestDurationMs,
+			Producer:   inc.TestProducerName,
 		},
 		Dataset: DatasetDetail{
 			URN:       inc.DatasetURN,

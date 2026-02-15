@@ -126,6 +126,7 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
         "Found 847 null values in customer_id column. Expected 0 null values.\n\nFailing rows sample:\n- order_id: 12847, customer_id: NULL, created_at: 2026-01-23 09:15:00\n- order_id: 12848, customer_id: NULL, created_at: 2026-01-23 09:15:01\n- order_id: 12849, customer_id: NULL, created_at: 2026-01-23 09:15:02",
       executedAt: "2026-01-23T10:30:00Z",
       durationMs: 1247,
+      producer: "dbt",
     },
     dataset: {
       urn: "postgresql://prod/public.orders",
@@ -175,6 +176,7 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
         'Expectation failed: expect_column_values_to_not_be_null\nColumn: customer_id\nUnexpected null count: 847\nTotal rows: 15234\nFailure rate: 5.56%',
       executedAt: "2026-01-23T10:35:00Z",
       durationMs: 2341,
+      producer: "great_expectations",
     },
     dataset: {
       urn: "postgres_prod.public.orders",
@@ -195,6 +197,7 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       message: "All 8,432 values are unique.",
       executedAt: "2026-01-23T09:15:00Z",
       durationMs: 456,
+      producer: "dbt",
     },
     dataset: {
       urn: "postgresql://prod/public.customers",

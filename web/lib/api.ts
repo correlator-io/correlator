@@ -107,6 +107,7 @@ interface ApiTestDetail {
   message: string;
   executed_at: string;
   duration_ms: number;
+  producer: string;
 }
 
 interface ApiDatasetDetail {
@@ -250,6 +251,7 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
       message: api.test.message,
       executedAt: api.test.executed_at,
       durationMs: api.test.duration_ms,
+      producer: normalizeProducer(api.test.producer),
     },
     dataset: {
       urn: api.dataset.urn,

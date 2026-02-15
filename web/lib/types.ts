@@ -28,6 +28,7 @@ export interface IncidentDetail {
     message: string;
     executedAt: string; // ISO 8601
     durationMs: number;
+    producer: Producer;
   };
   dataset: {
     urn: string;

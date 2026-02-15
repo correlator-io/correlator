@@ -1,9 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "./status-badge";
+import { ProducerIcon } from "@/components/icons/producer-icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime, formatDuration } from "@/lib/utils";
 import { Clock, Timer, FileText } from "lucide-react";
-import type { TestStatus } from "@/lib/types";
+import type { TestStatus, Producer } from "@/lib/types";
 
 interface TestDetailsCardProps {
   test: {
@@ -13,6 +14,7 @@ interface TestDetailsCardProps {
     message: string;
     executedAt: string;
     durationMs: number;
+    producer: Producer;
   };
   dataset: {
     urn: string;
@@ -35,6 +37,11 @@ export function TestDetailsCard({ test, dataset }: TestDetailsCardProps) {
         <div className="space-y-1">
           <p className="text-sm font-medium">{test.name}</p>
           <p className="text-xs text-muted-foreground">Type: {test.type}</p>
+        </div>
+
+        {/* Producer */}
+        <div className="flex items-center gap-2">
+          <ProducerIcon producer={test.producer} showLabel />
         </div>
 
         {/* Dataset */}

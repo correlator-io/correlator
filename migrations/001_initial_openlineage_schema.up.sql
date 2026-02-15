@@ -248,6 +248,9 @@ CREATE TABLE test_results (
     executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
     duration_ms INTEGER,
 
+    producer_name VARCHAR(100) NOT NULL DEFAULT 'unknown',
+    producer_version VARCHAR(50),
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

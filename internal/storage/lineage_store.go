@@ -1294,13 +1294,15 @@ func (s *LineageStore) extractDataQualityAssertions(
 
 			// Store the test result
 			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
-				TestName:   testName,
-				TestType:   "dataQualityAssertion",
-				DatasetURN: input.URN(),
-				JobRunID:   jobRunID,
-				Status:     status,
-				Metadata:   metadata,
-				ExecutedAt: eventTime,
+				TestName:        testName,
+				TestType:        "dataQualityAssertion",
+				DatasetURN:      input.URN(),
+				JobRunID:        jobRunID,
+				Status:          status,
+				Metadata:        metadata,
+				ExecutedAt:      eventTime,
+				ProducerName:    extractProducerName(event.Producer),
+				ProducerVersion: extractProducerVersion(event.Producer),
 			}); err != nil {
 				s.logger.Warn("failed to store test result from facet",
 					slog.String("job_run_id", jobRunID),
@@ -1341,8 +1343,10 @@ func (s *LineageStore) storeTestResult(
 			message,
 			metadata,
 			executed_at,
-			duration_ms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			duration_ms,
+			producer_name,
+			producer_version
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (test_name, dataset_urn, executed_at)
 		DO UPDATE SET
 			test_type = EXCLUDED.test_type,
@@ -1351,6 +1355,8 @@ func (s *LineageStore) storeTestResult(
 			message = EXCLUDED.message,
 			metadata = EXCLUDED.metadata,
 			duration_ms = EXCLUDED.duration_ms,
+			producer_name = EXCLUDED.producer_name,
+			producer_version = EXCLUDED.producer_version,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
@@ -1366,6 +1372,8 @@ func (s *LineageStore) storeTestResult(
 		metadataJSON,
 		testResult.ExecutedAt,
 		testResult.DurationMs,
+		testResult.ProducerName,
+		sql.NullString{String: testResult.ProducerVersion, Valid: testResult.ProducerVersion != ""},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert test result: %w", err)
