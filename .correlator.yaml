@@ -1,16 +1,22 @@
-# Correlator Namespace Alias Configuration
+# Correlator Dataset Pattern Configuration
 # =========================================
-# This file maps tool-specific namespaces to canonical namespaces for cross-tool correlation.
+# This file maps tool-specific dataset URNs to canonical URNs for cross-tool correlation.
 #
-# See .correlator.yaml.example for documentation and examples.
+# Pattern syntax:
+#   - {variable} captures any characters except "/"
+#   - {variable*} captures any characters including "/" (for paths)
+#   - Literal characters match exactly
+#   - First matching pattern wins (order matters)
 #
 # Workflow:
 #   1. Run your data tools (dbt, Airflow, GE) to ingest events
-#   2. Check the Health page for orphan namespaces
-#   3. Add aliases below to map orphans to canonical namespaces
+#   2. Check the Health page for orphan datasets
+#   3. Add patterns below to map orphans to canonical URNs
 #   4. Restart Correlator - correlation improves immediately
 
-namespace_aliases:
-  # Add your aliases here, for example:
-  # postgres_prod: "postgresql://prod-db:5432/mydb"
-  # airflow://prod: "postgresql://prod-db:5432/mydb"
+dataset_patterns:
+  # Great Expectations → dbt dataset mapping
+  # GE emits: demo_postgres/customers, demo_postgres/orders
+  # dbt emits: postgresql://demo/marts.customers, postgresql://demo/marts.orders
+  - pattern: "demo_postgres/{name}"
+    canonical: "postgresql://demo/marts.{name}"

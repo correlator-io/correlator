@@ -1,24 +1,3 @@
-# Correlator Demo Configuration
-# Namespace aliasing for cross-tool correlation
-
-# Format: alias -> canonical
-# Multiple aliases can map to the same canonical namespace
-namespace_aliases:
-  # PostgreSQL dataset variations -> canonical PostgreSQL
-  # (These are DATASET namespaces, not job namespaces)
-  "postgres://demo-postgres:5432/demo": "postgresql://demo-postgres:5432/demo"
-  "postgresql://localhost:5433/demo": "postgresql://demo-postgres:5432/demo"
-  "postgres://localhost:5433/demo": "postgresql://demo-postgres:5432/demo"
-
-  # dbt job namespace variations -> canonical dbt
-  # (dbt-correlator emits job namespace as dbt://...)
-  "dbt://demo-postgres": "dbt://demo"
-
-  # GE job namespace variations -> canonical GE
-  # (ge-correlator emits job namespace as great_expectations://...)
-  "gx://demo": "ge://demo"
-  "great_expectations://default": "ge://demo"
-
-  # Airflow job namespace variations -> canonical Airflow
-  "airflow://demo-airflow": "airflow://demo"
-  "airflow://localhost:8082": "airflow://demo"
+dataset_patterns:
+  - pattern: "demo_postgres/{name}"
+    canonical: "postgresql://demo/marts.{name}"
