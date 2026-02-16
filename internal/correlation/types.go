@@ -60,6 +60,10 @@ type (
 	//   - OpenLineageRunID: OpenLineage client-generated UUID for the run
 	//   - JobEventType: OpenLineage event type (e.g., "COMPLETE", "FAIL")
 	//   - LineageCreatedAt: When the lineage edge was created
+	//   - ParentJobRunID: Canonical parent job run ID (empty if no parent)
+	//   - ParentJobName: Parent job name (e.g., "jaffle_shop.build")
+	//   - ParentJobStatus: Parent job status (e.g., "COMPLETE", "FAIL")
+	//   - ParentJobCompletedAt: Parent job completion timestamp (nil if no parent or still running)
 	//
 	// Used by:
 	//   - correlation.Store.QueryIncidents() - Returns this type
@@ -89,6 +93,11 @@ type (
 		OpenLineageRunID string
 		JobEventType     string
 		LineageCreatedAt time.Time
+		// Parent job fields (from OpenLineage ParentRunFacet)
+		ParentJobRunID       string     // Canonical parent job run ID (empty if no parent)
+		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
+		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
+		ParentJobCompletedAt *time.Time // Parent job completion timestamp
 	}
 
 	// RecentIncidentSummary represents a single row from the recent_incidents_summary materialized view.

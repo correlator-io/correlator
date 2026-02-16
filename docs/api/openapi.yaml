@@ -696,6 +696,40 @@ components:
           type: string
           format: date-time
           nullable: true
+        parent:
+          $ref: '#/components/schemas/ParentJob'
+          description: |
+            Parent job information from OpenLineage ParentRunFacet.
+            Present when job has a parent. Fields may be empty if parent
+            job hasn't been ingested yet (out-of-order event arrival).
+
+    ParentJob:
+      type: object
+      description: Parent job information from OpenLineage ParentRunFacet
+      required:
+        - name
+        - run_id
+        - status
+      properties:
+        name:
+          type: string
+          description: Parent job name
+          example: "jaffle_shop.build"
+        run_id:
+          type: string
+          description: Parent job run ID (canonical format)
+          example: "dbt:019c628f-d07e-7000-8000-000000000000"
+        status:
+          type: string
+          description: Parent job status
+          enum: [START, RUNNING, COMPLETE, FAIL, ABORT, OTHER]
+          example: "COMPLETE"
+        completed_at:
+          type: string
+          format: date-time
+          description: Parent job completion timestamp
+          example: "2026-02-15T18:30:00Z"
+          nullable: true
 
     DownstreamDataset:
       type: object

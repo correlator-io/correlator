@@ -80,6 +80,10 @@ CREATE TABLE job_runs (
     started_at TIMESTAMP WITH TIME ZONE NOT NULL,
     completed_at TIMESTAMP WITH TIME ZONE,
 
+    -- Parent job reference for job hierarchy (OpenLineage ParentRunFacet)
+    -- No FK constraint: parent may arrive after child (out-of-order events)
+    parent_job_run_id VARCHAR(255),
+
     -- Job execution state (OpenLineage compliant)
     current_state VARCHAR(50) NOT NULL CHECK (current_state IN ('START', 'RUNNING', 'COMPLETE', 'FAIL', 'ABORT', 'OTHER')),
     
@@ -101,6 +105,7 @@ CREATE TABLE job_runs (
 -- Indexes for job_runs
 CREATE INDEX idx_job_runs_run_id ON job_runs(run_id);
 CREATE INDEX idx_job_runs_temporal ON job_runs(started_at DESC, current_state);
+CREATE INDEX idx_job_runs_parent ON job_runs (parent_job_run_id) WHERE parent_job_run_id IS NOT NULL;
 
 -- Comments
 COMMENT ON TABLE job_runs IS 'OpenLineage RunEvent storage with canonical ID strategy and state machine tracking';
@@ -111,6 +116,7 @@ COMMENT ON COLUMN job_runs.event_time IS 'OpenLineage eventTime - when the event
 COMMENT ON COLUMN job_runs.state_history IS 'Array of state transitions with timestamps for out-of-order event handling';
 COMMENT ON COLUMN job_runs.current_state IS 'Current run state - OpenLineage compliant';
 COMMENT ON COLUMN job_runs.metadata IS 'OpenLineage RunEvent facets and producer-specific metadata as JSONB';
+COMMENT ON COLUMN job_runs.parent_job_run_id IS 'Parent job run ID from OpenLineage ParentRunFacet - enables job hierarchy correlation';
 
 -- =====================================================
 -- 2. JOB ID MAPPINGS - ID canonicalization
@@ -404,40 +410,47 @@ COMMENT ON TABLE api_key_audit_log IS 'Audit trail for API key operations - secu
 CREATE MATERIALIZED VIEW incident_correlation_view AS
 SELECT
     -- Test result identification
-    tr.id AS test_result_id,
+    tr.id                   AS test_result_id,
     tr.test_name,
     tr.test_type,
-    tr.status AS test_status,
-    tr.message AS test_message,
-    tr.executed_at AS test_executed_at,
-    tr.duration_ms AS test_duration_ms,
+    tr.status               AS test_status,
+    tr.message              AS test_message,
+    tr.executed_at          AS test_executed_at,
+    tr.duration_ms          AS test_duration_ms,
 
     -- Dataset information
     tr.dataset_urn,
-    d.name AS dataset_name,
-    d.namespace AS dataset_namespace,
+    d.name                  AS dataset_name,
+    d.namespace             AS dataset_namespace,
 
     -- Correlated job run (producer of the dataset)
     jr.job_run_id,
-    jr.run_id AS openlineage_run_id,
+    jr.run_id               AS openlineage_run_id,
     jr.job_name,
     jr.job_namespace,
-    jr.current_state AS job_status,
-    jr.event_type AS job_event_type,
-    jr.started_at AS job_started_at,
-    jr.completed_at AS job_completed_at,
+    jr.current_state        AS job_status,
+    jr.event_type           AS job_event_type,
+    jr.started_at           AS job_started_at,
+    jr.completed_at         AS job_completed_at,
     jr.producer_name,
     jr.producer_version,
 
+    -- Parent job information (from OpenLineage ParentRunFacet)
+    jr.parent_job_run_id,
+    parent_jr.job_name      AS parent_job_name,
+    parent_jr.current_state AS parent_job_status,
+    parent_jr.completed_at  AS parent_job_completed_at,
+
     -- Lineage relationship
-    le.id AS lineage_edge_id,
-    le.edge_type AS lineage_edge_type,
-    le.created_at AS lineage_created_at
+    le.id                   AS lineage_edge_id,
+    le.edge_type            AS lineage_edge_type,
+    le.created_at           AS lineage_created_at
 
 FROM test_results tr
     JOIN datasets d ON tr.dataset_urn = d.dataset_urn
     JOIN lineage_edges le ON d.dataset_urn = le.dataset_urn AND le.edge_type = 'output'
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
+    LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
 
 WHERE tr.status IN ('failed', 'error')
 

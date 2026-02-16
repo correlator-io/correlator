@@ -16,6 +16,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/correlator-io/correlator/internal/aliasing"
+	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
@@ -515,6 +516,53 @@ func extractProducerVersion(producerURL string) string {
 	return ""
 }
 
+// extractParentJobRunID extracts parent job run ID from OpenLineage ParentRunFacet.
+//
+// ParentRunFacet structure (from run.facets.parent):
+//
+//	{
+//	  "job": {"namespace": "dbt://demo", "name": "jaffle_shop.build"},
+//	  "run": {"runId": "019c628f-d07e-7000-8000-000000000000"}
+//	}
+//
+// Uses canonicalization.GenerateJobRunID to construct parent ID in same format
+// as child job_run_id, enabling JOIN queries.
+//
+// Returns empty string if ParentRunFacet is not present or malformed.
+func extractParentJobRunID(runFacets map[string]interface{}) string {
+	if runFacets == nil {
+		return ""
+	}
+
+	parent, ok := runFacets["parent"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	// Extract parent job namespace
+	job, ok := parent["job"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	namespace, _ := job["namespace"].(string)
+
+	// Extract parent run ID
+	run, ok := parent["run"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	runID, _ := run["runId"].(string)
+
+	if namespace == "" || runID == "" {
+		return ""
+	}
+
+	// Use same canonicalization as child job_run_id
+	return canonicalization.GenerateJobRunID(namespace, runID)
+}
+
 // checkIdempotency checks if an event with the given idempotency key already exists.
 // Returns (true, nil) if duplicate found, (false, nil) if not duplicate, (false, error) on query error.
 func (s *LineageStore) checkIdempotency(ctx context.Context, idempotencyKey string) (bool, error) {
@@ -742,6 +790,9 @@ func (s *LineageStore) executeJobRunUpsert(
 		completedAt = event.EventTime // Set completed_at only for terminal states
 	}
 
+	// Extract parent job run ID from ParentRunFacet
+	parentJobRunID := extractParentJobRunID(event.Run.Facets)
+
 	query := `
 		INSERT INTO job_runs (
 			job_run_id,
@@ -757,9 +808,10 @@ func (s *LineageStore) executeJobRunUpsert(
 			producer_version,
 			started_at,
 			completed_at,
+			parent_job_run_id,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 		ON CONFLICT (job_run_id) DO UPDATE
 		SET
 			current_state = CASE
@@ -782,8 +834,15 @@ func (s *LineageStore) executeJobRunUpsert(
 					THEN EXCLUDED.completed_at
 				ELSE job_runs.completed_at
 			END,
+			parent_job_run_id = COALESCE(EXCLUDED.parent_job_run_id, job_runs.parent_job_run_id),
 			updated_at = NOW()
 	`
+
+	// Convert parentJobRunID to sql.NullString for proper NULL handling
+	var parentJobRunIDParam sql.NullString
+	if parentJobRunID != "" {
+		parentJobRunIDParam = sql.NullString{String: parentJobRunID, Valid: true}
+	}
 
 	_, err := tx.ExecContext(
 		ctx,
@@ -801,6 +860,7 @@ func (s *LineageStore) executeJobRunUpsert(
 		extractProducerVersion(event.Producer),
 		event.EventTime,
 		completedAt,
+		parentJobRunIDParam,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)

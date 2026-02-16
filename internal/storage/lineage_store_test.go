@@ -2,6 +2,8 @@ package storage
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestExtractProducerName verifies producer name extraction from OpenLineage URLs.
@@ -151,6 +153,137 @@ func TestExtractProducerVersion(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("extractProducerVersion(%q) = %q, want %q", tt.producerURL, got, tt.want)
 			}
+		})
+	}
+}
+
+// TestExtractParentJobRunID verifies parent job run ID extraction from OpenLineage ParentRunFacet.
+func TestExtractParentJobRunID(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name     string
+		facets   map[string]interface{}
+		expected string
+	}{
+		{
+			name: "valid parent facet with dbt namespace",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "dbt://demo",
+						"name":      "jaffle_shop.build",
+					},
+					"run": map[string]interface{}{
+						"runId": "019c628f-d07e-7000-8000-000000000000",
+					},
+				},
+			},
+			expected: "dbt:019c628f-d07e-7000-8000-000000000000",
+		},
+		{
+			name: "valid parent facet with airflow namespace",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "airflow://production",
+						"name":      "etl_dag",
+					},
+					"run": map[string]interface{}{
+						"runId": "manual__2026-02-15T12:00:00",
+					},
+				},
+			},
+			expected: "airflow:manual__2026-02-15T12:00:00",
+		},
+		{
+			name:     "no parent facet",
+			facets:   map[string]interface{}{},
+			expected: "",
+		},
+		{
+			name:     "nil facets",
+			facets:   nil,
+			expected: "",
+		},
+		{
+			name: "malformed parent - missing job",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"run": map[string]interface{}{
+						"runId": "abc",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "malformed parent - missing run",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "dbt://demo",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "malformed parent - empty namespace",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "",
+						"name":      "jaffle_shop.build",
+					},
+					"run": map[string]interface{}{
+						"runId": "019c628f-d07e-7000-8000-000000000000",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "malformed parent - empty runId",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "dbt://demo",
+						"name":      "jaffle_shop.build",
+					},
+					"run": map[string]interface{}{
+						"runId": "",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "parent facet with other facets",
+			facets: map[string]interface{}{
+				"errorMessage": map[string]interface{}{
+					"message": "some error",
+				},
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "dbt://demo",
+						"name":      "jaffle_shop.build",
+					},
+					"run": map[string]interface{}{
+						"runId": "019c628f-d07e-7000-8000-000000000000",
+					},
+				},
+			},
+			expected: "dbt:019c628f-d07e-7000-8000-000000000000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractParentJobRunID(tt.facets)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

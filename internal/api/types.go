@@ -74,6 +74,17 @@ type (
 		Status      string     `json:"status"`
 		StartedAt   time.Time  `json:"started_at"`             //nolint:tagliatelle
 		CompletedAt *time.Time `json:"completed_at,omitempty"` //nolint:tagliatelle
+		Parent      *ParentJob `json:"parent,omitempty"`       // Parent job info when available
+	}
+
+	// ParentJob contains parent job information for incident detail view.
+	// This enables the UI to show the actual completion status when child jobs
+	// are stuck in RUNNING state (common with dbt model-level lineage).
+	ParentJob struct {
+		Name        string     `json:"name"`
+		RunID       string     `json:"run_id"` //nolint:tagliatelle
+		Status      string     `json:"status"`
+		CompletedAt *time.Time `json:"completed_at,omitempty"` //nolint:tagliatelle
 	}
 
 	// DownstreamDataset represents a downstream dataset in the lineage tree.

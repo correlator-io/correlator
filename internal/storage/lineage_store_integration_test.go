@@ -70,6 +70,7 @@ func TestLineageStoreIntegration(t *testing.T) {
 	t.Run("StoreEvent_DatasetFacetMerge", testStoreEventDatasetFacetMerge(ctx, store, conn))
 	t.Run("StoreEvent_InputValidation", testStoreEventInputValidation(ctx, store))
 	t.Run("StoreEvent_ContextCancellation", testStoreEventContextCancellation(ctx, store))
+	t.Run("StoreEvent_ParentRunFacet", testStoreEventParentRunFacet(ctx, store, conn))
 
 	// Close the main store BEFORE running cleanup tests to prevent goroutine interference
 	// Cleanup tests create their own stores with custom intervals
@@ -1859,4 +1860,85 @@ func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection
 	}
 
 	return result
+}
+
+// testStoreEventParentRunFacet verifies that ParentRunFacet is correctly extracted and stored.
+// Expected: parent_job_run_id column is populated with canonical ID from ParentRunFacet.
+func testStoreEventParentRunFacet(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) {
+		parentRunUUID := uuid.New().String()
+		childRunUUID := uuid.New().String()
+		parentJobNamespace := "dbt://demo"
+		parentJobName := "jaffle_shop.build"
+
+		// Build ParentRunFacet as it comes from OpenLineage JSON
+		parentRunFacet := map[string]interface{}{
+			"job": map[string]interface{}{
+				"namespace": parentJobNamespace,
+				"name":      parentJobName,
+			},
+			"run": map[string]interface{}{
+				"runId": parentRunUUID,
+			},
+		}
+
+		// Create event with ParentRunFacet
+		event := &ingestion.RunEvent{
+			EventTime: time.Now(),
+			EventType: ingestion.EventTypeRunning,
+			Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+			SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+			Run: ingestion.Run{
+				ID: childRunUUID,
+				Facets: map[string]interface{}{
+					"parent": parentRunFacet,
+				},
+			},
+			Job: ingestion.Job{
+				Namespace: parentJobNamespace,
+				Name:      "model.jaffle_shop.orders",
+				Facets:    map[string]interface{}{},
+			},
+			Inputs: []ingestion.Dataset{},
+			Outputs: []ingestion.Dataset{
+				{
+					Namespace: "postgresql://demo",
+					Name:      "marts.orders",
+					Facets:    map[string]interface{}{},
+				},
+			},
+		}
+
+		stored, duplicate, err := store.StoreEvent(ctx, event)
+		if err != nil {
+			t.Fatalf("StoreEvent() error = %v", err)
+		}
+
+		if !stored {
+			t.Error("StoreEvent() stored = false, want true")
+		}
+
+		if duplicate {
+			t.Error("StoreEvent() duplicate = true, want false")
+		}
+
+		// Verify parent_job_run_id is stored correctly
+		var storedParentJobRunID *string
+
+		err = conn.QueryRowContext(ctx, `
+			SELECT parent_job_run_id FROM job_runs WHERE run_id = $1
+		`, childRunUUID).Scan(&storedParentJobRunID)
+		if err != nil {
+			t.Fatalf("Failed to query parent_job_run_id: %v", err)
+		}
+
+		if storedParentJobRunID == nil {
+			t.Fatal("parent_job_run_id should not be NULL")
+		}
+
+		expectedParentJobRunID := "dbt:" + parentRunUUID
+		if *storedParentJobRunID != expectedParentJobRunID {
+			t.Errorf("parent_job_run_id = %q, want %q", *storedParentJobRunID, expectedParentJobRunID)
+		}
+	}
 }

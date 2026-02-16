@@ -14,6 +14,7 @@ import (
 	"github.com/correlator-io/correlator/internal/aliasing"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
+	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
 // filterImpactResults is a test helper that filters impact results by jobRunID and depth.
@@ -2095,4 +2096,304 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 	incident, err := store.QueryIncidentByID(ctx, testResultID)
 	require.NoError(t, err)
 	assert.Nil(t, incident, "Incident should be nil for passed tests")
+}
+
+// TestParentRunFacetCorrelation tests that parent-child job relationships are correctly
+// correlated through the materialized view and returned in incident queries.
+//
+// This test verifies:
+//  1. Materialized view correctly JOINs parent job data via parent_job_run_id.
+//  2. QueryIncidentByID returns parent job fields (name, status, completed_at).
+//
+// Note: ParentRunFacet extraction and storage is tested in lineage_store_integration_test.go.
+func TestParentRunFacetCorrelation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Create LineageStore
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Test data
+	parentRunUUID := uuid.New().String()
+	childRunUUID := uuid.New().String()
+	parentJobNamespace := "dbt://demo"
+	parentJobName := "jaffle_shop.build"
+	childJobName := "model.jaffle_shop.orders"
+	datasetURN := "postgresql://demo/marts.orders"
+	now := time.Now()
+
+	// Build ParentRunFacet as map[string]interface{} (as it comes from JSON)
+	parentRunFacet := map[string]interface{}{
+		"job": map[string]interface{}{
+			"namespace": parentJobNamespace,
+			"name":      parentJobName,
+		},
+		"run": map[string]interface{}{
+			"runId": parentRunUUID,
+		},
+	}
+
+	// Step 1: Ingest parent job (START then COMPLETE)
+	parentStartEvent := &ingestion.RunEvent{
+		EventTime: now.Add(-5 * time.Minute),
+		EventType: ingestion.EventTypeStart,
+		Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+		SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+		Run: ingestion.Run{
+			ID:     parentRunUUID,
+			Facets: map[string]interface{}{},
+		},
+		Job: ingestion.Job{
+			Namespace: parentJobNamespace,
+			Name:      parentJobName,
+			Facets:    map[string]interface{}{},
+		},
+		Inputs:  []ingestion.Dataset{},
+		Outputs: []ingestion.Dataset{},
+	}
+
+	stored, _, err := store.StoreEvent(ctx, parentStartEvent)
+	require.NoError(t, err)
+	require.True(t, stored, "Parent START event should be stored")
+
+	parentCompleteEvent := &ingestion.RunEvent{
+		EventTime: now.Add(-1 * time.Minute),
+		EventType: ingestion.EventTypeComplete,
+		Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+		SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+		Run: ingestion.Run{
+			ID:     parentRunUUID,
+			Facets: map[string]interface{}{},
+		},
+		Job: ingestion.Job{
+			Namespace: parentJobNamespace,
+			Name:      parentJobName,
+			Facets:    map[string]interface{}{},
+		},
+		Inputs:  []ingestion.Dataset{},
+		Outputs: []ingestion.Dataset{},
+	}
+
+	stored, _, err = store.StoreEvent(ctx, parentCompleteEvent)
+	require.NoError(t, err)
+	require.True(t, stored, "Parent COMPLETE event should be stored")
+
+	// Step 2: Ingest child job with ParentRunFacet
+	childEvent := &ingestion.RunEvent{
+		EventTime: now.Add(-3 * time.Minute),
+		EventType: ingestion.EventTypeRunning,
+		Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+		SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+		Run: ingestion.Run{
+			ID: childRunUUID,
+			Facets: map[string]interface{}{
+				"parent": parentRunFacet,
+			},
+		},
+		Job: ingestion.Job{
+			Namespace: parentJobNamespace,
+			Name:      childJobName,
+			Facets:    map[string]interface{}{},
+		},
+		Inputs: []ingestion.Dataset{},
+		Outputs: []ingestion.Dataset{
+			{
+				Namespace: "postgresql://demo",
+				Name:      "marts.orders",
+				Facets:    map[string]interface{}{},
+			},
+		},
+	}
+
+	stored, _, err = store.StoreEvent(ctx, childEvent)
+	require.NoError(t, err)
+	require.True(t, stored, "Child event with ParentRunFacet should be stored")
+
+	expectedParentJobRunID := "dbt:" + parentRunUUID
+	childJobRunID := childEvent.JobRunID()
+
+	// Step 3: Insert a failed test result for the child's output dataset
+	var testResultID int64 = 1
+
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms, producer_name
+		) VALUES ($1, 'not_null_orders_id', 'not_null', $2, $3, 'failed', 'Found 3 null values', $4, 150, 'correlator-ge')
+	`, testResultID, datasetURN, childJobRunID, now)
+	require.NoError(t, err)
+
+	// Step 4: Refresh materialized views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Step 5: Query incident and verify parent fields
+	incident, err := store.QueryIncidentByID(ctx, testResultID)
+	require.NoError(t, err)
+	require.NotNil(t, incident, "Incident should be found")
+
+	// Verify child job fields
+	assert.Equal(t, childJobName, incident.JobName)
+	assert.Equal(t, "RUNNING", incident.JobStatus, "Child job should be RUNNING")
+
+	// Verify parent job fields are populated
+	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID, "ParentJobRunID should match")
+	assert.Equal(t, parentJobName, incident.ParentJobName, "ParentJobName should match")
+	assert.Equal(t, "COMPLETE", incident.ParentJobStatus, "ParentJobStatus should be COMPLETE")
+	assert.NotNil(t, incident.ParentJobCompletedAt, "ParentJobCompletedAt should be populated")
+}
+
+// TestParentRunFacetOutOfOrder tests that child events can arrive before parent.
+func TestParentRunFacetOutOfOrder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	// Create LineageStore
+	conn := &Connection{DB: testDB.Connection}
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	require.NoError(t, err)
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	// Test data
+	parentRunUUID := uuid.New().String()
+	childRunUUID := uuid.New().String()
+	parentJobNamespace := "dbt://demo"
+	parentJobName := "jaffle_shop.build"
+	childJobName := "model.jaffle_shop.orders"
+	datasetURN := "postgresql://demo/marts.orders"
+	now := time.Now()
+
+	parentRunFacet := map[string]interface{}{
+		"job": map[string]interface{}{
+			"namespace": parentJobNamespace,
+			"name":      parentJobName,
+		},
+		"run": map[string]interface{}{
+			"runId": parentRunUUID,
+		},
+	}
+
+	// Step 1: Ingest ONLY child job (parent hasn't arrived yet)
+	childEvent := &ingestion.RunEvent{
+		EventTime: now.Add(-3 * time.Minute),
+		EventType: ingestion.EventTypeRunning,
+		Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+		SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+		Run: ingestion.Run{
+			ID: childRunUUID,
+			Facets: map[string]interface{}{
+				"parent": parentRunFacet,
+			},
+		},
+		Job: ingestion.Job{
+			Namespace: parentJobNamespace,
+			Name:      childJobName,
+			Facets:    map[string]interface{}{},
+		},
+		Inputs: []ingestion.Dataset{},
+		Outputs: []ingestion.Dataset{
+			{
+				Namespace: "postgresql://demo",
+				Name:      "marts.orders",
+				Facets:    map[string]interface{}{},
+			},
+		},
+	}
+
+	stored, _, err := store.StoreEvent(ctx, childEvent)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	childJobRunID := childEvent.JobRunID()
+
+	// Step 2: Insert test result
+	var testResultID int64 = 1
+
+	_, err = testDB.Connection.ExecContext(ctx, `
+		INSERT INTO test_results (
+			id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms, producer_name
+		) VALUES ($1, 'not_null_orders_id', 'not_null', $2, $3, 'failed', 'Found 3 null values', $4, 150, 'correlator-ge')
+	`, testResultID, datasetURN, childJobRunID, now)
+	require.NoError(t, err)
+
+	// Step 3: Refresh views
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Step 4: Query incident - parent fields should be empty (parent not ingested)
+	incident, err := store.QueryIncidentByID(ctx, testResultID)
+	require.NoError(t, err)
+	require.NotNil(t, incident)
+
+	// Parent job run ID is stored (reference exists)
+	expectedParentJobRunID := "dbt:" + parentRunUUID
+	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID, "ParentJobRunID should be stored")
+
+	// But parent fields are empty because parent job_run doesn't exist yet
+	assert.Empty(t, incident.ParentJobName, "ParentJobName should be empty")
+	assert.Empty(t, incident.ParentJobStatus, "ParentJobStatus should be empty")
+	assert.Nil(t, incident.ParentJobCompletedAt, "ParentJobCompletedAt should be nil")
+
+	// Step 5: Now ingest parent job
+	parentEvent := &ingestion.RunEvent{
+		EventTime: now.Add(-1 * time.Minute),
+		EventType: ingestion.EventTypeComplete,
+		Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+		SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+		Run: ingestion.Run{
+			ID:     parentRunUUID,
+			Facets: map[string]interface{}{},
+		},
+		Job: ingestion.Job{
+			Namespace: parentJobNamespace,
+			Name:      parentJobName,
+			Facets:    map[string]interface{}{},
+		},
+		Inputs:  []ingestion.Dataset{},
+		Outputs: []ingestion.Dataset{},
+	}
+
+	stored, _, err = store.StoreEvent(ctx, parentEvent)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	// Step 6: Refresh views again
+	err = store.RefreshViews(ctx)
+	require.NoError(t, err)
+
+	// Step 7: Query incident again - parent fields should now be populated
+	incident, err = store.QueryIncidentByID(ctx, testResultID)
+	require.NoError(t, err)
+	require.NotNil(t, incident)
+
+	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID)
+	assert.Equal(t, parentJobName, incident.ParentJobName, "ParentJobName should now be populated")
+	assert.Equal(t, "COMPLETE", incident.ParentJobStatus, "ParentJobStatus should be COMPLETE")
+	assert.NotNil(t, incident.ParentJobCompletedAt, "ParentJobCompletedAt should be populated")
 }
