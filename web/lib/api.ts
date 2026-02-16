@@ -116,6 +116,13 @@ interface ApiDatasetDetail {
   namespace: string;
 }
 
+interface ApiParentJob {
+  name: string;
+  run_id: string;
+  status: string;
+  completed_at: string | null;
+}
+
 interface ApiJobDetail {
   name: string;
   namespace: string;
@@ -124,6 +131,7 @@ interface ApiJobDetail {
   status: string;
   started_at: string;
   completed_at: string;
+  parent?: ApiParentJob;
 }
 
 interface ApiDownstreamDataset {
@@ -267,6 +275,14 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
           status: api.job.status,
           startedAt: api.job.started_at,
           completedAt: api.job.completed_at,
+          parent: api.job.parent
+            ? {
+                name: api.job.parent.name,
+                runId: api.job.parent.run_id,
+                status: api.job.parent.status,
+                completedAt: api.job.parent.completed_at || null,
+              }
+            : undefined,
         }
       : null,
     upstream: (api.upstream || []).map((u): UpstreamDataset => ({

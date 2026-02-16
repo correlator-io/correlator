@@ -4,7 +4,7 @@ import { ProducerIcon } from "@/components/icons/producer-icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import { PlayCircle, CheckCircle } from "lucide-react";
-import type { Producer } from "@/lib/types";
+import type { Producer, ParentJob } from "@/lib/types";
 
 interface JobDetailsCardProps {
   job: {
@@ -15,18 +15,23 @@ interface JobDetailsCardProps {
     status: string;
     startedAt: string;
     completedAt: string;
+    parent?: ParentJob;
   };
 }
 
 export function JobDetailsCard({ job }: JobDetailsCardProps) {
-  const statusVariant = job.status === "COMPLETE" ? "default" : "secondary";
+  // Use parent status/completion if available, otherwise use job's own values
+  const displayStatus = job.parent?.status || job.status;
+  const displayCompletedAt = job.parent?.completedAt || job.completedAt;
+
+  const statusVariant = displayStatus === "COMPLETE" ? "default" : "secondary";
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <CardTitle className="text-base font-medium">Producing Job</CardTitle>
-          <Badge variant={statusVariant}>{job.status}</Badge>
+          <Badge variant={statusVariant}>{displayStatus}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -74,19 +79,21 @@ export function JobDetailsCard({ job }: JobDetailsCardProps) {
             </Tooltip>
           </TooltipProvider>
 
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-1.5 cursor-help">
-                  <CheckCircle className="h-3.5 w-3.5" />
-                  Completed {formatRelativeTime(job.completedAt)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{formatAbsoluteTime(job.completedAt)}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {displayCompletedAt && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-1.5 cursor-help">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Completed {formatRelativeTime(displayCompletedAt)}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{formatAbsoluteTime(displayCompletedAt)}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
       </CardContent>
     </Card>

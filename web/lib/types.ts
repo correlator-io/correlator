@@ -43,10 +43,18 @@ export interface IncidentDetail {
     status: string;
     startedAt: string; // ISO 8601
     completedAt: string; // ISO 8601
+    parent?: ParentJob;
   } | null;
   upstream: UpstreamDataset[];
   downstream: DownstreamDataset[];
   correlationStatus: CorrelationStatus;
+}
+
+export interface ParentJob {
+  name: string;
+  runId: string;
+  status: string;
+  completedAt: string | null;
 }
 
 export interface DownstreamDataset {
