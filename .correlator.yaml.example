@@ -1,51 +1,22 @@
-# Correlator Configuration
-# =========================
-# Copy to .correlator.yaml and customize for your environment.
+# Correlator Dataset Pattern Configuration
+# =========================================
+# This file maps tool-specific dataset URNs to canonical URNs for cross-tool correlation.
 #
-# NOTE: Changes to this file require a Correlator restart to take effect.
-
-# Namespace Aliases
-# -----------------
-# Map tool-specific namespaces to canonical namespaces for cross-tool correlation.
-#
-# Problem: Different tools emit different namespace formats for the same data source:
-#   - Great Expectations: "postgres_prod" (logical datasource name)
-#   - dbt: "postgresql://prod-db:5432/mydb" (full connection URI)
-#   - Airflow: "postgres://prod-db:5432" (connection string)
-#
-# Without aliases, Correlator sees these as separate datasets and cannot correlate
-# test failures from GE with job runs from dbt.
-#
-# Solution: Configure aliases to map all variants to a single canonical namespace.
-# Aliases are applied at QUERY TIME, so historical data is automatically resolved.
-#
-# Format:
-#   alias: "canonical_namespace"
+# Pattern syntax:
+#   - {variable} captures any characters except "/"
+#   - {variable*} captures any characters including "/" (for paths)
+#   - Literal characters match exactly
+#   - First matching pattern wins (order matters)
 #
 # Workflow:
-#   1. Deploy Correlator without aliases
-#   2. Ingest events from your data tools (dbt, Airflow, GE, etc.)
-#   3. Check Correlation Health page for orphan namespaces
-#   4. Configure aliases below based on discovered orphans
-#   5. Restart Correlator - correlation rate improves immediately
-#
-# Validation:
-#   - Self-referential aliases (A -> A) are skipped with warning
-#   - Circular aliases (A -> B, B -> A) are skipped with warning
-#   - Empty canonical values are skipped with warning
-#
-# Example:
-namespace_aliases:
-  # PostgreSQL production database
-  # Map GE and Airflow namespace formats to dbt's canonical format
-  postgres_prod: "postgresql://prod-db:5432/mydb"
-  postgres://prod-db:5432: "postgresql://prod-db:5432/mydb"
+#   1. Run your data tools (dbt, Airflow, GE) to ingest events
+#   2. Check the Health page for orphan datasets
+#   3. Add patterns below to map orphans to canonical URNs
+#   4. Restart Correlator - correlation improves immediately
 
-  # Snowflake data warehouse
-  # Map short names to full Snowflake connection string
-  snowflake_prod: "snowflake://account.snowflakecomputing.com/warehouse/prod"
-  snowflake://account/prod: "snowflake://account.snowflakecomputing.com/warehouse/prod"
-
-  # BigQuery project
-  # Map project aliases to full BigQuery path
-  bq_analytics: "bigquery://project-id/dataset"
+dataset_patterns:
+  # Great Expectations → dbt dataset mapping
+  # GE emits: demo_postgres/customers, demo_postgres/orders
+  # dbt emits: postgresql://demo/marts.customers, postgresql://demo/marts.orders
+  - pattern: "demo_postgres/{name}"
+    canonical: "postgresql://demo/marts.{name}"
