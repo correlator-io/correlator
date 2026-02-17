@@ -1352,6 +1352,18 @@ func (s *LineageStore) extractDataQualityAssertions(
 				metadata = map[string]interface{}{"column": column}
 			}
 
+			// Extract optional durationMs (milliseconds) - spec-compliant extended field
+			var durationMs int
+			if dur, ok := assertion["durationMs"].(float64); ok {
+				durationMs = int(dur)
+			}
+
+			// Extract optional message - spec-compliant extended field
+			var message string
+			if msg, ok := assertion["message"].(string); ok {
+				message = msg
+			}
+
 			// Store the test result
 			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
 				TestName:        testName,
@@ -1359,6 +1371,8 @@ func (s *LineageStore) extractDataQualityAssertions(
 				DatasetURN:      input.URN(),
 				JobRunID:        jobRunID,
 				Status:          status,
+				Message:         message,
+				DurationMs:      durationMs,
 				Metadata:        metadata,
 				ExecutedAt:      eventTime,
 				ProducerName:    extractProducerName(event.Producer),
