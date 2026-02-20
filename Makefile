@@ -613,14 +613,7 @@ run-demo-pipeline:
 		echo "   Correlator UI: http://localhost:3001"; \
 	else \
 		echo ""; \
-		echo "⚠️  Could not trigger DAG. The DAG may not exist yet."; \
-		echo ""; \
-		echo "💡 The demo_pipeline DAG will be created in Phase 1.7."; \
-		echo "   For now, you can run tools manually:"; \
-		echo "     make run demo dbt seed"; \
-		echo "     make run demo dbt run"; \
-		echo "     make run demo dbt test"; \
-		echo "     make run demo ge validate"; \
+		echo "⚠️  Could not trigger DAG."; \
 	fi
 
 # Run dbt commands in demo
