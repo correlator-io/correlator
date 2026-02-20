@@ -3,7 +3,6 @@ package correlation
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
 )
@@ -17,7 +16,6 @@ type (
 		Pattern string
 
 		// Canonical is the target pattern to transform orphan URNs into canonical form.
-		// Example: "postgresql://demo/marts.{name}"
 		Canonical string
 
 		// ResolvesCount is the number of orphan datasets this pattern would resolve.
@@ -27,11 +25,11 @@ type (
 		OrphansResolved []string
 	}
 
-	// patternGroup holds orphans with the same transformation pattern.
+	// patternGroup holds orphans with the same namespace transformation.
 	patternGroup struct {
-		orphanPrefix    string
-		canonicalPrefix string
-		orphans         []string
+		orphanNamespace    string
+		canonicalNamespace string
+		orphans            []string
 	}
 )
 
@@ -39,26 +37,32 @@ type (
 //
 // Algorithm:
 //  1. Filter orphans that have LikelyMatch (others can't be resolved)
-//  2. Extract prefix and table name from each orphan/match pair
-//  3. Group orphans by their transformation pattern (orphan_prefix → match_prefix)
+//  2. Parse each orphan/match URN at the namespace/name boundary (aligned with GenerateDatasetURN)
+//  3. Group orphans by namespace transformation (orphan_namespace → canonical_namespace)
 //  4. Generate pattern strings with {name} placeholder
 //  5. Sort by ResolvesCount descending (most impactful first)
 //
 // Example:
 //
 //	orphans := []OrphanDataset{
-//	    {DatasetURN: "demo_postgres/customers", LikelyMatch: &DatasetMatch{...}},
-//	    {DatasetURN: "demo_postgres/orders", LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo/marts.orders"}},
+//	    {
+//	   		DatasetURN: "demo_postgres/marts.customers",
+//	   		LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo/marts.customers"}
+//	   	},
+//	    {
+//	   		DatasetURN: "demo_postgres/marts.orders",
+//	   		LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo/marts.orders"}
+//	   	},
 //	}
 //	patterns := SuggestPatterns(orphans)
-//	// → [{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}", ResolvesCount: 2}]
+//	// → [{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/{name}", ResolvesCount: 2}]
 func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 	if len(orphans) == 0 {
 		return nil
 	}
 
-	// Group orphans by transformation pattern
-	// Key: "orphanPrefix|canonicalPrefix" (e.g., "demo_postgres|postgresql://demo/marts")
+	// Group orphans by namespace transformation
+	// Key: "orphanNamespace|canonicalNamespace" (e.g., "demo_postgres|postgresql://demo")
 	groups := make(map[string]*patternGroup)
 
 	for _, orphan := range orphans {
@@ -66,21 +70,29 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 			continue
 		}
 
-		orphanPrefix, orphanTable := extractPrefixAndTable(orphan.DatasetURN)
-		canonicalPrefix, canonicalTable := extractPrefixAndTable(orphan.LikelyMatch.DatasetURN)
-
-		// Only suggest patterns where the table names match
-		if orphanTable == "" || canonicalTable == "" || orphanTable != canonicalTable {
+		orphanNamespace, orphanName, err := canonicalization.ParseDatasetURN(orphan.DatasetURN)
+		if err != nil {
 			continue
 		}
 
-		key := orphanPrefix + "|" + canonicalPrefix
+		canonicalNamespace, canonicalName, err := canonicalization.ParseDatasetURN(orphan.LikelyMatch.DatasetURN)
+		if err != nil {
+			continue
+		}
+
+		// Only suggest patterns where the dataset names match exactly.
+		// This ensures the {name} placeholder substitution produces correct results.
+		if orphanName != canonicalName {
+			continue
+		}
+
+		key := orphanNamespace + "|" + canonicalNamespace
 
 		if groups[key] == nil {
 			groups[key] = &patternGroup{
-				orphanPrefix:    orphanPrefix,
-				canonicalPrefix: canonicalPrefix,
-				orphans:         make([]string, 0),
+				orphanNamespace:    orphanNamespace,
+				canonicalNamespace: canonicalNamespace,
+				orphans:            make([]string, 0),
 			}
 		}
 
@@ -92,8 +104,8 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 
 	for _, group := range groups {
 		patterns = append(patterns, SuggestedPattern{
-			Pattern:         group.orphanPrefix + "/{name}",
-			Canonical:       group.canonicalPrefix + ".{name}",
+			Pattern:         group.orphanNamespace + "/{name}",
+			Canonical:       group.canonicalNamespace + "/{name}",
 			ResolvesCount:   len(group.orphans),
 			OrphansResolved: group.orphans,
 		})
@@ -105,29 +117,4 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 	})
 
 	return patterns
-}
-
-// extractPrefixAndTable extracts the prefix (everything before table) and table name from a URN.
-//
-// Examples:
-//   - "demo_postgres/customers" → ("demo_postgres", "customers")
-//   - "postgresql://demo/marts.customers" → ("postgresql://demo/marts", "customers")
-//   - "mydb/schema/table" → ("mydb/schema", "table")
-func extractPrefixAndTable(urn string) (string, string) {
-	table := canonicalization.ExtractTableName(urn)
-	if table == "" {
-		return urn, ""
-	}
-
-	// Find the table name in the URN and extract prefix
-	// The table could be separated by "/" or "."
-	idx := strings.LastIndex(urn, table)
-	if idx <= 0 {
-		return urn, table
-	}
-
-	// Get prefix (everything before table name, excluding the separator)
-	prefix := urn[:idx-1]
-
-	return prefix, table
 }
