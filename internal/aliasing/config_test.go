@@ -10,6 +10,10 @@ import (
 )
 
 func TestLoadConfig_ValidYAML(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -35,6 +39,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_EmptyPatternsSection(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -52,6 +60,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_MissingFile(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg, err := LoadConfig("/nonexistent/path/correlator.yaml")
 
 	// Missing file should return empty config, no error (graceful degradation)
@@ -61,6 +73,10 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 }
 
 func TestLoadConfig_InvalidYAML(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -81,6 +97,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_YAMLWithOnlyComments(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -99,6 +119,10 @@ func TestLoadConfig_YAMLWithOnlyComments(t *testing.T) {
 }
 
 func TestLoadConfig_EmptyFile(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -113,6 +137,10 @@ func TestLoadConfig_EmptyFile(t *testing.T) {
 }
 
 func TestLoadConfig_NoPatternsKey(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -132,6 +160,10 @@ some_other_config:
 }
 
 func TestLoadConfigFromEnv_DefaultPath(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	// Unset env var to use default
 	os.Unsetenv("CORRELATOR_CONFIG_PATH")
 
@@ -144,6 +176,10 @@ func TestLoadConfigFromEnv_DefaultPath(t *testing.T) {
 }
 
 func TestLoadConfigFromEnv_CustomPath(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "custom-config.yaml")
 
@@ -168,6 +204,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_MultipleVariables(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -188,6 +228,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_PathCapture(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 
@@ -209,6 +253,10 @@ dataset_patterns:
 }
 
 func TestLoadConfig_SpecialCharactersInPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "correlator.yaml")
 

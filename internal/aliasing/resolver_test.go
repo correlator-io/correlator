@@ -12,6 +12,10 @@ import (
 // ==============================================================================
 
 func TestNewResolver_WithValidPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -26,6 +30,10 @@ func TestNewResolver_WithValidPatterns(t *testing.T) {
 }
 
 func TestNewResolver_WithNilConfig(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	r := NewResolver(nil)
 
 	require.NotNil(t, r)
@@ -33,6 +41,10 @@ func TestNewResolver_WithNilConfig(t *testing.T) {
 }
 
 func TestNewResolver_WithEmptyPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{},
 	}
@@ -44,6 +56,10 @@ func TestNewResolver_WithEmptyPatterns(t *testing.T) {
 }
 
 func TestNewResolver_SkipsEmptyPattern(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "", Canonical: "canonical/{name}"},
@@ -57,6 +73,10 @@ func TestNewResolver_SkipsEmptyPattern(t *testing.T) {
 }
 
 func TestNewResolver_SkipsEmptyCanonical(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "input/{name}", Canonical: ""},
@@ -70,6 +90,10 @@ func TestNewResolver_SkipsEmptyCanonical(t *testing.T) {
 }
 
 func TestNewResolver_AllPatternsValid(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	// Note: Most "special character" patterns become valid after QuoteMeta escaping
 	// This test verifies patterns with regex-like characters work correctly
 	cfg := &Config{
@@ -90,6 +114,10 @@ func TestNewResolver_AllPatternsValid(t *testing.T) {
 // ==============================================================================
 
 func TestResolver_Resolve_SingleVariable(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -103,6 +131,10 @@ func TestResolver_Resolve_SingleVariable(t *testing.T) {
 }
 
 func TestResolver_Resolve_MultipleVariables(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "{namespace}/{schema}/{table}", Canonical: "postgresql://prod/{schema}.{table}"},
@@ -116,6 +148,10 @@ func TestResolver_Resolve_MultipleVariables(t *testing.T) {
 }
 
 func TestResolver_Resolve_PathCapture(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "s3://old-bucket/{path*}", Canonical: "s3://new-bucket/{path*}"},
@@ -129,6 +165,10 @@ func TestResolver_Resolve_PathCapture(t *testing.T) {
 }
 
 func TestResolver_Resolve_NoMatch(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -143,6 +183,10 @@ func TestResolver_Resolve_NoMatch(t *testing.T) {
 }
 
 func TestResolver_Resolve_FirstMatchWins(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "first/{name}"},
@@ -158,6 +202,10 @@ func TestResolver_Resolve_FirstMatchWins(t *testing.T) {
 }
 
 func TestResolver_Resolve_EmptyPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	r := NewResolver(nil)
 
 	// No patterns - should return original
@@ -167,6 +215,10 @@ func TestResolver_Resolve_EmptyPatterns(t *testing.T) {
 }
 
 func TestResolver_Resolve_EmptyInput(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -180,6 +232,10 @@ func TestResolver_Resolve_EmptyInput(t *testing.T) {
 }
 
 func TestResolver_Resolve_NilResolver(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	var r *Resolver
 
 	result := r.Resolve("any/input")
@@ -192,6 +248,10 @@ func TestResolver_Resolve_NilResolver(t *testing.T) {
 // ==============================================================================
 
 func TestResolver_Match_Found(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -206,6 +266,10 @@ func TestResolver_Match_Found(t *testing.T) {
 }
 
 func TestResolver_Match_NotFound(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
@@ -224,6 +288,10 @@ func TestResolver_Match_NotFound(t *testing.T) {
 // ==============================================================================
 
 func TestResolver_Resolve_DBTvsGE(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	// This is the exact use case from TC-002
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
@@ -263,6 +331,10 @@ func TestResolver_Resolve_DBTvsGE(t *testing.T) {
 }
 
 func TestResolver_Resolve_SpecialCharacters(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "postgres://host:5432/{name}", Canonical: "postgresql://host/{name}"},
@@ -276,6 +348,10 @@ func TestResolver_Resolve_SpecialCharacters(t *testing.T) {
 }
 
 func TestResolver_Resolve_Underscores(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "raw_{env}/{name}", Canonical: "processed_{env}/{name}"},
@@ -293,6 +369,10 @@ func TestResolver_Resolve_Underscores(t *testing.T) {
 // ==============================================================================
 
 func TestResolver_GetPatternCount(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name     string
 		patterns []DatasetPattern
@@ -330,6 +410,10 @@ func TestResolver_GetPatternCount(t *testing.T) {
 }
 
 func TestResolver_GetPatternCount_NilResolver(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	var r *Resolver
 	assert.Equal(t, 0, r.GetPatternCount())
 }
@@ -339,6 +423,10 @@ func TestResolver_GetPatternCount_NilResolver(t *testing.T) {
 // ==============================================================================
 
 func TestResolver_ConcurrentAccess(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
 		DatasetPatterns: []DatasetPattern{
 			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
