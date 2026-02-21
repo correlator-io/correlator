@@ -33,15 +33,14 @@ CORRELATOR_ENDPOINT = "http://demo-correlator:8080/api/v1/lineage/events"
 
 # DAG definition
 with DAG(
-    dag_id="demo_pipeline",
-    default_args=default_args,
-    description="Correlator demo pipeline: dbt + Great Expectations",
-    schedule_interval=None,  # Manual trigger only
-    start_date=datetime(2024, 1, 1),
-    catchup=False,
-    tags=["correlator", "demo", "dbt", "great-expectations"],
+        dag_id="demo_pipeline",
+        default_args=default_args,
+        description="Correlator demo pipeline: dbt + Great Expectations",
+        schedule_interval=None,  # Manual trigger only
+        start_date=datetime(2024, 1, 1),
+        catchup=False,
+        tags=["correlator", "demo", "dbt", "great-expectations"],
 ) as dag:
-
     # Task 1: dbt seed - Load raw data
     # Note: dbt-correlator doesn't support seed, so we use plain dbt
     # No lineage events are emitted for this task (only Airflow task events)
@@ -51,6 +50,15 @@ with DAG(
             cd /dbt && \
             dbt seed --profiles-dir . --project-dir .
         """,
+        env={
+            "OPENLINEAGE_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
+            ),
+            "OPENLINEAGE_ROOT_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
+            ),
+        },
+        append_env=True,
         doc_md="""
         ### dbt Seed
         Loads raw Jaffle Shop data (customers, orders) into PostgreSQL.
@@ -72,6 +80,15 @@ with DAG(
                 --correlator-endpoint {CORRELATOR_ENDPOINT} \
                 --openlineage-namespace dbt://demo
         """,
+        env={
+            "OPENLINEAGE_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
+            ),
+            "OPENLINEAGE_ROOT_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
+            ),
+        },
+        append_env=True,
         doc_md="""
         ### dbt Run (with dbt-correlator)
         Executes all dbt models and emits OpenLineage lineage events:
@@ -93,6 +110,15 @@ with DAG(
                 --correlator-endpoint {CORRELATOR_ENDPOINT} \
                 --openlineage-namespace dbt://demo
         """,
+        env={
+            "OPENLINEAGE_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
+            ),
+            "OPENLINEAGE_ROOT_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
+            ),
+        },
+        append_env=True,
         doc_md="""
         ### dbt Test (with dbt-correlator)
         Runs schema tests defined in schema.yml and emits test result events:
@@ -111,6 +137,15 @@ with DAG(
             cd /ge && \
             python checkpoints/demo_checkpoint.py
         """,
+        env={
+            "OPENLINEAGE_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
+            ),
+            "OPENLINEAGE_ROOT_PARENT_ID": (
+                "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
+            ),
+        },
+        append_env=True,
         doc_md="""
         ### Great Expectations Validate
         Runs the demo checkpoint to validate:
