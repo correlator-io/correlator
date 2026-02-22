@@ -118,7 +118,9 @@ interface ApiDatasetDetail {
 
 interface ApiParentJob {
   name: string;
+  namespace?: string;
   run_id: string;
+  producer?: string;
   status: string;
   completed_at: string | null;
 }
@@ -132,6 +134,7 @@ interface ApiJobDetail {
   started_at: string;
   completed_at: string;
   parent?: ApiParentJob;
+  root_parent?: ApiParentJob;
 }
 
 interface ApiDownstreamDataset {
@@ -278,9 +281,25 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
           parent: api.job.parent
             ? {
                 name: api.job.parent.name,
+                namespace: api.job.parent.namespace,
                 runId: api.job.parent.run_id,
+                producer: api.job.parent.producer
+                  ? normalizeProducer(api.job.parent.producer)
+                  : undefined,
                 status: api.job.parent.status,
                 completedAt: api.job.parent.completed_at || null,
+              }
+            : undefined,
+          rootParent: api.job.root_parent
+            ? {
+                name: api.job.root_parent.name,
+                namespace: api.job.root_parent.namespace,
+                runId: api.job.root_parent.run_id,
+                producer: api.job.root_parent.producer
+                  ? normalizeProducer(api.job.root_parent.producer)
+                  : undefined,
+                status: api.job.root_parent.status,
+                completedAt: api.job.root_parent.completed_at || null,
               }
             : undefined,
         }

@@ -44,6 +44,7 @@ export interface IncidentDetail {
     startedAt: string; // ISO 8601
     completedAt: string; // ISO 8601
     parent?: ParentJob;
+    rootParent?: ParentJob;
   } | null;
   upstream: UpstreamDataset[];
   downstream: DownstreamDataset[];
@@ -52,7 +53,9 @@ export interface IncidentDetail {
 
 export interface ParentJob {
   name: string;
+  namespace?: string;
   runId: string;
+  producer?: Producer;
   status: string;
   completedAt: string | null;
 }

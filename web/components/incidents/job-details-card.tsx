@@ -1,6 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { ProducerIcon } from "@/components/icons/producer-icon";
+import { JobOrchestrationChain } from "./job-orchestration-chain";
+import { buildOrchestrationChain } from "@/lib/orchestration";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import { PlayCircle, CheckCircle } from "lucide-react";
@@ -16,13 +19,16 @@ interface JobDetailsCardProps {
     startedAt: string;
     completedAt: string;
     parent?: ParentJob;
+    rootParent?: ParentJob;
   };
 }
 
 export function JobDetailsCard({ job }: JobDetailsCardProps) {
-  // Use parent status/completion if available, otherwise use job's own values
-  const displayStatus = job.parent?.status || job.status;
-  const displayCompletedAt = job.parent?.completedAt || job.completedAt;
+  const chain = buildOrchestrationChain(job);
+
+  // Use root > parent > job status fallback for the header badge
+  const displayStatus = job.rootParent?.status || job.parent?.status || job.status;
+  const displayCompletedAt = job.rootParent?.completedAt || job.parent?.completedAt || job.completedAt;
 
   const statusVariant = displayStatus === "COMPLETE" ? "default" : "secondary";
 
@@ -35,6 +41,14 @@ export function JobDetailsCard({ job }: JobDetailsCardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Orchestration chain (only renders when parent exists) */}
+        {chain.length > 0 && (
+          <>
+            <JobOrchestrationChain levels={chain} />
+            <Separator />
+          </>
+        )}
+
         {/* Job name and namespace */}
         <div className="space-y-1">
           <p className="text-sm font-medium">{job.name}</p>

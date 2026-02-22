@@ -134,13 +134,27 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       namespace: "postgresql://prod/public",
     },
     job: {
-      name: "build_orders_model",
-      namespace: "daily_finance_pipeline",
+      name: "model.jaffle_shop_demo.orders",
+      namespace: "dbt://demo",
       runId: "dbt:abc123-def456",
       producer: "dbt",
       status: "COMPLETE",
       startedAt: "2026-01-23T10:25:00Z",
       completedAt: "2026-01-23T10:28:45Z",
+      parent: {
+        name: "jaffle_shop_demo.run",
+        runId: "dbt:invocation-789",
+        status: "COMPLETE",
+        completedAt: "2026-01-23T10:29:00Z",
+      },
+      rootParent: {
+        name: "demo_pipeline",
+        namespace: "airflow://demo",
+        runId: "airflow:dag-run-001",
+        producer: "airflow",
+        status: "COMPLETE",
+        completedAt: "2026-01-23T10:30:00Z",
+      },
     },
     upstream: [
       {
@@ -205,13 +219,19 @@ export const MOCK_INCIDENT_DETAILS: Record<string, IncidentDetail> = {
       namespace: "postgresql://prod/public",
     },
     job: {
-      name: "build_customers_model",
-      namespace: "customer_pipeline",
+      name: "model.jaffle_shop_demo.customers",
+      namespace: "dbt://demo",
       runId: "dbt:cust-789",
       producer: "dbt",
       status: "COMPLETE",
       startedAt: "2026-01-23T09:10:00Z",
       completedAt: "2026-01-23T09:14:30Z",
+      parent: {
+        name: "jaffle_shop_demo.run",
+        runId: "dbt:invocation-cust",
+        status: "COMPLETE",
+        completedAt: "2026-01-23T09:14:30Z",
+      },
     },
     upstream: [],
     downstream: [
