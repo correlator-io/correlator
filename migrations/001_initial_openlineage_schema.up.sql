@@ -15,10 +15,6 @@
 --    - updated_at tracks last state transition
 --    - Trigger: update_job_runs_updated_at
 --
--- 2. job_id_mappings - Mapping status changes (active → deprecated)
---    - updated_at tracks mapping confidence updates
---    - Trigger: update_job_id_mappings_updated_at
---
 -- 3. datasets - Metadata enrichment over time
 --    - updated_at tracks facet updates from OpenLineage events
 --    - Trigger: update_datasets_updated_at
@@ -84,6 +80,11 @@ CREATE TABLE job_runs (
     -- No FK constraint: parent may arrive after child (out-of-order events)
     parent_job_run_id VARCHAR(255),
 
+    -- Root parent job reference for job hierarchy (OpenLineage ParentRunFacet root)
+    -- Points to the top-level orchestrator (e.g., Airflow DAG run) skipping intermediate hops
+    -- No FK constraint: root parent may arrive after child (out-of-order events)
+    root_parent_job_run_id VARCHAR(255),
+
     -- Job execution state (OpenLineage compliant)
     current_state VARCHAR(50) NOT NULL CHECK (current_state IN ('START', 'RUNNING', 'COMPLETE', 'FAIL', 'ABORT', 'OTHER')),
     
@@ -106,6 +107,7 @@ CREATE TABLE job_runs (
 CREATE INDEX idx_job_runs_run_id ON job_runs(run_id);
 CREATE INDEX idx_job_runs_temporal ON job_runs(started_at DESC, current_state);
 CREATE INDEX idx_job_runs_parent ON job_runs (parent_job_run_id) WHERE parent_job_run_id IS NOT NULL;
+CREATE INDEX idx_job_runs_root_parent ON job_runs (root_parent_job_run_id) WHERE root_parent_job_run_id IS NOT NULL;
 
 -- Comments
 COMMENT ON TABLE job_runs IS 'OpenLineage RunEvent storage with canonical ID strategy and state machine tracking';
@@ -117,38 +119,10 @@ COMMENT ON COLUMN job_runs.state_history IS 'Array of state transitions with tim
 COMMENT ON COLUMN job_runs.current_state IS 'Current run state - OpenLineage compliant';
 COMMENT ON COLUMN job_runs.metadata IS 'OpenLineage RunEvent facets and producer-specific metadata as JSONB';
 COMMENT ON COLUMN job_runs.parent_job_run_id IS 'Parent job run ID from OpenLineage ParentRunFacet - enables job hierarchy correlation';
+COMMENT ON COLUMN job_runs.root_parent_job_run_id IS 'Root parent job run ID from OpenLineage ParentRunFacet root field - links to top-level orchestrator (e.g., Airflow DAG run)';
 
 -- =====================================================
--- 2. JOB ID MAPPINGS - ID canonicalization
--- =====================================================
-CREATE TABLE job_id_mappings (
-    id BIGSERIAL PRIMARY KEY,
-
-    canonical_job_run_id VARCHAR(255) NOT NULL REFERENCES job_runs(job_run_id) ON DELETE CASCADE,
-    original_job_run_id VARCHAR(500) NOT NULL,
-
-    producer_name VARCHAR(100) NOT NULL,
-    producer_version VARCHAR(50),
-
-    confidence_score DECIMAL(3,2) DEFAULT 1.00 CHECK (confidence_score >= 0.00 AND confidence_score <= 1.00),
-    mapping_status VARCHAR(50) DEFAULT 'active' CHECK (mapping_status IN ('active', 'deprecated', 'invalid')),
-    mapping_metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(original_job_run_id, producer_name)
-);
-
--- Indexes for job_id_mappings
-CREATE INDEX idx_job_id_mappings_lookup ON job_id_mappings(original_job_run_id, producer_name, mapping_status);
-
--- Comments
-COMMENT ON TABLE job_id_mappings IS 'ID canonicalization mapping with producer-specific formats and confidence scoring';
-COMMENT ON COLUMN job_id_mappings.confidence_score IS 'Mapping confidence (0.0-1.0) for correlation accuracy tracking';
-
--- =====================================================
--- 3. DATASETS - Dataset registry
+-- 2. DATASETS - Dataset registry
 -- =====================================================
 CREATE TABLE datasets (
     -- Dataset URN as primary key (OpenLineage standard)
@@ -198,10 +172,6 @@ CREATE TABLE lineage_edges (
 
     input_facets JSONB DEFAULT '{}',
     output_facets JSONB DEFAULT '{}',
-
-    downstream_dataset_count INTEGER DEFAULT 0,
-    downstream_job_count INTEGER DEFAULT 0,
-    impact_score DECIMAL(5,2) DEFAULT 0.00,
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -441,6 +411,14 @@ SELECT
     parent_jr.current_state AS parent_job_status,
     parent_jr.completed_at  AS parent_job_completed_at,
 
+    -- Root parent job information (from OpenLineage ParentRunFacet root)
+    jr.root_parent_job_run_id,
+    root_jr.job_name        AS root_parent_job_name,
+    root_jr.job_namespace   AS root_parent_job_namespace,
+    root_jr.current_state   AS root_parent_job_status,
+    root_jr.completed_at    AS root_parent_job_completed_at,
+    root_jr.producer_name   AS root_parent_producer_name,
+
     -- Lineage relationship
     le.id                   AS lineage_edge_id,
     le.edge_type            AS lineage_edge_type,
@@ -451,6 +429,7 @@ FROM test_results tr
     JOIN lineage_edges le ON d.dataset_urn = le.dataset_urn AND le.edge_type = 'output'
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
     LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
+    LEFT JOIN job_runs root_jr ON jr.root_parent_job_run_id = root_jr.job_run_id
 
 WHERE tr.status IN ('failed', 'error')
 
@@ -708,10 +687,6 @@ $$ LANGUAGE plpgsql;
 -- Apply updated_at triggers
 CREATE TRIGGER update_job_runs_updated_at
     BEFORE UPDATE ON job_runs
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_job_id_mappings_updated_at
-    BEFORE UPDATE ON job_id_mappings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_datasets_updated_at

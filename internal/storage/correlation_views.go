@@ -480,6 +480,12 @@ func (s *LineageStore) assembleIncident(
 		ParentJobRunID:  producer.ParentJobRunID.String,
 		ParentJobName:   producer.ParentJobName.String,
 		ParentJobStatus: producer.ParentJobStatus.String,
+		// Root parent job fields (from OpenLineage ParentRunFacet root)
+		RootParentJobRunID:     producer.RootParentJobRunID.String,
+		RootParentJobName:      producer.RootParentJobName.String,
+		RootParentJobNamespace: producer.RootParentJobNamespace.String,
+		RootParentJobStatus:    producer.RootParentJobStatus.String,
+		RootParentProducerName: producer.RootParentProducerName.String,
 	}
 
 	// Set nullable fields
@@ -494,6 +500,11 @@ func (s *LineageStore) assembleIncident(
 	// Set parent job completed_at
 	if producer.ParentJobCompletedAt.Valid {
 		incident.ParentJobCompletedAt = &producer.ParentJobCompletedAt.Time
+	}
+
+	// Set root parent job completed_at
+	if producer.RootParentJobCompletedAt.Valid {
+		incident.RootParentJobCompletedAt = &producer.RootParentJobCompletedAt.Time
 	}
 
 	return incident
@@ -535,6 +546,13 @@ type producerJobInfo struct {
 	ParentJobName        sql.NullString
 	ParentJobStatus      sql.NullString
 	ParentJobCompletedAt sql.NullTime
+	// Root parent job fields (from OpenLineage ParentRunFacet root)
+	RootParentJobRunID       sql.NullString
+	RootParentJobName        sql.NullString
+	RootParentJobNamespace   sql.NullString
+	RootParentJobStatus      sql.NullString
+	RootParentJobCompletedAt sql.NullTime
+	RootParentProducerName   sql.NullString
 }
 
 // getProducerJobsByDatasetURN fetches producer job info for a list of dataset URNs.
@@ -558,11 +576,18 @@ func (s *LineageStore) getProducerJobsByDatasetURN(
 			jr.parent_job_run_id,
 			parent_jr.job_name,
 			parent_jr.current_state,
-			parent_jr.completed_at
+			parent_jr.completed_at,
+			jr.root_parent_job_run_id,
+			root_jr.job_name,
+			root_jr.job_namespace,
+			root_jr.current_state,
+			root_jr.completed_at,
+			root_jr.producer_name
 		FROM lineage_edges le
 		JOIN job_runs jr ON jr.job_run_id = le.job_run_id
 		JOIN datasets d ON d.dataset_urn = le.dataset_urn
 		LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
+		LEFT JOIN job_runs root_jr ON jr.root_parent_job_run_id = root_jr.job_run_id
 		WHERE le.edge_type = 'output'
 		  AND le.dataset_urn = ANY($1)
 	`
@@ -594,6 +619,9 @@ func (s *LineageStore) getProducerJobsByDatasetURN(
 			&producer.EdgeID, &producer.EdgeType, &producer.EdgeCreatedAt,
 			&producer.ParentJobRunID, &producer.ParentJobName,
 			&producer.ParentJobStatus, &producer.ParentJobCompletedAt,
+			&producer.RootParentJobRunID, &producer.RootParentJobName,
+			&producer.RootParentJobNamespace, &producer.RootParentJobStatus,
+			&producer.RootParentJobCompletedAt, &producer.RootParentProducerName,
 		); err != nil {
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
@@ -932,7 +960,9 @@ func (s *LineageStore) queryIncidentByIDFromView(
 			job_started_at, job_completed_at,
 			producer_name, producer_version,
 			lineage_edge_id, lineage_edge_type, lineage_created_at,
-			parent_job_run_id, parent_job_name, parent_job_status, parent_job_completed_at
+			parent_job_run_id, parent_job_name, parent_job_status, parent_job_completed_at,
+			root_parent_job_run_id, root_parent_job_name, root_parent_job_namespace,
+			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
 		FROM incident_correlation_view
 		WHERE test_result_id = $1
 		LIMIT 1
@@ -946,6 +976,12 @@ func (s *LineageStore) queryIncidentByIDFromView(
 
 	var parentJobCompletedAt sql.NullTime
 
+	var rootParentJobRunID, rootParentJobName, rootParentJobNamespace sql.NullString
+
+	var rootParentJobStatus, rootParentProducerName sql.NullString
+
+	var rootParentJobCompletedAt sql.NullTime
+
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs,
@@ -955,6 +991,8 @@ func (s *LineageStore) queryIncidentByIDFromView(
 		&r.ProducerName, &r.ProducerVersion,
 		&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
 		&parentJobRunID, &parentJobName, &parentJobStatus, &parentJobCompletedAt,
+		&rootParentJobRunID, &rootParentJobName, &rootParentJobNamespace,
+		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -979,6 +1017,17 @@ func (s *LineageStore) queryIncidentByIDFromView(
 
 	if parentJobCompletedAt.Valid {
 		r.ParentJobCompletedAt = &parentJobCompletedAt.Time
+	}
+
+	// Map nullable root parent fields
+	r.RootParentJobRunID = rootParentJobRunID.String
+	r.RootParentJobName = rootParentJobName.String
+	r.RootParentJobNamespace = rootParentJobNamespace.String
+	r.RootParentJobStatus = rootParentJobStatus.String
+	r.RootParentProducerName = rootParentProducerName.String
+
+	if rootParentJobCompletedAt.Valid {
+		r.RootParentJobCompletedAt = &rootParentJobCompletedAt.Time
 	}
 
 	s.logger.Info("Queried incident by ID from view",

@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /dbt
 
+RUN pip install --upgrade pip
+
 # Install dbt-postgres and correlator-dbt from TestPyPI
 # Package name is correlator-dbt (not dbt-correlator), CLI command is dbt-correlator
 # --pre allows pre-release/dev versions, -i sets TestPyPI as primary index

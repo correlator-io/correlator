@@ -19,7 +19,6 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 DROP TABLE IF EXISTS test_results CASCADE;
 DROP TABLE IF EXISTS lineage_event_idempotency CASCADE;
 DROP TABLE IF EXISTS lineage_edges CASCADE;
-DROP TABLE IF EXISTS job_id_mappings CASCADE;
 DROP TABLE IF EXISTS job_runs CASCADE;
 DROP TABLE IF EXISTS datasets CASCADE;
 DROP TABLE IF EXISTS api_key_audit_log CASCADE;
@@ -34,7 +33,7 @@ COMMIT;
 -- Success message
 SELECT
     'Initial schema rollback completed' as status,
-    8 as tables_dropped,
+    7 as tables_dropped,
     3 as materialized_views_dropped,
     3 as functions_dropped,
     'Database clean - ready for fresh installation' as note,

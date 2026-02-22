@@ -163,6 +163,18 @@ func mapIncidentToDetail(
 				CompletedAt: inc.ParentJobCompletedAt,
 			}
 		}
+
+		// Add root parent job info if available (from OpenLineage ParentRunFacet root)
+		if inc.RootParentJobRunID != "" {
+			response.Job.RootParent = &ParentJob{
+				Name:        inc.RootParentJobName,
+				Namespace:   inc.RootParentJobNamespace,
+				RunID:       inc.RootParentJobRunID,
+				Producer:    inc.RootParentProducerName,
+				Status:      inc.RootParentJobStatus,
+				CompletedAt: inc.RootParentJobCompletedAt,
+			}
+		}
 	}
 
 	return response

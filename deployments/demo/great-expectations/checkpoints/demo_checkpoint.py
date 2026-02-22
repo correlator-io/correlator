@@ -138,6 +138,8 @@ def main():
         job_namespace=job_namespace,
         emit_on="all",
         timeout=30,
+        root_parent_id=os.environ.get("OPENLINEAGE_ROOT_PARENT_ID"),
+        parent_id=os.environ.get("OPENLINEAGE_PARENT_ID")
     )
 
     # Create and run checkpoint

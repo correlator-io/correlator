@@ -67,6 +67,11 @@ func TestExtractProducerName(t *testing.T) {
 			producerURL: "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0",
 			want:        "dbt-correlator",
 		},
+		{
+			name:        "Airflow OpenLineage provider URL",
+			producerURL: "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0",
+			want:        "airflow",
+		},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +104,11 @@ func TestExtractProducerVersion(t *testing.T) {
 			name:        "Airflow GitHub URL with tree",
 			producerURL: "https://github.com/apache/airflow/tree/2.7.0",
 			want:        "2.7.0",
+		},
+		{
+			name:        "Airflow OpenLineage provider URL",
+			producerURL: "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0",
+			want:        "2.10.0",
 		},
 		{
 			name:        "Great Expectations GitHub URL with tree",
@@ -283,6 +293,144 @@ func TestExtractParentJobRunID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := extractParentJobRunID(tt.facets)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestExtractRootParentJobRunID verifies root parent extraction from OpenLineage ParentRunFacet.
+func TestExtractRootParentJobRunID(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	tests := []struct {
+		name     string
+		facets   map[string]interface{}
+		expected string
+	}{
+		{
+			name: "valid root with airflow DAG run",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "airflow://demo",
+						"name":      "demo_pipeline.dbt_run",
+					},
+					"run": map[string]interface{}{
+						"runId": "task-run-id",
+					},
+					"root": map[string]interface{}{
+						"job": map[string]interface{}{
+							"namespace": "airflow://demo",
+							"name":      "demo_pipeline",
+						},
+						"run": map[string]interface{}{
+							"runId": "019c628f-0000-0000-0000-000000000000",
+						},
+					},
+				},
+			},
+			expected: "airflow:019c628f-0000-0000-0000-000000000000",
+		},
+		{
+			name: "parent without root field",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "dbt://demo",
+						"name":      "jaffle_shop.build",
+					},
+					"run": map[string]interface{}{
+						"runId": "019c628f-d07e-7000-8000-000000000000",
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name:     "no parent facet",
+			facets:   map[string]interface{}{},
+			expected: "",
+		},
+		{
+			name:     "nil facets",
+			facets:   nil,
+			expected: "",
+		},
+		{
+			name: "root with empty namespace",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "airflow://demo",
+						"name":      "demo_pipeline.dbt_run",
+					},
+					"run": map[string]interface{}{
+						"runId": "task-run-id",
+					},
+					"root": map[string]interface{}{
+						"job": map[string]interface{}{
+							"namespace": "",
+							"name":      "demo_pipeline",
+						},
+						"run": map[string]interface{}{
+							"runId": "abc",
+						},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "root with empty runId",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "airflow://demo",
+						"name":      "demo_pipeline.dbt_run",
+					},
+					"run": map[string]interface{}{
+						"runId": "task-run-id",
+					},
+					"root": map[string]interface{}{
+						"job": map[string]interface{}{
+							"namespace": "airflow://demo",
+							"name":      "demo_pipeline",
+						},
+						"run": map[string]interface{}{
+							"runId": "",
+						},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "malformed root - missing job",
+			facets: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"job": map[string]interface{}{
+						"namespace": "airflow://demo",
+						"name":      "demo_pipeline.dbt_run",
+					},
+					"run": map[string]interface{}{
+						"runId": "task-run-id",
+					},
+					"root": map[string]interface{}{
+						"run": map[string]interface{}{
+							"runId": "abc",
+						},
+					},
+				},
+			},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractRootParentJobRunID(tt.facets)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

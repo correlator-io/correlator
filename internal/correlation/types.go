@@ -98,6 +98,13 @@ type (
 		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
 		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
 		ParentJobCompletedAt *time.Time // Parent job completion timestamp
+		// Root parent job fields (from OpenLineage ParentRunFacet root)
+		RootParentJobRunID       string     // Canonical root parent job run ID (empty if no root)
+		RootParentJobName        string     // Root parent job name (e.g., "demo_pipeline")
+		RootParentJobNamespace   string     // Root parent job namespace (e.g., "airflow://demo")
+		RootParentJobStatus      string     // Root parent job status
+		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
+		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
 	}
 
 	// RecentIncidentSummary represents a single row from the recent_incidents_summary materialized view.

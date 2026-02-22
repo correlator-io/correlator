@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /ge
 
+RUN pip install --upgrade pip
+
 # Install Great Expectations and correlator-ge from TestPyPI
 # Package name is correlator-ge (not ge-correlator)
 # --pre allows pre-release/dev versions, -i sets TestPyPI as primary index

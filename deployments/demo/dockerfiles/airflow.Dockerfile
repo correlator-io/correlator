@@ -20,10 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 
+RUN pip install --upgrade pip
+
 # Install base tools and Airflow providers
 RUN pip install --no-cache-dir \
     apache-airflow-providers-postgres \
-    apache-airflow-providers-openlineage>=2.0.0 \
+    apache-airflow-providers-openlineage>=2.4.0 \
     dbt-postgres \
     "great_expectations>=1.3.0" \
     psycopg2-binary \

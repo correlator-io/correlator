@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,10 @@ var (
 
 	// ErrInvalidStateTransition is returned when attempting an invalid state transition.
 	ErrInvalidStateTransition = errors.New("invalid state transition from terminal state")
+
+	// versionPattern matches version strings like "1.5.0", "v2.10.0", "0.1.1.dev0".
+	// Requires at least major.minor (digit(s).digit(s)) with optional 'v' prefix.
+	versionPattern = regexp.MustCompile(`^v?\d+\.\d+`)
 )
 
 // Cleanup configuration constants.
@@ -474,7 +479,7 @@ func extractProducerName(producerURL string) string {
 //
 // OpenLineage producers typically include version information:
 //   - "https://github.com/dbt-labs/dbt-core/tree/1.5.0" → "1.5.0"
-//   - "https://github.com/apache/airflow/tree/2.7.0" → "2.7.0"
+//   - "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0" → "2.10.0"
 //   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "0.1.1.dev0"
 //   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "1.0.0"
 //
@@ -482,6 +487,8 @@ func extractProducerName(producerURL string) string {
 //
 // This is used to populate the producer_version column in the job_runs table for
 // debugging and version tracking.
+//
+//nolint:gocognit
 func extractProducerVersion(producerURL string) string {
 	if producerURL == "" {
 		return ""
@@ -495,25 +502,43 @@ func extractProducerVersion(producerURL string) string {
 	parts := strings.Split(producerURL, "/")
 
 	// Handle GitHub URL patterns
-	if len(parts) >= 3 && parts[0] == "github.com" {
+	if len(parts) >= 3 && parts[0] == "github.com" { //nolint:nestif
 		// Pattern: github.com/org/repo/tree/version/... → version is after "tree"
 		for i, part := range parts {
 			if part == "tree" && i+1 < len(parts) {
-				return parts[i+1]
+				candidate := parts[i+1]
+				// If the segment after "tree" looks like a version (starts with digit or 'v'),
+				// use it directly (e.g., tree/1.5.0)
+				if looksLikeVersion(candidate) {
+					return candidate
+				}
+				// Otherwise it's a path segment (e.g., tree/providers-openlineage/2.10.0),
+				// scan remaining segments for a version
+				for j := i + 2; j < len(parts); j++ { //nolint:mnd
+					if looksLikeVersion(parts[j]) {
+						return parts[j]
+					}
+				}
+
+				return ""
 			}
 		}
 
 		// Pattern: github.com/org/repo/version (correlator plugins)
-		// Version typically starts with a digit or 'v'
 		if len(parts) >= producerURLParts {
 			candidate := parts[3]
-			if len(candidate) > 0 && (candidate[0] >= '0' && candidate[0] <= '9' || candidate[0] == 'v') {
+			if looksLikeVersion(candidate) {
 				return candidate
 			}
 		}
 	}
 
 	return ""
+}
+
+// looksLikeVersion returns true if the string matches a version pattern (e.g., "1.5.0", "v2.10.0", "0.1.1.dev0").
+func looksLikeVersion(s string) bool {
+	return versionPattern.MatchString(s)
 }
 
 // extractParentJobRunID extracts parent job run ID from OpenLineage ParentRunFacet.
@@ -530,25 +555,66 @@ func extractProducerVersion(producerURL string) string {
 //
 // Returns empty string if ParentRunFacet is not present or malformed.
 func extractParentJobRunID(runFacets map[string]interface{}) string {
-	if runFacets == nil {
+	return extractJobRunIDFromFacetObject(getParentFacetObject(runFacets))
+}
+
+// extractRootParentJobRunID extracts the root parent job run ID from OpenLineage ParentRunFacet.
+//
+// ParentRunFacet with root (from run.facets.parent):
+//
+//	{
+//	  "job": {"namespace": "airflow://demo", "name": "demo_pipeline.dbt_run"},
+//	  "run": {"runId": "..."},
+//	  "root": {
+//	    "job": {"namespace": "airflow://demo", "name": "demo_pipeline"},
+//	    "run": {"runId": "019c628f-0000-0000-0000-000000000000"}
+//	  }
+//	}
+//
+// Returns empty string if root is not present or malformed.
+func extractRootParentJobRunID(runFacets map[string]interface{}) string {
+	parent := getParentFacetObject(runFacets)
+	if parent == nil {
 		return ""
 	}
 
-	parent, ok := runFacets["parent"].(map[string]interface{})
+	root, ok := parent["root"].(map[string]interface{})
 	if !ok {
 		return ""
 	}
 
-	// Extract parent job namespace
-	job, ok := parent["job"].(map[string]interface{})
+	return extractJobRunIDFromFacetObject(root)
+}
+
+// getParentFacetObject extracts the "parent" object from run facets.
+func getParentFacetObject(runFacets map[string]interface{}) map[string]interface{} {
+	if runFacets == nil {
+		return nil
+	}
+
+	parent, ok := runFacets["parent"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	return parent
+}
+
+// extractJobRunIDFromFacetObject extracts a canonical job run ID from an object
+// containing "job" and "run" sub-objects (used for both parent and root).
+func extractJobRunIDFromFacetObject(obj map[string]interface{}) string {
+	if obj == nil {
+		return ""
+	}
+
+	job, ok := obj["job"].(map[string]interface{})
 	if !ok {
 		return ""
 	}
 
 	namespace, _ := job["namespace"].(string)
 
-	// Extract parent run ID
-	run, ok := parent["run"].(map[string]interface{})
+	run, ok := obj["run"].(map[string]interface{})
 	if !ok {
 		return ""
 	}
@@ -559,7 +625,6 @@ func extractParentJobRunID(runFacets map[string]interface{}) string {
 		return ""
 	}
 
-	// Use same canonicalization as child job_run_id
 	return canonicalization.GenerateJobRunID(namespace, runID)
 }
 
@@ -792,6 +857,7 @@ func (s *LineageStore) executeJobRunUpsert(
 
 	// Extract parent job run ID from ParentRunFacet
 	parentJobRunID := extractParentJobRunID(event.Run.Facets)
+	rootParentJobRunID := extractRootParentJobRunID(event.Run.Facets)
 
 	query := `
 		INSERT INTO job_runs (
@@ -809,9 +875,10 @@ func (s *LineageStore) executeJobRunUpsert(
 			started_at,
 			completed_at,
 			parent_job_run_id,
+			root_parent_job_run_id,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 		ON CONFLICT (job_run_id) DO UPDATE
 		SET
 			current_state = CASE
@@ -835,6 +902,7 @@ func (s *LineageStore) executeJobRunUpsert(
 				ELSE job_runs.completed_at
 			END,
 			parent_job_run_id = COALESCE(EXCLUDED.parent_job_run_id, job_runs.parent_job_run_id),
+			root_parent_job_run_id = COALESCE(EXCLUDED.root_parent_job_run_id, job_runs.root_parent_job_run_id),
 			updated_at = NOW()
 	`
 
@@ -842,6 +910,11 @@ func (s *LineageStore) executeJobRunUpsert(
 	var parentJobRunIDParam sql.NullString
 	if parentJobRunID != "" {
 		parentJobRunIDParam = sql.NullString{String: parentJobRunID, Valid: true}
+	}
+
+	var rootParentJobRunIDParam sql.NullString
+	if rootParentJobRunID != "" {
+		rootParentJobRunIDParam = sql.NullString{String: rootParentJobRunID, Valid: true}
 	}
 
 	_, err := tx.ExecContext(
@@ -861,6 +934,7 @@ func (s *LineageStore) executeJobRunUpsert(
 		event.EventTime,
 		completedAt,
 		parentJobRunIDParam,
+		rootParentJobRunIDParam,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)
