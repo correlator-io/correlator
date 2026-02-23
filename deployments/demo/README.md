@@ -100,25 +100,22 @@ forms. See the file for examples.
 
 ## Demo Scenarios
 
-### Scenario 1: Success Path
+### Scenario 1: Incident Correlation
+
+The seed data contains intentional quality issues (duplicate customer IDs, duplicate order IDs) that cause dbt
+uniqueness tests to fail. This is by design — Correlator's purpose is correlating incidents across tools.
 
 1. Start demo: `make start demo`
 2. Run pipeline: `make run demo`
-3. **Expected:** No incidents in Correlator UI
+3. **Expected:** 4 failed uniqueness tests appear as incidents in Correlator UI, correlated across dbt and GE
 
-### Scenario 2: Failure Path
-
-1. Inject bad data (see `scripts/seed-failure.sh`)
-2. Run pipeline: `make run demo`
-3. **Expected:** Incidents appear with cross-tool correlation
-
-### Scenario 3: Orphan Namespace Detection
+### Scenario 2: Orphan Namespace Detection
 
 1. Run all tools with default namespaces
-2. Check Health page - orphan namespaces visible
-3. Configure `config/.correlator.yaml` with aliases
+2. Check Health page — orphan namespaces visible
+3. Configure `config/.correlator.yaml` with dataset patterns
 4. Restart: `make docker stop demo && make start demo`
-5. **Expected:** Orphan count drops to 0
+5. **Expected:** Orphan count drops to 0, correlation rate reaches 100%
 
 ## Directory Structure
 
@@ -137,19 +134,15 @@ deployments/demo/
 │   ├── macros/                  # Custom dbt macros
 │   │   └── generate_schema_name.sql  # Schema naming override
 │   ├── models/                  # SQL transformations
-│   ├── seeds/                   # Raw CSV data
+│   ├── seeds/                   # Raw CSV data (includes intentional quality issues)
 │   └── profiles.yml             # Database connection
 ├── airflow/
 │   ├── dags/                    # Airflow DAGs
 │   │   └── demo_pipeline.py     # Main demo DAG
 │   └── openlineage.yml          # airflow-correlator config
-├── great-expectations/          # GE project
-│   └── checkpoints/
-│       └── demo_checkpoint.py   # Validation checkpoint
-└── scripts/                     # Helper scripts
-    ├── seed-success.sh          # Use good data
-    ├── seed-failure.sh          # Use bad data
-    └── restore-good-data.sh     # Restore after failure
+└── great-expectations/          # GE project
+    └── checkpoints/
+        └── demo_checkpoint.py   # Validation checkpoint
 ```
 
 ## dbt Schema Naming
