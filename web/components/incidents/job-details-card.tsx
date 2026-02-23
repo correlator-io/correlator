@@ -1,10 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { ProducerIcon } from "@/components/icons/producer-icon";
+import { JobOrchestrationChain } from "./job-orchestration-chain";
+import { buildOrchestrationChain } from "@/lib/orchestration";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import { PlayCircle, CheckCircle } from "lucide-react";
-import type { Producer } from "@/lib/types";
+import type { Producer, ParentJob, OrchestrationNode } from "@/lib/types";
 
 interface JobDetailsCardProps {
   job: {
@@ -14,22 +17,37 @@ interface JobDetailsCardProps {
     producer: Producer;
     status: string;
     startedAt: string;
-    completedAt: string;
+    completedAt: string | null;
+    parent?: ParentJob;
+    orchestration?: OrchestrationNode[];
   };
 }
 
 export function JobDetailsCard({ job }: JobDetailsCardProps) {
-  const statusVariant = job.status === "COMPLETE" ? "default" : "secondary";
+  const chain = buildOrchestrationChain(job);
+
+  const displayStatus = job.status;
+  const displayCompletedAt = job.completedAt;
+
+  const statusVariant = displayStatus === "COMPLETE" ? "default" : "secondary";
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <CardTitle className="text-base font-medium">Producing Job</CardTitle>
-          <Badge variant={statusVariant}>{job.status}</Badge>
+          <Badge variant={statusVariant}>{displayStatus}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Orchestration chain (only renders when parent exists) */}
+        {chain.length > 0 && (
+          <>
+            <JobOrchestrationChain levels={chain} />
+            <Separator />
+          </>
+        )}
+
         {/* Job name and namespace */}
         <div className="space-y-1">
           <p className="text-sm font-medium">{job.name}</p>
@@ -74,19 +92,21 @@ export function JobDetailsCard({ job }: JobDetailsCardProps) {
             </Tooltip>
           </TooltipProvider>
 
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex items-center gap-1.5 cursor-help">
-                  <CheckCircle className="h-3.5 w-3.5" />
-                  Completed {formatRelativeTime(job.completedAt)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{formatAbsoluteTime(job.completedAt)}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {displayCompletedAt && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-1.5 cursor-help">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Completed {formatRelativeTime(displayCompletedAt)}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{formatAbsoluteTime(displayCompletedAt)}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
       </CardContent>
     </Card>

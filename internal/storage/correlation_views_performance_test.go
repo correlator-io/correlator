@@ -537,7 +537,7 @@ func TestMaterializedViewIndexes(t *testing.T) {
 		"lineage_impact_analysis": {
 			indexName: "idx_lineage_impact_analysis_pk",
 			isUnique:  true,
-			reason:    "Required for CONCURRENTLY refresh (composite key: job_run_id, dataset_urn, depth)",
+			reason:    "Required for CONCURRENTLY refresh (composite key: job_run_id, dataset_urn)",
 		},
 		"recent_incidents_summary": {
 			indexName: "idx_recent_incidents_summary_pk",

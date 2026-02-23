@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/correlator-io/correlator/internal/aliasing"
+	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
@@ -47,6 +49,10 @@ var (
 
 	// ErrInvalidStateTransition is returned when attempting an invalid state transition.
 	ErrInvalidStateTransition = errors.New("invalid state transition from terminal state")
+
+	// versionPattern matches version strings like "1.5.0", "v2.10.0", "0.1.1.dev0".
+	// Requires at least major.minor (digit(s).digit(s)) with optional 'v' prefix.
+	versionPattern = regexp.MustCompile(`^v?\d+\.\d+`)
 )
 
 // Cleanup configuration constants.
@@ -59,6 +65,11 @@ const (
 	cleanupBatchSize = 10000
 	// batchSleepDuration is the sleep time between batches to avoid overwhelming the database.
 	batchSleepDuration = 100 * time.Millisecond
+	producerURLParts   = 4
+	// run states.
+	stateComplete = "COMPLETE"
+	stateFail     = "FAIL"
+	stateAbort    = "ABORT"
 )
 
 type (
@@ -421,6 +432,7 @@ func isDatabaseConnectionError(err error) bool {
 //   - "https://github.com/apache/airflow/tree/2.7.0" → "airflow"
 //   - "https://github.com/great-expectations/great_expectations/tree/0.17.0" → "great_expectations"
 //   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "spark"
+//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "dbt-correlator"
 //
 // Falls back to the full URL if extraction fails (defensive programming).
 //
@@ -441,6 +453,7 @@ func extractProducerName(producerURL string) string {
 	// Handle common GitHub URL patterns:
 	// github.com/org/repo/tree/version → "repo"
 	// github.com/org/repo/tree/version/integration/tool → "tool"
+	// github.com/org/repo/version → "repo" (correlator plugins)
 	if len(parts) >= 3 && parts[0] == "github.com" {
 		// Look for "integration" directory (Spark, Flink, etc.)
 		for i, part := range parts {
@@ -460,6 +473,159 @@ func extractProducerName(producerURL string) string {
 
 	// Fallback to full URL (defensive)
 	return producerURL
+}
+
+// extractProducerVersion extracts the version from an OpenLineage producer URL.
+//
+// OpenLineage producers typically include version information:
+//   - "https://github.com/dbt-labs/dbt-core/tree/1.5.0" → "1.5.0"
+//   - "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0" → "2.10.0"
+//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "0.1.1.dev0"
+//   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "1.0.0"
+//
+// Returns empty string if version cannot be extracted.
+//
+// This is used to populate the producer_version column in the job_runs table for
+// debugging and version tracking.
+//
+//nolint:gocognit
+func extractProducerVersion(producerURL string) string {
+	if producerURL == "" {
+		return ""
+	}
+
+	// Remove protocol
+	producerURL = strings.TrimPrefix(producerURL, "https://")
+	producerURL = strings.TrimPrefix(producerURL, "http://")
+
+	// Split by slashes
+	parts := strings.Split(producerURL, "/")
+
+	// Handle GitHub URL patterns
+	if len(parts) >= 3 && parts[0] == "github.com" { //nolint:nestif
+		// Pattern: github.com/org/repo/tree/version/... → version is after "tree"
+		for i, part := range parts {
+			if part == "tree" && i+1 < len(parts) {
+				candidate := parts[i+1]
+				// If the segment after "tree" looks like a version (starts with digit or 'v'),
+				// use it directly (e.g., tree/1.5.0)
+				if looksLikeVersion(candidate) {
+					return candidate
+				}
+				// Otherwise it's a path segment (e.g., tree/providers-openlineage/2.10.0),
+				// scan remaining segments for a version
+				for j := i + 2; j < len(parts); j++ { //nolint:mnd
+					if looksLikeVersion(parts[j]) {
+						return parts[j]
+					}
+				}
+
+				return ""
+			}
+		}
+
+		// Pattern: github.com/org/repo/version (correlator plugins)
+		if len(parts) >= producerURLParts {
+			candidate := parts[3]
+			if looksLikeVersion(candidate) {
+				return candidate
+			}
+		}
+	}
+
+	return ""
+}
+
+// looksLikeVersion returns true if the string matches a version pattern (e.g., "1.5.0", "v2.10.0", "0.1.1.dev0").
+func looksLikeVersion(s string) bool {
+	return versionPattern.MatchString(s)
+}
+
+// extractParentJobRunID extracts parent job run ID from OpenLineage ParentRunFacet.
+//
+// ParentRunFacet structure (from run.facets.parent):
+//
+//	{
+//	  "job": {"namespace": "dbt://demo", "name": "jaffle_shop.build"},
+//	  "run": {"runId": "019c628f-d07e-7000-8000-000000000000"}
+//	}
+//
+// Uses canonicalization.GenerateJobRunID to construct parent ID in same format
+// as child job_run_id, enabling JOIN queries.
+//
+// Returns empty string if ParentRunFacet is not present or malformed.
+func extractParentJobRunID(runFacets map[string]interface{}) string {
+	return extractJobRunIDFromFacetObject(getParentFacetObject(runFacets))
+}
+
+// extractRootParentJobRunID extracts the root parent job run ID from OpenLineage ParentRunFacet.
+//
+// ParentRunFacet with root (from run.facets.parent):
+//
+//	{
+//	  "job": {"namespace": "airflow://demo", "name": "demo_pipeline.dbt_run"},
+//	  "run": {"runId": "..."},
+//	  "root": {
+//	    "job": {"namespace": "airflow://demo", "name": "demo_pipeline"},
+//	    "run": {"runId": "019c628f-0000-0000-0000-000000000000"}
+//	  }
+//	}
+//
+// Returns empty string if root is not present or malformed.
+func extractRootParentJobRunID(runFacets map[string]interface{}) string {
+	parent := getParentFacetObject(runFacets)
+	if parent == nil {
+		return ""
+	}
+
+	root, ok := parent["root"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	return extractJobRunIDFromFacetObject(root)
+}
+
+// getParentFacetObject extracts the "parent" object from run facets.
+func getParentFacetObject(runFacets map[string]interface{}) map[string]interface{} {
+	if runFacets == nil {
+		return nil
+	}
+
+	parent, ok := runFacets["parent"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	return parent
+}
+
+// extractJobRunIDFromFacetObject extracts a canonical job run ID from an object
+// containing "job" and "run" sub-objects (used for both parent and root).
+func extractJobRunIDFromFacetObject(obj map[string]interface{}) string {
+	if obj == nil {
+		return ""
+	}
+
+	job, ok := obj["job"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	namespace, _ := job["namespace"].(string)
+
+	run, ok := obj["run"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	runID, _ := run["runId"].(string)
+
+	if namespace == "" || runID == "" {
+		return ""
+	}
+
+	return canonicalization.GenerateJobRunID(namespace, runID)
 }
 
 // checkIdempotency checks if an event with the given idempotency key already exists.
@@ -684,6 +850,15 @@ func (s *LineageStore) executeJobRunUpsert(
 	newState string,
 	stateHistoryJSON, metadataJSON []byte,
 ) error {
+	var completedAt time.Time
+	if newState == stateComplete || newState == stateFail || newState == stateAbort {
+		completedAt = event.EventTime // Set completed_at only for terminal states
+	}
+
+	// Extract parent job run ID from ParentRunFacet
+	parentJobRunID := extractParentJobRunID(event.Run.Facets)
+	rootParentJobRunID := extractRootParentJobRunID(event.Run.Facets)
+
 	query := `
 		INSERT INTO job_runs (
 			job_run_id,
@@ -696,10 +871,14 @@ func (s *LineageStore) executeJobRunUpsert(
 			state_history,
 			metadata,
 			producer_name,
+			producer_version,
 			started_at,
+			completed_at,
+			parent_job_run_id,
+			root_parent_job_run_id,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 		ON CONFLICT (job_run_id) DO UPDATE
 		SET
 			current_state = CASE
@@ -716,8 +895,27 @@ func (s *LineageStore) executeJobRunUpsert(
 				WHEN EXCLUDED.event_time > job_runs.event_time THEN EXCLUDED.metadata
 				ELSE job_runs.metadata
 			END,
+			producer_version = COALESCE(NULLIF(EXCLUDED.producer_version, ''), job_runs.producer_version),
+			completed_at = CASE
+				WHEN EXCLUDED.completed_at IS NOT NULL AND EXCLUDED.event_time > job_runs.event_time
+					THEN EXCLUDED.completed_at
+				ELSE job_runs.completed_at
+			END,
+			parent_job_run_id = COALESCE(EXCLUDED.parent_job_run_id, job_runs.parent_job_run_id),
+			root_parent_job_run_id = COALESCE(EXCLUDED.root_parent_job_run_id, job_runs.root_parent_job_run_id),
 			updated_at = NOW()
 	`
+
+	// Convert parentJobRunID to sql.NullString for proper NULL handling
+	var parentJobRunIDParam sql.NullString
+	if parentJobRunID != "" {
+		parentJobRunIDParam = sql.NullString{String: parentJobRunID, Valid: true}
+	}
+
+	var rootParentJobRunIDParam sql.NullString
+	if rootParentJobRunID != "" {
+		rootParentJobRunIDParam = sql.NullString{String: rootParentJobRunID, Valid: true}
+	}
 
 	_, err := tx.ExecContext(
 		ctx,
@@ -732,7 +930,11 @@ func (s *LineageStore) executeJobRunUpsert(
 		stateHistoryJSON,
 		metadataJSON,
 		extractProducerName(event.Producer),
+		extractProducerVersion(event.Producer),
 		event.EventTime,
+		completedAt,
+		parentJobRunIDParam,
+		rootParentJobRunIDParam,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)
@@ -829,7 +1031,9 @@ func (s *LineageStore) upsertDataset(ctx context.Context, tx *sql.Tx, dataset *i
 	return nil
 }
 
-// createLineageEdge creates a lineage edge (input or output) for a job run.
+// createLineageEdge creates or updates a lineage edge (input or output) for a job run.
+// Uses UPSERT to handle duplicate edges - merges facets instead of creating duplicates.
+// Facet merging strategy: Keep non-empty facets (new facets win if both are non-empty).
 func (s *LineageStore) createLineageEdge(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -854,9 +1058,15 @@ func (s *LineageStore) createLineageEdge(
 		return fmt.Errorf("failed to marshal facets: %w", err)
 	}
 
-	// Use CASE statement to set appropriate facet column based on edge_type
-	// This eliminates SQL string interpolation and enables query plan caching
-	// We use ::text cast to help PostgreSQL deduce parameter types correctly
+	// UPSERT with facet merging strategy:
+	// - If existing facets are empty ({}), use new facets
+	// - If new facets are empty ({}), keep existing facets
+	// - If both have data, merge them (new facets win for conflicting keys)
+	//
+	// The CASE statements handle the merge logic:
+	// 1. If new facets are empty, keep existing
+	// 2. If existing facets are empty, use new
+	// 3. Otherwise, merge with || operator (right side wins)
 	query := `
 		INSERT INTO lineage_edges (
 			job_run_id,
@@ -867,10 +1077,23 @@ func (s *LineageStore) createLineageEdge(
 			created_at
 		) VALUES (
 			$1, $2, $3::text,
-			CASE WHEN $3::text = 'input' THEN $4::jsonb ELSE NULL END,
-			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE NULL END,
+			CASE WHEN $3::text = 'input' THEN $4::jsonb ELSE '{}'::jsonb END,
+			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE '{}'::jsonb END,
 			NOW()
 		)
+		ON CONFLICT (job_run_id, dataset_urn, edge_type) DO UPDATE SET
+			input_facets = CASE
+				WHEN $3::text != 'input' THEN lineage_edges.input_facets
+				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.input_facets
+				WHEN lineage_edges.input_facets = '{}'::jsonb THEN $4::jsonb
+				ELSE lineage_edges.input_facets || $4::jsonb
+			END,
+			output_facets = CASE
+				WHEN $3::text != 'output' THEN lineage_edges.output_facets
+				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.output_facets
+				WHEN lineage_edges.output_facets = '{}'::jsonb THEN $4::jsonb
+				ELSE lineage_edges.output_facets || $4::jsonb
+			END
 	`
 
 	_, err = tx.ExecContext(
@@ -882,7 +1105,7 @@ func (s *LineageStore) createLineageEdge(
 		facetsJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create lineage edge: %w", err)
+		return fmt.Errorf("failed to upsert lineage edge: %w", err)
 	}
 
 	return nil
@@ -1203,15 +1426,31 @@ func (s *LineageStore) extractDataQualityAssertions(
 				metadata = map[string]interface{}{"column": column}
 			}
 
+			// Extract optional durationMs (milliseconds) - spec-compliant extended field
+			var durationMs int
+			if dur, ok := assertion["durationMs"].(float64); ok {
+				durationMs = int(dur)
+			}
+
+			// Extract optional message - spec-compliant extended field
+			var message string
+			if msg, ok := assertion["message"].(string); ok {
+				message = msg
+			}
+
 			// Store the test result
 			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
-				TestName:   testName,
-				TestType:   "dataQualityAssertion",
-				DatasetURN: input.URN(),
-				JobRunID:   jobRunID,
-				Status:     status,
-				Metadata:   metadata,
-				ExecutedAt: eventTime,
+				TestName:        testName,
+				TestType:        "dataQualityAssertion",
+				DatasetURN:      input.URN(),
+				JobRunID:        jobRunID,
+				Status:          status,
+				Message:         message,
+				DurationMs:      durationMs,
+				Metadata:        metadata,
+				ExecutedAt:      eventTime,
+				ProducerName:    extractProducerName(event.Producer),
+				ProducerVersion: extractProducerVersion(event.Producer),
 			}); err != nil {
 				s.logger.Warn("failed to store test result from facet",
 					slog.String("job_run_id", jobRunID),
@@ -1252,8 +1491,10 @@ func (s *LineageStore) storeTestResult(
 			message,
 			metadata,
 			executed_at,
-			duration_ms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			duration_ms,
+			producer_name,
+			producer_version
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (test_name, dataset_urn, executed_at)
 		DO UPDATE SET
 			test_type = EXCLUDED.test_type,
@@ -1262,6 +1503,8 @@ func (s *LineageStore) storeTestResult(
 			message = EXCLUDED.message,
 			metadata = EXCLUDED.metadata,
 			duration_ms = EXCLUDED.duration_ms,
+			producer_name = EXCLUDED.producer_name,
+			producer_version = EXCLUDED.producer_version,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
@@ -1277,6 +1520,8 @@ func (s *LineageStore) storeTestResult(
 		metadataJSON,
 		testResult.ExecutedAt,
 		testResult.DurationMs,
+		testResult.ProducerName,
+		sql.NullString{String: testResult.ProducerVersion, Valid: testResult.ProducerVersion != ""},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert test result: %w", err)

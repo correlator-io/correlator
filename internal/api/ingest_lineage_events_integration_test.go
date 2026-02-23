@@ -263,7 +263,7 @@ func (ts *testServer) assertEventNotStored(ctx context.Context, t *testing.T, jo
 
 // verifyEventStored verifies a lineage event was persisted to the database.
 // Checks critical fields to ensure end-to-end data integrity (API → Domain → Storage).
-// expectedEdgeCount: expected number of edges for this job_run_id (2 per event sent).
+// Expects 2 edges per job_run_id (1 input + 1 output, deduplicated by UPSERT).
 //
 // This catches bugs where:
 //   - Storage layer silently fails but returns success
@@ -276,7 +276,6 @@ func (ts *testServer) verifyEventStored(
 	t *testing.T,
 	jobRunID string,
 	expectedEventType string,
-	expectedEdgeCount int,
 ) {
 	t.Helper()
 
@@ -305,13 +304,14 @@ func (ts *testServer) verifyEventStored(
 	assert.NotEmpty(t, jobNamespace, "Job namespace should be persisted")
 
 	// 2. Verify lineage_edges table (tests upsertDatasetsAndEdges)
+	// Expect 2 edges: 1 input + 1 output (deduplicated by UPSERT for same job_run_id)
 	var edgeCount int
 
 	edgeQuery := "SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1"
 	err = ts.db.QueryRowContext(ctx, edgeQuery, jobRunID).Scan(&edgeCount)
 	require.NoError(t, err, "Failed to query lineage_edges")
 
-	assert.Equal(t, expectedEdgeCount, edgeCount, "Expected %d lineage edges", expectedEdgeCount)
+	assert.Equal(t, 2, edgeCount, "Expected 2 lineage edges (1 input + 1 output)")
 
 	// 3. Verify datasets table (tests upsertDatasetsAndEdges)
 	var datasetCount int
@@ -359,7 +359,7 @@ func TestLineageHandler_SingleEventSuccess(t *testing.T) {
 	assert.Empty(t, response.FailedEvents, "Expected no failed events")
 
 	// Verify database state (end-to-end verification)
-	ts.verifyEventStored(ctx, t, jobRunID, "START", 2)
+	ts.verifyEventStored(ctx, t, jobRunID, "START")
 }
 
 // TestLineageHandler_BatchAllSuccess tests successful ingestion of multiple events.
@@ -397,9 +397,9 @@ func TestLineageHandler_BatchAllSuccess(t *testing.T) {
 	assert.Empty(t, response.FailedEvents, "Expected no failed events")
 
 	// Verify database state (end-to-end verification for all 3 events)
-	ts.verifyEventStored(ctx, t, jobRunID1, "START", 2)
-	ts.verifyEventStored(ctx, t, jobRunID2, "START", 2)
-	ts.verifyEventStored(ctx, t, jobRunID3, "START", 2)
+	ts.verifyEventStored(ctx, t, jobRunID1, "START")
+	ts.verifyEventStored(ctx, t, jobRunID2, "START")
+	ts.verifyEventStored(ctx, t, jobRunID3, "START")
 }
 
 // TestLineageHandler_BatchPartialSuccess tests batch with mixed success/failure.
@@ -444,8 +444,8 @@ func TestLineageHandler_BatchPartialSuccess(t *testing.T) {
 	assert.False(t, failedEvent.Retriable, "Validation errors are non-retriable")
 
 	// Verify database state (end-to-end verification - only 2 events stored, not 3!)
-	ts.verifyEventStored(ctx, t, jobRunID1, "START", 2)
-	ts.verifyEventStored(ctx, t, jobRunID3, "START", 2)
+	ts.verifyEventStored(ctx, t, jobRunID1, "START")
+	ts.verifyEventStored(ctx, t, jobRunID3, "START")
 
 	// Invalid event should NOT be in database
 	ts.assertEventNotStored(
@@ -554,7 +554,7 @@ func TestLineageHandler_DuplicateEvent(t *testing.T) {
 	assert.Equal(t, 1, count2, "Second request: Count should stay at 1 (idempotency)")
 
 	// Verify database state (end-to-end verification - only 1 event stored, not 2!)
-	ts.verifyEventStored(ctx, t, jobRunID, "START", 2)
+	ts.verifyEventStored(ctx, t, jobRunID, "START")
 }
 
 // TestLineageHandler_RequestTooLarge tests request size limit enforcement.
@@ -802,10 +802,10 @@ func TestLineageHandler_BatchOutOfOrderSorting(t *testing.T) {
 	assert.Equal(t, 0, response.Summary.Failed, "Expected 0 failed (valid sequence after sort)")
 
 	// Verify database state (end-to-end verification - only 1 event stored, not 3! + terminal state only)
-	// 3 events sent for same run = 6 edges (2 per event)
+	// 3 events sent for same run = 2 edges (1 input + 1 output, deduplicated by UPSERT)
 	ts.verifyEventStored(
 		ctx, t,
-		canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID), "COMPLETE", 6,
+		canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID), "COMPLETE",
 	)
 
 	// expect only one stored event

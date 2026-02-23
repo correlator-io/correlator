@@ -3,7 +3,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -16,19 +16,36 @@ import (
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
-// Version information.
-const (
-	version = "1.0.0-dev"
-	name    = "correlator"
+// Build-time information variables (set via -ldflags during compilation).
+//
+//nolint:gochecknoglobals // Required for build-time version injection via -ldflags -X
+var (
+	version   = "0.0.1-dev" // Version of correlator (set at build time)
+	gitCommit = "unknown"   // Git commit hash (set at build time)
+	buildTime = "unknown"   // Build timestamp (set at build time)
 )
+
+const name = "correlator"
+
+// Version returns the build version.
+func Version() string { return version }
+
+// GitCommit returns the git commit hash.
+func GitCommit() string { return gitCommit }
+
+// BuildTime returns the build timestamp.
+func BuildTime() string { return buildTime }
 
 //nolint:funlen // main function sets up dependencies sequentially, extracting would reduce clarity
 func main() {
 	versionFlag := flag.Bool("version", false, "show version information")
 	flag.Parse()
 
+	//nolint:forbidigo
 	if *versionFlag {
-		log.Printf("%s v%s\n", name, version)
+		fmt.Printf("%s v%s\n", name, Version())
+		fmt.Printf("Git Commit: %s\n", GitCommit())
+		fmt.Printf("Build Time: %s\n", BuildTime())
 		os.Exit(0)
 	}
 
@@ -40,7 +57,9 @@ func main() {
 
 	logger.Info("Starting Correlator service",
 		slog.String("service", name),
-		slog.String("version", version),
+		slog.String("version", Version()),
+		slog.String("git_commit", GitCommit()),
+		slog.String("build_time", BuildTime()),
 	)
 
 	logger.Info("Loaded server configuration",
@@ -103,25 +122,25 @@ func main() {
 		)
 	}
 
-	// Load namespace alias configuration (optional - graceful degradation)
-	aliasConfig, err := aliasing.LoadConfigFromEnv()
+	// Load dataset pattern configuration (optional - graceful degradation)
+	patternConfig, err := aliasing.LoadConfigFromEnv()
 	if err != nil {
-		logger.Warn("Failed to load alias config, continuing without aliases",
+		logger.Warn("Failed to load dataset pattern config, continuing without dataset patterns",
 			slog.String("error", err.Error()))
 
-		aliasConfig = &aliasing.Config{}
+		patternConfig = &aliasing.Config{}
 	}
 
-	resolver := aliasing.NewResolver(aliasConfig)
+	resolver := aliasing.NewResolver(patternConfig)
 
-	logger.Info("Namespace alias configuration loaded",
-		slog.Int("alias_count", resolver.GetAliasCount()))
+	logger.Info("Dataset pattern configuration loaded",
+		slog.Int("pattern_count", resolver.GetPatternCount()))
 
-	// Log individual aliases at debug level for troubleshooting
-	for alias, canonical := range resolver.GetAliases() {
-		logger.Debug("Configured namespace alias",
-			slog.String("alias", alias),
-			slog.String("canonical", canonical))
+	// Log individual patterns at debug level for troubleshooting
+	for _, pattern := range patternConfig.DatasetPatterns {
+		logger.Debug("Configured dataset pattern",
+			slog.String("pattern", pattern.Pattern),
+			slog.String("canonical", pattern.Canonical))
 	}
 
 	lineageStore, err := storage.NewLineageStore(

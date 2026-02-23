@@ -60,6 +60,10 @@ type (
 	//   - OpenLineageRunID: OpenLineage client-generated UUID for the run
 	//   - JobEventType: OpenLineage event type (e.g., "COMPLETE", "FAIL")
 	//   - LineageCreatedAt: When the lineage edge was created
+	//   - ParentJobRunID: Canonical parent job run ID (empty if no parent)
+	//   - ParentJobName: Parent job name (e.g., "jaffle_shop.build")
+	//   - ParentJobStatus: Parent job status (e.g., "COMPLETE", "FAIL")
+	//   - ParentJobCompletedAt: Parent job completion timestamp (nil if no parent or still running)
 	//
 	// Used by:
 	//   - correlation.Store.QueryIncidents() - Returns this type
@@ -72,6 +76,7 @@ type (
 		TestMessage      string
 		TestExecutedAt   time.Time
 		TestDurationMs   int64
+		TestProducerName string
 		DatasetURN       string
 		DatasetName      string
 		DatasetNS        string
@@ -88,6 +93,30 @@ type (
 		OpenLineageRunID string
 		JobEventType     string
 		LineageCreatedAt time.Time
+		// Parent job fields (from OpenLineage ParentRunFacet)
+		ParentJobRunID       string     // Canonical parent job run ID (empty if no parent)
+		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
+		ParentJobNamespace   string     // Parent job namespace (e.g., "dbt://demo")
+		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
+		ParentJobCompletedAt *time.Time // Parent job completion timestamp
+		ParentProducerName   string     // Parent producer name (e.g., "correlator-dbt")
+		// Root parent job fields (from OpenLineage ParentRunFacet root)
+		RootParentJobRunID       string     // Canonical root parent job run ID (empty if no root)
+		RootParentJobName        string     // Root parent job name (e.g., "demo_pipeline")
+		RootParentJobNamespace   string     // Root parent job namespace (e.g., "airflow://demo")
+		RootParentJobStatus      string     // Root parent job status
+		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
+		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
+	}
+
+	// OrchestrationNode represents one level in the orchestration chain.
+	// Used to build the full hierarchy from root orchestrator to producing job.
+	OrchestrationNode struct {
+		JobRunID     string
+		JobName      string
+		JobNamespace string
+		ProducerName string
+		Status       string
 	}
 
 	// RecentIncidentSummary represents a single row from the recent_incidents_summary materialized view.
@@ -205,6 +234,35 @@ type (
 		DatasetName string
 		Depth       int
 		ParentURN   string
+		Producer    string
+	}
+
+	// UpstreamResult represents an upstream dataset with child relationship.
+	// This type is used for building lineage tree visualizations showing data provenance.
+	//
+	// Upstream traversal answers: "What datasets were consumed to produce this dataset?"
+	// This is the inverse of downstream traversal (DownstreamResult).
+	//
+	// Fields:
+	//   - DatasetURN: Unique resource name of the upstream dataset (input to some job)
+	//   - DatasetName: Human-readable dataset name
+	//   - Depth: Number of hops upstream from the starting job (1 = direct input, 2+ = further back)
+	//   - ChildURN: URN of the dataset that this upstream dataset feeds into
+	//   - Producer: Tool that produced this upstream dataset (e.g., "dbt", "airflow")
+	//
+	// The ChildURN field enables the frontend to build a tree structure from
+	// the flat list of results. It represents the "feeds into" relationship:
+	// this upstream dataset was consumed to produce the child dataset.
+	//
+	// Example lineage: raw_data → staging_data → mart_data
+	//   - UpstreamResult{URN: "staging_data", Depth: 1, ChildURN: "mart_data", Producer: "dbt"}
+	//   - UpstreamResult{URN: "raw_data", Depth: 2, ChildURN: "staging_data", Producer: "dbt"}
+	UpstreamResult struct {
+		DatasetURN  string
+		DatasetName string
+		Depth       int
+		ChildURN    string
+		Producer    string
 	}
 
 	// OrphanNamespace represents a namespace that appears in validation tests
@@ -247,26 +305,95 @@ type (
 	// configuration issues that prevent cross-tool correlation.
 	//
 	// Fields:
-	//   - CorrelationRate: Ratio of correlated incidents to total incidents (0.0-1.0)
-	//   - TotalDatasets: Count of distinct datasets with test results
-	//   - OrphanNamespaces: List of namespaces requiring alias configuration
+	//   - CorrelationRate: Ratio of correlated tested datasets to total tested datasets (0.0-1.0)
+	//   - TotalDatasets: Count of distinct datasets with test results (any status)
+	//   - ProducedDatasets: Count of distinct datasets with producer output edges
+	//   - CorrelatedDatasets: Count of distinct datasets with both tests AND output edges
+	//   - OrphanDatasets: List of datasets requiring pattern configuration
+	//   - SuggestedPatterns: Auto-generated patterns to resolve orphan datasets
 	//
 	// Correlation Rate Calculation:
 	//
-	//	correlation_rate = correlated_incidents / total_incidents
+	//	correlation_rate = correlated_tested_datasets / total_tested_datasets
 	//
 	// Where:
-	//   - correlated_incidents = incidents where dataset namespace has producer output edges
-	//   - total_incidents = all incidents from incident_correlation_view
-	//   - If total_incidents = 0, returns 1.0 (no incidents = healthy)
+	//   - correlated_tested_datasets = distinct datasets with failed tests AND producer output edges
+	//   - total_tested_datasets = distinct datasets with failed/error test results
+	//   - If total_tested_datasets = 0, returns 1.0 (no failed tests = healthy)
 	//
 	// Used by:
 	//   - correlation.Store.QueryCorrelationHealth() - Returns this type
 	//   - Correlation Health API - GET /api/v1/health/correlation
 	//   - UI Correlation Health page - Shows overall system health
 	Health struct {
-		CorrelationRate  float64
-		TotalDatasets    int
-		OrphanNamespaces []OrphanNamespace
+		CorrelationRate    float64
+		TotalDatasets      int
+		ProducedDatasets   int
+		CorrelatedDatasets int
+		OrphanDatasets     []OrphanDataset
+		SuggestedPatterns  []SuggestedPattern
+	}
+
+	// OrphanDataset represents a dataset with test results but no corresponding
+	// data producer output edges. This is the dataset-level equivalent of OrphanNamespace,
+	// providing finer granularity for correlation diagnostics.
+	//
+	// Unlike OrphanNamespace which groups by namespace, OrphanDataset tracks individual
+	// dataset URNs, enabling:
+	//   - Precise identification of uncorrelated test results
+	//   - Automatic matching to likely producer datasets via table name extraction
+	//   - Pattern suggestion for resolving Entity Resolution issues
+	//
+	// Fields:
+	//   - DatasetURN: The orphan dataset URN (e.g., "demo_postgres/customers")
+	//   - TestCount: Number of test results for this dataset
+	//   - LastSeen: Most recent test execution timestamp
+	//   - LikelyMatch: Candidate producer dataset match (nil if no match found)
+	//
+	// Example:
+	//
+	//	GE emits tests for "demo_postgres/customers"
+	//	dbt produces "postgresql://demo/marts.customers"
+	//	→ OrphanDataset{
+	//	    DatasetURN: "demo_postgres/customers",
+	//	    LikelyMatch: &DatasetMatch{
+	//	        DatasetURN: "postgresql://demo/marts.customers",
+	//	        Confidence: 1.0,
+	//	        MatchReason: "exact_table_name",
+	//	    },
+	//	  }
+	//
+	// Used by:
+	//   - correlation.Store.DetectOrphanDatasets() - Returns this type
+	//   - Pattern suggestion algorithm - Uses LikelyMatch to generate patterns
+	//   - Correlation Health API - Future enhancement to orphan_datasets field
+	OrphanDataset struct {
+		DatasetURN  string
+		TestCount   int
+		LastSeen    time.Time
+		LikelyMatch *DatasetMatch
+	}
+
+	// DatasetMatch represents a candidate match between an orphan dataset and a
+	// produced dataset. Used for automatic pattern suggestion.
+	//
+	// Fields:
+	//   - DatasetURN: The producer dataset URN that potentially matches the orphan
+	//   - Confidence: Match confidence score (0.0 to 1.0)
+	//     - 1.0: Exact table name match (e.g., both extract to "customers")
+	//     - 0.0: No match found
+	//   - MatchReason: Human-readable explanation of why this match was suggested
+	//     - "exact_table_name": Table names extracted from both URNs are identical
+	//     - "no_match": No matching producer dataset found
+	//
+	// Example:
+	//
+	//	Orphan: "demo_postgres/customers" → table name: "customers"
+	//	Producer: "postgresql://demo/marts.customers" → table name: "customers"
+	//	→ DatasetMatch{Confidence: 1.0, MatchReason: "exact_table_name"}
+	DatasetMatch struct {
+		DatasetURN  string
+		Confidence  float64
+		MatchReason string
 	}
 )

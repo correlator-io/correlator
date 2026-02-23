@@ -183,3 +183,70 @@ func NormalizeDatasetURN(urn string) (string, error) {
 
 	return normalized, nil
 }
+
+// ExtractTableName extracts the table name from a dataset URN for orphan matching.
+//
+// This function enables matching orphan datasets (from validators like GE) to
+// produced datasets (from data producers like dbt) by extracting the common
+// table name component from different URN formats.
+//
+// Algorithm:
+//  1. Strip URL scheme (postgresql://, s3://, etc.)
+//  2. Take last path segment after "/"
+//  3. Take last segment after "." (handles schema.table)
+//  4. Remove file extensions (.parquet, .csv, .json)
+//  5. Return lowercase for case-insensitive matching
+//
+// Examples:
+//   - "demo_postgres/customers" → "customers"
+//   - "postgresql://demo/marts.customers" → "customers"
+//   - "s3://bucket/data/customers.parquet" → "customers"
+//   - "bigquery/project.dataset.orders" → "orders"
+//
+// Both extract to "customers", enabling orphan detection with likely matches.
+func ExtractTableName(datasetURN string) string {
+	if datasetURN == "" {
+		return ""
+	}
+
+	uri := datasetURN
+
+	// Step 1: Strip URL scheme if present (postgresql://, s3://, etc.)
+	if idx := strings.Index(uri, "://"); idx != -1 {
+		uri = uri[idx+protocolSuffixLen:]
+	}
+
+	// Step 2: Take last path segment after "/"
+	if idx := strings.LastIndex(uri, "/"); idx != -1 {
+		uri = uri[idx+1:]
+	}
+
+	// Step 3: Take last segment after "." (handles schema.table, db.schema.table)
+	if idx := strings.LastIndex(uri, "."); idx != -1 {
+		// Check if this looks like a file extension
+		suffix := uri[idx:]
+		if isFileExtension(suffix) {
+			// Remove extension first, then check for schema prefix
+			uri = uri[:idx]
+			if dotIdx := strings.LastIndex(uri, "."); dotIdx != -1 {
+				uri = uri[dotIdx+1:]
+			}
+		} else {
+			// It's a schema.table separator, take the table part
+			uri = uri[idx+1:]
+		}
+	}
+
+	// Step 4: Return lowercase for case-insensitive matching
+	return strings.ToLower(uri)
+}
+
+// isFileExtension checks if the suffix is a known file extension.
+func isFileExtension(suffix string) bool {
+	switch strings.ToLower(suffix) {
+	case ".parquet", ".csv", ".json", ".avro", ".orc":
+		return true
+	default:
+		return false
+	}
+}

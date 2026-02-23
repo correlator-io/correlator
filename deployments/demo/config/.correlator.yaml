@@ -1,0 +1,3 @@
+dataset_patterns:
+  - pattern: "demo_postgres/{name}"
+    canonical: "postgresql://demo/{name}"

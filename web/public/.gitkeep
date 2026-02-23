@@ -1,0 +1,2 @@
+# This file ensures the public directory exists for Docker builds.
+# Add static assets (images, fonts, etc.) to this directory as needed.

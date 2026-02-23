@@ -15,10 +15,6 @@
 --    - updated_at tracks last state transition
 --    - Trigger: update_job_runs_updated_at
 --
--- 2. job_id_mappings - Mapping status changes (active → deprecated)
---    - updated_at tracks mapping confidence updates
---    - Trigger: update_job_id_mappings_updated_at
---
 -- 3. datasets - Metadata enrichment over time
 --    - updated_at tracks facet updates from OpenLineage events
 --    - Trigger: update_datasets_updated_at
@@ -80,6 +76,15 @@ CREATE TABLE job_runs (
     started_at TIMESTAMP WITH TIME ZONE NOT NULL,
     completed_at TIMESTAMP WITH TIME ZONE,
 
+    -- Parent job reference for job hierarchy (OpenLineage ParentRunFacet)
+    -- No FK constraint: parent may arrive after child (out-of-order events)
+    parent_job_run_id VARCHAR(255),
+
+    -- Root parent job reference for job hierarchy (OpenLineage ParentRunFacet root)
+    -- Points to the top-level orchestrator (e.g., Airflow DAG run) skipping intermediate hops
+    -- No FK constraint: root parent may arrive after child (out-of-order events)
+    root_parent_job_run_id VARCHAR(255),
+
     -- Job execution state (OpenLineage compliant)
     current_state VARCHAR(50) NOT NULL CHECK (current_state IN ('START', 'RUNNING', 'COMPLETE', 'FAIL', 'ABORT', 'OTHER')),
     
@@ -101,6 +106,8 @@ CREATE TABLE job_runs (
 -- Indexes for job_runs
 CREATE INDEX idx_job_runs_run_id ON job_runs(run_id);
 CREATE INDEX idx_job_runs_temporal ON job_runs(started_at DESC, current_state);
+CREATE INDEX idx_job_runs_parent ON job_runs (parent_job_run_id) WHERE parent_job_run_id IS NOT NULL;
+CREATE INDEX idx_job_runs_root_parent ON job_runs (root_parent_job_run_id) WHERE root_parent_job_run_id IS NOT NULL;
 
 -- Comments
 COMMENT ON TABLE job_runs IS 'OpenLineage RunEvent storage with canonical ID strategy and state machine tracking';
@@ -111,38 +118,11 @@ COMMENT ON COLUMN job_runs.event_time IS 'OpenLineage eventTime - when the event
 COMMENT ON COLUMN job_runs.state_history IS 'Array of state transitions with timestamps for out-of-order event handling';
 COMMENT ON COLUMN job_runs.current_state IS 'Current run state - OpenLineage compliant';
 COMMENT ON COLUMN job_runs.metadata IS 'OpenLineage RunEvent facets and producer-specific metadata as JSONB';
+COMMENT ON COLUMN job_runs.parent_job_run_id IS 'Parent job run ID from OpenLineage ParentRunFacet - enables job hierarchy correlation';
+COMMENT ON COLUMN job_runs.root_parent_job_run_id IS 'Root parent job run ID from OpenLineage ParentRunFacet root field - links to top-level orchestrator (e.g., Airflow DAG run)';
 
 -- =====================================================
--- 2. JOB ID MAPPINGS - ID canonicalization
--- =====================================================
-CREATE TABLE job_id_mappings (
-    id BIGSERIAL PRIMARY KEY,
-
-    canonical_job_run_id VARCHAR(255) NOT NULL REFERENCES job_runs(job_run_id) ON DELETE CASCADE,
-    original_job_run_id VARCHAR(500) NOT NULL,
-
-    producer_name VARCHAR(100) NOT NULL,
-    producer_version VARCHAR(50),
-
-    confidence_score DECIMAL(3,2) DEFAULT 1.00 CHECK (confidence_score >= 0.00 AND confidence_score <= 1.00),
-    mapping_status VARCHAR(50) DEFAULT 'active' CHECK (mapping_status IN ('active', 'deprecated', 'invalid')),
-    mapping_metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(original_job_run_id, producer_name)
-);
-
--- Indexes for job_id_mappings
-CREATE INDEX idx_job_id_mappings_lookup ON job_id_mappings(original_job_run_id, producer_name, mapping_status);
-
--- Comments
-COMMENT ON TABLE job_id_mappings IS 'ID canonicalization mapping with producer-specific formats and confidence scoring';
-COMMENT ON COLUMN job_id_mappings.confidence_score IS 'Mapping confidence (0.0-1.0) for correlation accuracy tracking';
-
--- =====================================================
--- 3. DATASETS - Dataset registry
+-- 2. DATASETS - Dataset registry
 -- =====================================================
 CREATE TABLE datasets (
     -- Dataset URN as primary key (OpenLineage standard)
@@ -190,14 +170,8 @@ CREATE TABLE lineage_edges (
     dataset_urn VARCHAR(500) NOT NULL REFERENCES datasets(dataset_urn) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     edge_type VARCHAR(10) NOT NULL CHECK (edge_type IN ('input', 'output')),
 
-    lineage_type VARCHAR(50) DEFAULT 'transformation' CHECK (lineage_type IN ('transformation', 'extraction', 'loading', 'validation')),
-
     input_facets JSONB DEFAULT '{}',
     output_facets JSONB DEFAULT '{}',
-
-    downstream_dataset_count INTEGER DEFAULT 0,
-    downstream_job_count INTEGER DEFAULT 0,
-    impact_score DECIMAL(5,2) DEFAULT 0.00,
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -205,6 +179,10 @@ CREATE TABLE lineage_edges (
 -- Indexes for lineage_edges
 CREATE INDEX idx_lineage_edges_job_run_id ON lineage_edges(job_run_id);
 CREATE INDEX idx_lineage_edges_dataset_urn ON lineage_edges(dataset_urn, edge_type, job_run_id);
+
+-- Unique constraint: One edge per (job_run_id, dataset_urn, edge_type) combination
+-- Go code uses UPSERT with facet merging to handle duplicate edge insertions
+CREATE UNIQUE INDEX idx_lineage_edges_unique ON lineage_edges(job_run_id, dataset_urn, edge_type);
 
 -- Comments
 COMMENT ON TABLE lineage_edges IS 'OpenLineage lineage edges: separate rows for each input and output dataset per job run';
@@ -245,6 +223,9 @@ CREATE TABLE test_results (
 
     executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
     duration_ms INTEGER,
+
+    producer_name VARCHAR(100) NOT NULL DEFAULT 'unknown',
+    producer_version VARCHAR(50),
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -399,40 +380,58 @@ COMMENT ON TABLE api_key_audit_log IS 'Audit trail for API key operations - secu
 CREATE MATERIALIZED VIEW incident_correlation_view AS
 SELECT
     -- Test result identification
-    tr.id AS test_result_id,
+    tr.id                   AS test_result_id,
     tr.test_name,
     tr.test_type,
-    tr.status AS test_status,
-    tr.message AS test_message,
-    tr.executed_at AS test_executed_at,
-    tr.duration_ms AS test_duration_ms,
+    tr.status               AS test_status,
+    tr.message              AS test_message,
+    tr.executed_at          AS test_executed_at,
+    tr.duration_ms          AS test_duration_ms,
 
     -- Dataset information
     tr.dataset_urn,
-    d.name AS dataset_name,
-    d.namespace AS dataset_namespace,
+    d.name                  AS dataset_name,
+    d.namespace             AS dataset_namespace,
 
     -- Correlated job run (producer of the dataset)
     jr.job_run_id,
-    jr.run_id AS openlineage_run_id,
+    jr.run_id               AS openlineage_run_id,
     jr.job_name,
     jr.job_namespace,
-    jr.current_state AS job_status,
-    jr.event_type AS job_event_type,
-    jr.started_at AS job_started_at,
-    jr.completed_at AS job_completed_at,
+    jr.current_state        AS job_status,
+    jr.event_type           AS job_event_type,
+    jr.started_at           AS job_started_at,
+    jr.completed_at         AS job_completed_at,
     jr.producer_name,
     jr.producer_version,
 
+    -- Parent job information (from OpenLineage ParentRunFacet)
+    jr.parent_job_run_id,
+    parent_jr.job_name      AS parent_job_name,
+    parent_jr.job_namespace AS parent_job_namespace,
+    parent_jr.current_state AS parent_job_status,
+    parent_jr.completed_at  AS parent_job_completed_at,
+    parent_jr.producer_name AS parent_producer_name,
+
+    -- Root parent job information (from OpenLineage ParentRunFacet root)
+    jr.root_parent_job_run_id,
+    root_jr.job_name        AS root_parent_job_name,
+    root_jr.job_namespace   AS root_parent_job_namespace,
+    root_jr.current_state   AS root_parent_job_status,
+    root_jr.completed_at    AS root_parent_job_completed_at,
+    root_jr.producer_name   AS root_parent_producer_name,
+
     -- Lineage relationship
-    le.id AS lineage_edge_id,
-    le.edge_type AS lineage_edge_type,
-    le.created_at AS lineage_created_at
+    le.id                   AS lineage_edge_id,
+    le.edge_type            AS lineage_edge_type,
+    le.created_at           AS lineage_created_at
 
 FROM test_results tr
     JOIN datasets d ON tr.dataset_urn = d.dataset_urn
     JOIN lineage_edges le ON d.dataset_urn = le.dataset_urn AND le.edge_type = 'output'
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
+    LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
+    LEFT JOIN job_runs root_jr ON jr.root_parent_job_run_id = root_jr.job_run_id
 
 WHERE tr.status IN ('failed', 'error')
 
@@ -456,20 +455,22 @@ COMMENT ON MATERIALIZED VIEW incident_correlation_view IS
     'Correlates test failures to the job runs that produced the failing datasets. Core view for incident analysis.';
 
 -- View 2: Lineage Impact Analysis
+-- Tracks downstream impact FROM a source job: "If this job fails, what datasets are affected?"
 CREATE MATERIALIZED VIEW lineage_impact_analysis AS
 WITH RECURSIVE downstream AS (
-    -- Base case: Direct outputs of all jobs
+    -- Base case: Direct outputs of all jobs (depth 0)
+    -- source_job_run_id = the job we're analyzing impact for (stays constant)
+    -- current_dataset_urn = the dataset at this depth in the downstream chain
     SELECT
-        jr.job_run_id,
-        jr.job_name,
-        jr.job_namespace,
-        jr.current_state AS job_status,
-        le.dataset_urn,
-        d.name AS dataset_name,
-        d.namespace AS dataset_namespace,
+        jr.job_run_id AS source_job_run_id,
+        jr.job_name AS source_job_name,
+        jr.job_namespace AS source_job_namespace,
+        jr.current_state AS source_job_status,
+        le.dataset_urn AS current_dataset_urn,
+        d.name AS current_dataset_name,
+        d.namespace AS current_dataset_namespace,
         0 AS depth,
-        ARRAY[jr.job_run_id::TEXT] AS job_path,
-        ARRAY[le.dataset_urn::TEXT] AS dataset_path
+        ARRAY[le.dataset_urn::TEXT] AS visited_datasets
     FROM job_runs jr
     JOIN lineage_edges le ON jr.job_run_id = le.job_run_id
     JOIN datasets d ON le.dataset_urn = d.dataset_urn
@@ -477,57 +478,58 @@ WITH RECURSIVE downstream AS (
 
     UNION ALL
 
-    -- Recursive case: Find jobs that consume downstream datasets
+    -- Recursive case: Find datasets produced by jobs that consume current dataset
+    -- Keep source_job_run_id constant (we're tracking impact FROM that job)
+    -- Move to the next dataset in the downstream chain
     SELECT
-        jr_next.job_run_id,
-        jr_next.job_name,
-        jr_next.job_namespace,
-        jr_next.current_state AS job_status,
-        le_next_output.dataset_urn,
-        d_next.name AS dataset_name,
-        d_next.namespace AS dataset_namespace,
+        ds.source_job_run_id,
+        ds.source_job_name,
+        ds.source_job_namespace,
+        ds.source_job_status,
+        le_next_output.dataset_urn AS current_dataset_urn,
+        d_next.name AS current_dataset_name,
+        d_next.namespace AS current_dataset_namespace,
         ds.depth + 1,
-        ds.job_path || jr_next.job_run_id::TEXT,
-        ds.dataset_path || le_next_output.dataset_urn::TEXT
+        ds.visited_datasets || le_next_output.dataset_urn::TEXT
     FROM downstream ds
-    JOIN lineage_edges le_next_input ON ds.dataset_urn = le_next_input.dataset_urn
+    -- Find jobs that consume the current dataset
+    JOIN lineage_edges le_next_input ON ds.current_dataset_urn = le_next_input.dataset_urn
         AND le_next_input.edge_type = 'input'
     JOIN job_runs jr_next ON le_next_input.job_run_id = jr_next.job_run_id
+    -- Find what those jobs output (the next downstream datasets)
     JOIN lineage_edges le_next_output ON jr_next.job_run_id = le_next_output.job_run_id
         AND le_next_output.edge_type = 'output'
     JOIN datasets d_next ON le_next_output.dataset_urn = d_next.dataset_urn
-
     WHERE ds.depth < 10
-        AND NOT (jr_next.job_run_id = ANY(ds.job_path))
-        AND NOT (le_next_output.dataset_urn = ANY(ds.dataset_path))
+        -- Prevent cycles: don't revisit datasets we've already seen
+        AND NOT (le_next_output.dataset_urn = ANY(ds.visited_datasets))
 )
-SELECT
-    job_run_id,
-    job_name,
-    job_namespace,
-    job_status,
-    dataset_urn,
-    dataset_name,
-    dataset_namespace,
+-- Deduplicate: same source job may reach same dataset via multiple paths
+-- Keep the shortest path (minimum depth)
+SELECT DISTINCT ON (source_job_run_id, current_dataset_urn)
+    source_job_run_id AS job_run_id,
+    source_job_name AS job_name,
+    source_job_namespace AS job_namespace,
+    source_job_status AS job_status,
+    current_dataset_urn AS dataset_urn,
+    current_dataset_name AS dataset_name,
+    current_dataset_namespace AS dataset_namespace,
     depth,
-    array_length(job_path, 1) AS job_path_length,
-    array_length(dataset_path, 1) AS dataset_path_length
+    array_length(visited_datasets, 1) AS dataset_path_length
 FROM downstream
-ORDER BY job_run_id, depth;
+ORDER BY source_job_run_id, current_dataset_urn, depth;
 
 -- UNIQUE index required for CONCURRENTLY refresh
+-- Now unique on (job_run_id, dataset_urn) since we deduplicate to shortest path
 CREATE UNIQUE INDEX idx_lineage_impact_analysis_pk
-    ON lineage_impact_analysis (job_run_id, dataset_urn, depth);
+    ON lineage_impact_analysis (job_run_id, dataset_urn);
 
 -- Additional indexes
-CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_dataset_urn
-    ON lineage_impact_analysis (dataset_urn);
-
 CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_depth
     ON lineage_impact_analysis (depth, job_run_id);
 
 COMMENT ON MATERIALIZED VIEW lineage_impact_analysis IS
-    'Recursive downstream impact analysis: finds all datasets and jobs affected by a job run failure. Max depth: 10 levels.';
+    'Downstream impact analysis: finds all datasets affected by a source job run. Answers "if this job fails, what datasets are impacted?" Uses DISTINCT ON to keep shortest path. Max depth: 10 levels.';
 
 -- View 3: Recent Incidents Summary
 CREATE MATERIALIZED VIEW recent_incidents_summary AS
@@ -689,10 +691,6 @@ CREATE TRIGGER update_job_runs_updated_at
     BEFORE UPDATE ON job_runs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_job_id_mappings_updated_at
-    BEFORE UPDATE ON job_id_mappings
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
 CREATE TRIGGER update_datasets_updated_at
     BEFORE UPDATE ON datasets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -728,16 +726,16 @@ BEGIN
         RAISE EXCEPTION 'Table test_results not created';
     END IF;
 
-    -- Verify materialized views
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'incident_correlation_view') THEN
+    -- Verify materialized views (use current_schema() for schema-agnostic validation)
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'incident_correlation_view') THEN
         RAISE EXCEPTION 'Materialized view incident_correlation_view not created';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'lineage_impact_analysis') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'lineage_impact_analysis') THEN
         RAISE EXCEPTION 'Materialized view lineage_impact_analysis not created';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'recent_incidents_summary') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'recent_incidents_summary') THEN
         RAISE EXCEPTION 'Materialized view recent_incidents_summary not created';
     END IF;
 

@@ -68,3 +68,46 @@ export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - 1) + "…";
 }
+
+// ============================================================
+// Incident Formatting Utilities
+// ============================================================
+
+/**
+ * Extract a human-readable dataset name from a URN.
+ *
+ * Examples:
+ * - "postgresql://demo/marts.customers" → "marts.customers"
+ * - "postgresql://demo/staging.stg_orders" → "staging.stg_orders"
+ * - "demo_postgres/orders" → "orders"
+ * - "orders" → "orders"
+ */
+export function extractDatasetName(datasetUrn: string): string {
+  // Try to match schema.table pattern after a slash
+  const schemaTableMatch = datasetUrn.match(/\/([^/]+\.[^/]+)$/);
+  if (schemaTableMatch) {
+    return schemaTableMatch[1];
+  }
+
+  // Try to get last segment after slash
+  const parts = datasetUrn.split("/").filter(Boolean);
+  if (parts.length > 0) {
+    return parts[parts.length - 1];
+  }
+
+  // Fallback to original
+  return datasetUrn;
+}
+
+/**
+ * Format incident ID with test name for display.
+ *
+ * Format: "INC-{id} · {testName}"
+ *
+ * Examples:
+ * - "INC-50 · unique(customer_id)"
+ * - "INC-51 · not_null(email)"
+ */
+export function formatIncidentId(id: string, testName: string): string {
+  return `INC-${id} · ${testName}`;
+}

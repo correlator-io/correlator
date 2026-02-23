@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Correlator API
-  version: 1.0.0
+  version: 0.1.0
   description: |
     **Correlator Incident Correlation Engine API**
 
@@ -16,7 +16,7 @@ info:
     ## Base URLs
 
     - API endpoints: `/api/v1/*`
-    - Health probes: `/ping`, `/ready`, `/health` (root level)
+    - Health probes: `/ping`, `/ready`, `/health`
 
 servers:
   - url: http://localhost:8080
@@ -33,7 +33,7 @@ tags:
   - name: Correlation Queries
     description: Incident list and detail endpoints for UI
   - name: Correlation Health
-    description: Correlation system health and orphan namespace detection
+    description: Correlation system health and orphan dataset detection
 
 paths:
   # Public Health Probes (no /api/v1 prefix, no auth)
@@ -179,8 +179,7 @@ paths:
     get:
       summary: List incidents
       description: |
-        Retrieve paginated list of incidents (failed test results with correlation info).
-        Supports filtering by time range.
+        Retrieve paginated list of incidents. Supports filtering by time range.
 
         The view only returns failed/error test results that have lineage correlation.
       operationId: listIncidents
@@ -267,12 +266,19 @@ paths:
       description: |
         Returns correlation system health metrics including:
         - Correlation rate (correlated incidents / total incidents)
-        - Total datasets with test results
-        - Orphan namespaces that need alias configuration
+        - Dataset counts (total, produced, correlated)
+        - Orphan datasets that need pattern configuration
+        - Suggested patterns to resolve orphan datasets
 
-        Orphan namespaces indicate namespace aliasing issues where validators
-        (Great Expectations, Soda) emit different namespace formats than
-        data producers (dbt, Airflow).
+        An Orphan dataset is a dataset that has test results (from validators like GE, dbt tests, Soda)
+        but cannot be matched to any dataset that was produced by a data producer (like dbt models, Airflow tasks, Spark jobs).
+
+        A produced dataset is a dataset that appears as an output of at least one job.
+
+        A correlated dataset is a produced dataset that has test results linked to it.
+
+        The suggested_patterns field provides auto-generated pattern configurations
+        that can be added to .correlator.yaml to resolve orphan datasets.
       operationId: getCorrelationHealth
       tags:
         - Correlation Health
@@ -284,14 +290,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/CorrelationHealthResponse'
               example:
-                correlation_rate: 0.87
-                total_datasets: 47
-                orphan_namespaces:
-                  - namespace: postgres_prod
-                    producer: great_expectations
-                    last_seen: "2024-01-29T15:00:00Z"
-                    event_count: 42
-                    suggested_alias: null
+                correlation_rate: 0.85
+                total_datasets: 12
+                produced_datasets: 8
+                correlated_datasets: 6
+                orphan_datasets:
+                  - dataset_urn: "demo_postgres/customers"
+                    test_count: 5
+                    last_seen: "2026-02-10T15:00:00Z"
+                    likely_match:
+                      dataset_urn: "postgresql://demo/marts.customers"
+                      confidence: 1.0
+                      match_reason: "exact_table_name"
+                suggested_patterns:
+                  - pattern: "demo_postgres/{name}"
+                    canonical: "postgresql://demo/marts.{name}"
+                    resolves_count: 3
+                    orphans_resolved:
+                      - "demo_postgres/customers"
+                      - "demo_postgres/orders"
+                      - "demo_postgres/products"
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -496,6 +514,7 @@ components:
         - total
         - limit
         - offset
+        - orphan_count
       properties:
         incidents:
           type: array
@@ -510,6 +529,9 @@ components:
         offset:
           type: integer
           description: Page offset
+        orphan_count:
+          type: integer
+          description: Number of datasets with test failures but no producer correlation (not shown in incidents list)
 
     IncidentSummary:
       type: object
@@ -571,6 +593,7 @@ components:
         - id
         - test
         - dataset
+        - upstream
         - downstream
         - correlation_status
       properties:
@@ -585,8 +608,14 @@ components:
           $ref: '#/components/schemas/JobDetail'
           nullable: true
           description: Null if uncorrelated
+        upstream:
+          type: array
+          description: Datasets consumed to produce the tested dataset (data provenance)
+          items:
+            $ref: '#/components/schemas/UpstreamDataset'
         downstream:
           type: array
+          description: Datasets affected by this dataset (impact analysis)
           items:
             $ref: '#/components/schemas/DownstreamDataset'
         correlation_status:
@@ -606,6 +635,7 @@ components:
         - message
         - executed_at
         - duration_ms
+        - producer
       properties:
         name:
           type: string
@@ -621,6 +651,9 @@ components:
         duration_ms:
           type: integer
           format: int64
+        producer:
+          type: string
+          description: Tool that ran this test (e.g., "correlator-ge", "correlator-dbt")
 
     DatasetDetail:
       type: object
@@ -663,6 +696,40 @@ components:
           type: string
           format: date-time
           nullable: true
+        parent:
+          $ref: '#/components/schemas/ParentJob'
+          description: |
+            Parent job information from OpenLineage ParentRunFacet.
+            Present when job has a parent. Fields may be empty if parent
+            job hasn't been ingested yet (out-of-order event arrival).
+
+    ParentJob:
+      type: object
+      description: Parent job information from OpenLineage ParentRunFacet
+      required:
+        - name
+        - run_id
+        - status
+      properties:
+        name:
+          type: string
+          description: Parent job name
+          example: "jaffle_shop.build"
+        run_id:
+          type: string
+          description: Parent job run ID (canonical format)
+          example: "dbt:019c628f-d07e-7000-8000-000000000000"
+        status:
+          type: string
+          description: Parent job status
+          enum: [START, RUNNING, COMPLETE, FAIL, ABORT, OTHER]
+          example: "COMPLETE"
+        completed_at:
+          type: string
+          format: date-time
+          description: Parent job completion timestamp
+          example: "2026-02-15T18:30:00Z"
+          nullable: true
 
     DownstreamDataset:
       type: object
@@ -671,6 +738,7 @@ components:
         - name
         - depth
         - parentUrn
+        - producer
       properties:
         urn:
           type: string
@@ -678,10 +746,39 @@ components:
           type: string
         depth:
           type: integer
-          description: Hops from original dataset
+          description: Hops downstream from original dataset
         parentUrn:
           type: string
           description: Parent dataset URN for tree visualization
+        producer:
+          type: string
+          description: Tool that produced this dataset (e.g., "dbt", "airflow")
+
+    UpstreamDataset:
+      type: object
+      description: An upstream dataset in the data lineage tree (data provenance)
+      required:
+        - urn
+        - name
+        - depth
+        - childUrn
+        - producer
+      properties:
+        urn:
+          type: string
+          description: Dataset URN
+        name:
+          type: string
+          description: Human-readable dataset name
+        depth:
+          type: integer
+          description: Hops upstream from the tested dataset (1 = direct input)
+        childUrn:
+          type: string
+          description: Child dataset URN - the dataset this upstream feeds into
+        producer:
+          type: string
+          description: Tool that produced this upstream dataset (e.g., "dbt", "airflow")
 
     # Correlation Health Schemas
     CorrelationHealthResponse:
@@ -689,47 +786,103 @@ components:
       required:
         - correlation_rate
         - total_datasets
-        - orphan_namespaces
+        - produced_datasets
+        - correlated_datasets
+        - orphan_datasets
+        - suggested_patterns
       properties:
         correlation_rate:
           type: number
           format: float
           minimum: 0
           maximum: 1
-          description: Ratio of correlated incidents to total incidents
+          description: Ratio of correlated tested datasets to total tested datasets with failed tests (1.0 = all failed test datasets can be traced to a producer)
         total_datasets:
           type: integer
           description: Distinct datasets with test results
-        orphan_namespaces:
+        produced_datasets:
+          type: integer
+          description: Distinct datasets with producer output edges
+        correlated_datasets:
+          type: integer
+          description: Distinct datasets that have both test results and producer output edges
+        orphan_datasets:
           type: array
           items:
-            $ref: '#/components/schemas/OrphanNamespace'
+            $ref: '#/components/schemas/OrphanDataset'
+          description: Datasets requiring pattern configuration
+        suggested_patterns:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedPattern'
+          description: Auto-generated patterns to resolve orphan datasets
 
-    OrphanNamespace:
+    OrphanDataset:
       type: object
       required:
-        - namespace
-        - producer
+        - dataset_urn
+        - test_count
         - last_seen
-        - event_count
       properties:
-        namespace:
+        dataset_urn:
           type: string
-          description: Orphan namespace string
-        producer:
-          type: string
-          description: Tool that emitted events (e.g., great_expectations)
+          description: Orphan dataset URN (e.g., "demo_postgres/customers")
+        test_count:
+          type: integer
+          description: Number of test results for this dataset
         last_seen:
           type: string
           format: date-time
-          description: Most recent event timestamp
-        event_count:
-          type: integer
-          description: Number of test results in this namespace
-        suggested_alias:
-          type: string
+          description: Most recent test execution timestamp
+        likely_match:
+          $ref: '#/components/schemas/DatasetMatch'
           nullable: true
-          description: Suggested alias (null for MVP)
+          description: Candidate producer dataset match (null if no match found)
+
+    DatasetMatch:
+      type: object
+      required:
+        - dataset_urn
+        - confidence
+        - match_reason
+      properties:
+        dataset_urn:
+          type: string
+          description: Producer dataset URN that potentially matches the orphan
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Match confidence score (1.0 = exact table name match)
+        match_reason:
+          type: string
+          description: |
+            Explanation of why this match was suggested:
+            - "exact_table_name": Table names extracted from both URNs are identical
+
+    SuggestedPattern:
+      type: object
+      required:
+        - pattern
+        - canonical
+        - resolves_count
+        - orphans_resolved
+      properties:
+        pattern:
+          type: string
+          description: Source pattern to match orphan dataset URNs (e.g., "demo_postgres/{name}")
+        canonical:
+          type: string
+          description: Target pattern to transform to canonical form (e.g., "postgresql://demo/marts.{name}")
+        resolves_count:
+          type: integer
+          description: Number of orphan datasets this pattern would resolve
+        orphans_resolved:
+          type: array
+          items:
+            type: string
+          description: List of orphan dataset URNs this pattern would resolve
 
     # Error Schema
     Error:

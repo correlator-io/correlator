@@ -169,7 +169,7 @@ func GenerateIdempotencyKey(producer, namespace, name, runID, eventTime, eventTy
 // This function extracts the tool prefix before "://" and normalizes it.
 //
 // Normalization rules:
-//   - Known tools (dbt, airflow, spark) → lowercase tool name
+//   - Known tools (dbt, airflow, spark, great_expectations/ge/gx) → normalized tool name
 //   - Unknown tools → "custom"
 //   - Empty namespace → "unknown"
 //
@@ -177,9 +177,11 @@ func GenerateIdempotencyKey(producer, namespace, name, runID, eventTime, eventTy
 //   - "dbt://analytics" → "dbt"
 //   - "airflow://production" → "airflow"
 //   - "spark://cluster" → "spark"
+//   - "great_expectations://default" → "ge"
+//   - "ge://prod" → "ge"
+//   - "gx://prod" → "ge"
 //   - "custom-tool://env" → "custom"
 //   - "" → "unknown"
-//   - "test://namespace" → "custom"
 //
 // Returns: Normalized tool name string.
 func extractToolFromNamespace(namespace string) string {
@@ -198,8 +200,8 @@ func extractToolFromNamespace(namespace string) string {
 		return "dbt"
 	case "airflow":
 		return "airflow"
-	case "spark":
-		return "spark"
+	case "great_expectations", "ge", "gx":
+		return "ge"
 	default:
 		return "custom"
 	}

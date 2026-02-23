@@ -1,0 +1,17 @@
+# Correlator Demo - dbt Profiles
+# Connection configuration for the demo PostgreSQL database
+
+jaffle_shop_demo:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: demo-postgres
+      port: 5432
+      user: correlator
+      password: correlator_dev_password # pragma: allowlist secret
+      dbname: demo
+      schema: public
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10

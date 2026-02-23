@@ -15,16 +15,6 @@ SET constraint_exclusion = partition; -- Optimize constraint checking
 -- Note: checkpoint_segments was replaced with min_wal_size/max_wal_size in PostgreSQL 9.5+
 -- We configure WAL settings via command line parameters instead
 
--- Create correlator database and user (if not exists via environment variables)
--- This is defensive - Docker handles this via POSTGRES_DB/POSTGRES_USER env vars
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'correlator') THEN
-        CREATE DATABASE correlator;
-    END IF;
-END
-$$;
-
 -- Grant necessary permissions for correlation operations
 -- The correlator user needs to create tables, indexes, and materialized views
 GRANT ALL PRIVILEGES ON DATABASE correlator TO correlator;

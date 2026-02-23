@@ -1,0 +1,12 @@
+# OpenLineage configuration for airflow-correlator
+# Based on: https://github.com/correlator-io/correlator-airflow/blob/main/tests/e2e/tc_002_openlineage.yml
+#
+# This file configures the custom Correlator transport for OpenLineage events.
+# Place this file in the Airflow home directory and set OPENLINEAGE_CONFIG env var.
+
+transport:
+  # Custom transport requires full module path
+  type: airflow_correlator.transport.CorrelatorTransport
+  url: http://demo-correlator:8080
+  timeout: 30
+  verify_ssl: false

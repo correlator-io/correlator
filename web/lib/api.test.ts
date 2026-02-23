@@ -3,16 +3,37 @@ import {
   __testing__,
   type ApiIncidentSummary,
   type ApiIncidentDetailResponse,
-  type ApiOrphanNamespace,
   type ApiCorrelationHealthResponse,
 } from "./api";
 
 const {
+  normalizeTimestamp,
   transformIncident,
   transformIncidentDetail,
-  transformOrphanNamespace,
   transformCorrelationHealth,
 } = __testing__;
+
+describe("normalizeTimestamp", () => {
+  it("returns null for Go zero-value timestamp", () => {
+    expect(normalizeTimestamp("0001-01-01T00:00:00Z")).toBeNull();
+  });
+
+  it("returns null for Go zero-value with microseconds", () => {
+    expect(normalizeTimestamp("0001-01-01T00:00:00.000000Z")).toBeNull();
+  });
+
+  it("returns null for null input", () => {
+    expect(normalizeTimestamp(null)).toBeNull();
+  });
+
+  it("returns null for undefined input", () => {
+    expect(normalizeTimestamp(undefined)).toBeNull();
+  });
+
+  it("passes through valid timestamps", () => {
+    expect(normalizeTimestamp("2026-02-22T15:23:13Z")).toBe("2026-02-22T15:23:13Z");
+  });
+});
 
 describe("transformIncident", () => {
   it("transforms snake_case API response to camelCase", () => {
@@ -83,6 +104,7 @@ describe("transformIncidentDetail", () => {
         message: "Found 847 null values",
         executed_at: "2026-01-23T10:30:00Z",
         duration_ms: 1247,
+        producer: "correlator-dbt",
       },
       dataset: {
         urn: "postgresql://prod/public.orders",
@@ -98,6 +120,7 @@ describe("transformIncidentDetail", () => {
         started_at: "2026-01-23T10:25:00Z",
         completed_at: "2026-01-23T10:28:45Z",
       },
+      upstream: [],
       downstream: [
         {
           urn: "postgresql://prod/public.fct_revenue",
@@ -116,6 +139,8 @@ describe("transformIncidentDetail", () => {
     expect(result.test.durationMs).toBe(1247);
     expect(result.job?.runId).toBe("dbt:abc123");
     expect(result.job?.startedAt).toBe("2026-01-23T10:25:00Z");
+    expect(result.job?.parent).toBeUndefined();
+    expect(result.job?.orchestration).toBeUndefined();
     expect(result.correlationStatus).toBe("correlated");
     expect(result.downstream[0].parentUrn).toBe(
       "postgresql://prod/public.orders"
@@ -132,6 +157,7 @@ describe("transformIncidentDetail", () => {
         message: "Validation failed",
         executed_at: "2026-01-23T10:35:00Z",
         duration_ms: 2341,
+        producer: "great_expectations",
       },
       dataset: {
         urn: "postgres_prod.public.orders",
@@ -139,6 +165,7 @@ describe("transformIncidentDetail", () => {
         namespace: "postgres_prod.public",
       },
       job: null,
+      upstream: [],
       downstream: [],
       correlation_status: "orphan",
     };
@@ -149,56 +176,171 @@ describe("transformIncidentDetail", () => {
     expect(result.downstream).toEqual([]);
     expect(result.correlationStatus).toBe("orphan");
   });
-});
 
-describe("transformOrphanNamespace", () => {
-  it("transforms orphan namespace with suggested alias", () => {
-    const apiNamespace: ApiOrphanNamespace = {
-      namespace: "postgres_prod",
-      producer: "great_expectations",
-      last_seen: "2026-01-23T10:36:00Z",
-      event_count: 12,
-      suggested_alias: "postgresql://prod/public",
+  it("transforms parent and normalizes Go zero-time to null", () => {
+    const apiDetail: ApiIncidentDetailResponse = {
+      id: "789",
+      test: {
+        name: "unique(order_id)",
+        type: "dataQualityAssertion",
+        status: "failed",
+        message: "Got 6 results",
+        executed_at: "2026-01-23T10:30:00Z",
+        duration_ms: 20,
+        producer: "correlator-dbt",
+      },
+      dataset: {
+        urn: "postgresql://demo/staging.stg_orders",
+        name: "staging.stg_orders",
+        namespace: "postgresql://demo",
+      },
+      job: {
+        name: "model.jaffle_shop_demo.stg_orders",
+        namespace: "dbt://demo",
+        run_id: "dbt:abc123",
+        producer: "correlator-dbt",
+        status: "RUNNING",
+        started_at: "2026-01-23T10:25:00Z",
+        completed_at: "0001-01-01T00:00:00Z",
+        parent: {
+          name: "jaffle_shop_demo.run",
+          run_id: "dbt:invocation-789",
+          producer: "correlator-dbt",
+          status: "COMPLETE",
+          completed_at: "2026-01-23T10:29:00Z",
+        },
+      },
+      upstream: [],
+      downstream: [],
+      correlation_status: "correlated",
     };
 
-    const result = transformOrphanNamespace(apiNamespace);
+    const result = transformIncidentDetail(apiDetail);
 
-    expect(result).toEqual({
-      namespace: "postgres_prod",
-      producer: "great_expectations",
-      lastSeen: "2026-01-23T10:36:00Z",
-      eventCount: 12,
-      suggestedAlias: "postgresql://prod/public",
+    // Go zero-time completedAt normalized to null
+    expect(result.job?.completedAt).toBeNull();
+
+    // Parent with real timestamp preserved
+    expect(result.job?.parent).toEqual({
+      name: "jaffle_shop_demo.run",
+      namespace: undefined,
+      runId: "dbt:invocation-789",
+      producer: "dbt",
+      status: "COMPLETE",
+      completedAt: "2026-01-23T10:29:00Z",
     });
+    expect(result.job?.orchestration).toBeUndefined();
   });
 
-  it("handles null suggested alias", () => {
-    const apiNamespace: ApiOrphanNamespace = {
-      namespace: "snowflake://analytics",
-      producer: "airflow",
-      last_seen: "2026-01-22T14:00:00Z",
-      event_count: 8,
-      suggested_alias: null,
+  it("transforms parent + orchestration chain with producer normalization", () => {
+    const apiDetail: ApiIncidentDetailResponse = {
+      id: "36",
+      test: {
+        name: "unique(order_id)",
+        type: "dataQualityAssertion",
+        status: "failed",
+        message: "Got 6 results",
+        executed_at: "2026-02-22T15:23:12Z",
+        duration_ms: 20,
+        producer: "correlator-dbt",
+      },
+      dataset: {
+        urn: "postgresql://demo/staging.stg_orders",
+        name: "staging.stg_orders",
+        namespace: "postgresql://demo",
+      },
+      job: {
+        name: "model.jaffle_shop_demo.stg_orders",
+        namespace: "dbt://demo",
+        run_id: "dbt:019c85f1-leaf",
+        producer: "correlator-dbt",
+        status: "RUNNING",
+        started_at: "2026-02-22T15:22:07Z",
+        completed_at: "0001-01-01T00:00:00Z",
+        parent: {
+          name: "jaffle_shop_demo.run",
+          run_id: "dbt:019c85f1-parent",
+          producer: "correlator-dbt",
+          status: "COMPLETE",
+          completed_at: "2026-02-22T15:22:07Z",
+        },
+        orchestration: [
+          {
+            name: "demo_pipeline",
+            namespace: "airflow://demo",
+            run_id: "airflow:019c85f1-root",
+            producer: "airflow",
+            status: "FAIL",
+          },
+          {
+            name: "jaffle_shop_demo.run",
+            namespace: "dbt://demo",
+            run_id: "dbt:019c85f1-parent",
+            producer: "correlator-dbt",
+            status: "COMPLETE",
+          },
+        ],
+      },
+      upstream: [],
+      downstream: [],
+      correlation_status: "correlated",
     };
 
-    const result = transformOrphanNamespace(apiNamespace);
+    const result = transformIncidentDetail(apiDetail);
 
-    expect(result.suggestedAlias).toBeNull();
+    expect(result.job?.parent).toEqual({
+      name: "jaffle_shop_demo.run",
+      namespace: undefined,
+      runId: "dbt:019c85f1-parent",
+      producer: "dbt",
+      status: "COMPLETE",
+      completedAt: "2026-02-22T15:22:07Z",
+    });
+
+    expect(result.job?.orchestration).toEqual([
+      {
+        name: "demo_pipeline",
+        namespace: "airflow://demo",
+        runId: "airflow:019c85f1-root",
+        producer: "airflow",
+        status: "FAIL",
+      },
+      {
+        name: "jaffle_shop_demo.run",
+        namespace: "dbt://demo",
+        runId: "dbt:019c85f1-parent",
+        producer: "dbt",
+        status: "COMPLETE",
+      },
+    ]);
   });
 });
 
 describe("transformCorrelationHealth", () => {
-  it("transforms health response with orphan namespaces", () => {
+  it("transforms health response with orphan datasets", () => {
     const apiHealth: ApiCorrelationHealthResponse = {
       correlation_rate: 0.87,
       total_datasets: 47,
-      orphan_namespaces: [
+      produced_datasets: 30,
+      correlated_datasets: 26,
+      orphan_datasets: [
         {
-          namespace: "postgres_prod",
-          producer: "great_expectations",
+          dataset_urn: "demo_postgres/public.orders",
+          test_count: 3,
           last_seen: "2026-01-23T10:36:00Z",
-          event_count: 12,
-          suggested_alias: "postgresql://prod/public",
+          likely_match: {
+            dataset_urn: "postgresql://demo/public.orders",
+            confidence: 0.9,
+            match_reason: "exact_table_name",
+          },
+        },
+      ],
+      suggested_patterns: [
+        {
+          pattern: "demo_postgres/{name}",
+          canonical: "postgresql://demo/{name}",
+          resolves_count: 1,
+          orphans_resolved: ["demo_postgres/public.orders"],
         },
       ],
     };
@@ -207,20 +349,26 @@ describe("transformCorrelationHealth", () => {
 
     expect(result.correlationRate).toBe(0.87);
     expect(result.totalDatasets).toBe(47);
-    expect(result.orphanNamespaces).toHaveLength(1);
-    expect(result.orphanNamespaces[0].lastSeen).toBe("2026-01-23T10:36:00Z");
+    expect(result.orphanDatasets).toHaveLength(1);
+    expect(result.orphanDatasets[0].lastSeen).toBe("2026-01-23T10:36:00Z");
+    expect(result.suggestedPatterns).toHaveLength(1);
+    expect(result.suggestedPatterns[0].resolvesCount).toBe(1);
   });
 
-  it("handles empty orphan namespaces (healthy state)", () => {
+  it("handles healthy state with no orphans", () => {
     const apiHealth: ApiCorrelationHealthResponse = {
       correlation_rate: 1.0,
       total_datasets: 47,
-      orphan_namespaces: [],
+      produced_datasets: 30,
+      correlated_datasets: 30,
+      orphan_datasets: [],
+      suggested_patterns: [],
     };
 
     const result = transformCorrelationHealth(apiHealth);
 
     expect(result.correlationRate).toBe(1.0);
-    expect(result.orphanNamespaces).toEqual([]);
+    expect(result.orphanDatasets).toEqual([]);
+    expect(result.suggestedPatterns).toEqual([]);
   });
 });

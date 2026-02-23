@@ -9,10 +9,11 @@ type (
 	// IncidentListResponse represents the response for GET /api/v1/incidents.
 	// Contains a paginated list of incidents with metadata for pagination.
 	IncidentListResponse struct {
-		Incidents []IncidentSummary `json:"incidents"`
-		Total     int               `json:"total"`
-		Limit     int               `json:"limit"`
-		Offset    int               `json:"offset"`
+		Incidents   []IncidentSummary `json:"incidents"`
+		Total       int               `json:"total"`
+		Limit       int               `json:"limit"`
+		Offset      int               `json:"offset"`
+		OrphanCount int               `json:"orphan_count"` //nolint:tagliatelle
 	}
 
 	// IncidentSummary represents a single incident in the list view.
@@ -34,12 +35,13 @@ type (
 	}
 
 	// IncidentDetailResponse represents the response for GET /api/v1/incidents/{id}.
-	// Contains full incident information including test details, dataset, job, and downstream impact.
+	// Contains full incident information including test details, dataset, job, and lineage.
 	IncidentDetailResponse struct {
 		ID                string              `json:"id"`
 		Test              TestDetail          `json:"test"`
 		Dataset           DatasetDetail       `json:"dataset"`
 		Job               *JobDetail          `json:"job"` // nil if uncorrelated
+		Upstream          []UpstreamDataset   `json:"upstream"`
 		Downstream        []DownstreamDataset `json:"downstream"`
 		CorrelationStatus string              `json:"correlation_status"` //nolint:tagliatelle
 	}
@@ -52,6 +54,7 @@ type (
 		Message    string    `json:"message"`
 		ExecutedAt time.Time `json:"executed_at"` //nolint:tagliatelle
 		DurationMs int64     `json:"duration_ms"` //nolint:tagliatelle
+		Producer   string    `json:"producer"`
 	}
 
 	// DatasetDetail contains dataset information for incident detail view.
@@ -63,14 +66,40 @@ type (
 
 	// JobDetail contains job information for incident detail view.
 	// This is nil when the incident is uncorrelated (orphan namespace).
+	//
+	// Status Resolution: The handler layer resolves status from the immediate parent because the
+	// job shows non-terminal state (e.g., RUNNING) but the parent has completed.
+	// This ensures the frontend receives the accurate effective status without fallback logic.
 	JobDetail struct {
+		Name          string              `json:"name"`
+		Namespace     string              `json:"namespace"`
+		RunID         string              `json:"run_id"` //nolint:tagliatelle
+		Producer      string              `json:"producer"`
+		Status        string              `json:"status"`
+		StartedAt     time.Time           `json:"started_at"`             //nolint:tagliatelle
+		CompletedAt   *time.Time          `json:"completed_at,omitempty"` //nolint:tagliatelle
+		Parent        *ParentJob          `json:"parent,omitempty"`
+		Orchestration []OrchestrationNode `json:"orchestration,omitempty"`
+	}
+
+	// ParentJob contains immediate parent job information for incident detail view.
+	ParentJob struct {
 		Name        string     `json:"name"`
-		Namespace   string     `json:"namespace"`
+		Namespace   string     `json:"namespace,omitempty"`
 		RunID       string     `json:"run_id"` //nolint:tagliatelle
 		Producer    string     `json:"producer"`
 		Status      string     `json:"status"`
-		StartedAt   time.Time  `json:"started_at"`             //nolint:tagliatelle
 		CompletedAt *time.Time `json:"completed_at,omitempty"` //nolint:tagliatelle
+	}
+
+	// OrchestrationNode represents one level in the orchestration chain (ancestors only, root to immediate parent).
+	// Ordered from root (index 0) to the producing job's immediate parent (last element).
+	OrchestrationNode struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		RunID     string `json:"run_id"` //nolint:tagliatelle
+		Producer  string `json:"producer"`
+		Status    string `json:"status"`
 	}
 
 	// DownstreamDataset represents a downstream dataset in the lineage tree.
@@ -80,25 +109,53 @@ type (
 		Name      string `json:"name"`
 		Depth     int    `json:"depth"`
 		ParentURN string `json:"parentUrn"` // Parent dataset URN for tree building
+		Producer  string `json:"producer"`  // Tool that produced this dataset (e.g., "dbt")
+	}
+
+	// UpstreamDataset represents an upstream dataset in the lineage tree.
+	// This is the inverse of DownstreamDataset - showing data provenance.
+	// The ChildURN field enables frontend to build tree visualization.
+	UpstreamDataset struct {
+		URN      string `json:"urn"`
+		Name     string `json:"name"`
+		Depth    int    `json:"depth"`
+		ChildURN string `json:"childUrn"` // Child dataset URN (what this feeds into)
+		Producer string `json:"producer"` // Tool that produced this dataset (e.g., "dbt")
 	}
 
 	// CorrelationHealthResponse represents the response for GET /api/v1/health/correlation.
-	// Contains overall correlation system health metrics and orphan namespace details.
+	// Contains overall correlation system health metrics and orphan dataset details.
 	CorrelationHealthResponse struct {
-		CorrelationRate  float64                   `json:"correlation_rate"`  //nolint:tagliatelle
-		TotalDatasets    int                       `json:"total_datasets"`    //nolint:tagliatelle
-		OrphanNamespaces []OrphanNamespaceResponse `json:"orphan_namespaces"` //nolint:tagliatelle
+		CorrelationRate    float64                    `json:"correlation_rate"`    //nolint:tagliatelle
+		TotalDatasets      int                        `json:"total_datasets"`      //nolint:tagliatelle
+		ProducedDatasets   int                        `json:"produced_datasets"`   //nolint:tagliatelle
+		CorrelatedDatasets int                        `json:"correlated_datasets"` //nolint:tagliatelle
+		OrphanDatasets     []OrphanDatasetResponse    `json:"orphan_datasets"`     //nolint:tagliatelle
+		SuggestedPatterns  []SuggestedPatternResponse `json:"suggested_patterns"`  //nolint:tagliatelle
 	}
 
-	// OrphanNamespaceResponse represents a namespace that requires alias configuration.
-	// Orphan namespaces appear in validation tests but have no corresponding
-	// data producer output edges.
-	OrphanNamespaceResponse struct {
-		Namespace      string    `json:"namespace"`
-		Producer       string    `json:"producer"`
-		LastSeen       time.Time `json:"last_seen"`       //nolint:tagliatelle
-		EventCount     int       `json:"event_count"`     //nolint:tagliatelle
-		SuggestedAlias *string   `json:"suggested_alias"` //nolint:tagliatelle
+	// OrphanDatasetResponse represents a dataset that requires pattern configuration.
+	// Orphan datasets have test results but no corresponding data producer output edges.
+	OrphanDatasetResponse struct {
+		DatasetURN  string                `json:"dataset_urn"`  //nolint:tagliatelle
+		TestCount   int                   `json:"test_count"`   //nolint:tagliatelle
+		LastSeen    time.Time             `json:"last_seen"`    //nolint:tagliatelle
+		LikelyMatch *DatasetMatchResponse `json:"likely_match"` //nolint:tagliatelle
+	}
+
+	// DatasetMatchResponse represents a candidate match for an orphan dataset.
+	DatasetMatchResponse struct {
+		DatasetURN  string  `json:"dataset_urn"` //nolint:tagliatelle
+		Confidence  float64 `json:"confidence"`
+		MatchReason string  `json:"match_reason"` //nolint:tagliatelle
+	}
+
+	// SuggestedPatternResponse represents a pattern suggestion derived from orphan→match pairs.
+	SuggestedPatternResponse struct {
+		Pattern         string   `json:"pattern"`
+		Canonical       string   `json:"canonical"`
+		ResolvesCount   int      `json:"resolves_count"`   //nolint:tagliatelle
+		OrphansResolved []string `json:"orphans_resolved"` //nolint:tagliatelle
 	}
 )
 

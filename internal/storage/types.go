@@ -78,6 +78,36 @@ type (
 		// HealthCheck verifies the storage backend is healthy and ready to serve requests
 		HealthCheck(ctx context.Context) error
 	}
+
+	// healthStats holds correlation health statistics.
+	// All counts are based on DISTINCT dataset URNs, not row counts.
+	healthStats struct {
+		// totalFailedTestedDatasets is the count of distinct dataset URNs with failed/error test results.
+		// This is the denominator for correlation rate calculation.
+		totalFailedTestedDatasets int
+
+		// correlatedFailedTestedDatasets is the count of distinct dataset URNs that have both:
+		// 1. Failed/error test results, AND
+		// 2. A producer output edge (lineage_edges with edge_type='output')
+		// This is the numerator for correlation rate calculation.
+		correlatedFailedTestedDatasets int
+
+		// totalDatasets is the count of all distinct dataset URNs with any test results.
+		totalDatasets int
+
+		// producedDatasets is the count of distinct dataset URNs with output edges.
+		producedDatasets int
+
+		// correlatedDatasets is the count of distinct dataset URNs that have both
+		// test results (any status) AND producer output edges.
+		correlatedDatasets int
+	}
+
+	// correlatedTest holds a test ID and its pattern-resolved dataset URN.
+	correlatedTest struct {
+		TestID      int64
+		ResolvedURN string
+	}
 )
 
 // NewConnection returns a new Database Connection.

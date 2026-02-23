@@ -1,13 +1,22 @@
-// Package aliasing provides namespace alias resolution for cross-tool correlation.
+// Package aliasing provides dataset pattern aliasing for cross-tool correlation.
 //
-// Different data tools (dbt, Airflow, Great Expectations) emit different namespace
-// formats for the same data source, breaking cross-tool correlation. This package
-// provides configuration loading and resolution to map tool-specific namespaces
-// to canonical namespaces.
+// Different data tools (dbt, Airflow, Great Expectations) emit different URN
+// formats for the same dataset, breaking cross-tool correlation. This package
+// provides configuration loading and pattern-based resolution to map tool-specific
+// dataset URNs to canonical URNs.
+//
+// Example configuration (.correlator.yaml):
+//
+//	dataset_patterns:
+//	  - pattern: "demo_postgres/{name}"
+//	    canonical: "postgresql://demo/marts.{name}"
+//
+// This transforms "demo_postgres/customers" → "postgresql://demo/marts.customers"
 package aliasing
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -16,70 +25,94 @@ import (
 	"github.com/correlator-io/correlator/internal/config"
 )
 
-// Config holds namespace alias configuration loaded from .correlator.yaml.
-type Config struct {
-	// NamespaceAliases maps tool-specific namespaces to canonical namespaces.
-	// Key is the alias (tool-specific), value is the canonical namespace.
-	//nolint:tagliatelle // snake_case is intentional for YAML config files
-	NamespaceAliases map[string]string `yaml:"namespace_aliases"`
-}
+type (
+	// DatasetPattern defines a pattern-based transformation rule for dataset URNs.
+	//
+	// Patterns are evaluated in order; first match wins.
+	// Pattern syntax:
+	//   - {variable} captures any characters except "/"
+	//   - {variable*} captures any characters including "/" (for paths)
+	//   - Literal characters match exactly
+	//
+	// Examples:
+	//
+	//	Pattern: "demo_postgres/{name}"
+	//	Canonical: "postgresql://demo/marts.{name}"
+	//	Input: "demo_postgres/customers" → Output: "postgresql://demo/marts.customers"
+	DatasetPattern struct {
+		Pattern   string `yaml:"pattern"`
+		Canonical string `yaml:"canonical"`
+	}
 
-// DefaultConfigPath is the default location for the correlator configuration file.
-// Uses hidden file format following common tool conventions (.eslintrc, .prettierrc, etc.).
-const DefaultConfigPath = ".correlator.yaml"
+	// Config holds dataset pattern configuration loaded from .correlator.yaml.
+	Config struct {
+		//nolint:tagliatelle // snake_case is intentional for YAML config files
+		DatasetPatterns []DatasetPattern `yaml:"dataset_patterns"`
+	}
+)
 
-// ConfigPathEnvVar is the environment variable name for custom config path.
-const ConfigPathEnvVar = "CORRELATOR_CONFIG_PATH"
+const (
+	// DefaultConfigPath is the default location for the correlator configuration file.
+	// Uses hidden file format following common tool conventions (.eslintrc, .prettierrc, etc.).
+	DefaultConfigPath = ".correlator.yaml"
 
-// LoadConfig loads alias configuration from a YAML file at the given path.
+	// ConfigPathEnvVar is the environment variable name for custom config path.
+	ConfigPathEnvVar = "CORRELATOR_CONFIG_PATH"
+)
+
+// ErrInvalidConfig is returned when the configuration file has invalid YAML syntax.
+var ErrInvalidConfig = errors.New("invalid config file")
+
+// LoadConfig loads pattern configuration from a YAML file at the given path.
 //
 // Behavior:
-//   - Returns empty config (not error) if file doesn't exist - aliases are optional
-//   - Returns empty config + logs warning if YAML is invalid (graceful degradation)
+//   - Returns empty config (not error) if file doesn't exist - patterns are optional
+//   - Returns error if YAML syntax is invalid - user should fix the typo
 //   - Returns populated config on success
 //
-// This graceful degradation ensures the server can start even without aliases
-// configured, as namespace aliasing is an optional feature.
+// The distinction between missing file (OK) and invalid YAML (error) is intentional:
+// missing patterns is a valid deployment state, but invalid YAML is a user error
+// that should be surfaced immediately (fail fast).
 func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
-		NamespaceAliases: make(map[string]string),
+		DatasetPatterns: []DatasetPattern{},
 	}
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is from trusted config source
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// Missing file is OK - aliases are optional
-			slog.Debug("Config file not found, continuing without aliases",
+			// Missing file is OK - patterns are optional
+			slog.Debug("Config file not found, continuing without patterns",
 				slog.String("path", path))
 
 			return cfg, nil
 		}
 
 		// Other read errors (permissions, etc.) - log warning and continue
-		slog.Warn("Failed to read config file, continuing without aliases",
+		slog.Warn("Failed to read config file, continuing without patterns",
 			slog.String("path", path),
 			slog.String("error", err.Error()))
 
 		return cfg, nil
 	}
 
-	// Empty file is valid - just no aliases
+	// Empty file is valid - just no patterns
 	if len(data) == 0 {
 		return cfg, nil
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		// Invalid YAML - log warning and continue with empty config
-		slog.Warn("Failed to parse config file, continuing without aliases",
+		// Invalid YAML syntax - fail fast so user can fix the typo
+		slog.Error("Invalid YAML in config file",
 			slog.String("path", path),
 			slog.String("error", err.Error()))
 
-		return &Config{NamespaceAliases: make(map[string]string)}, nil
+		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidConfig, path, err)
 	}
 
-	// Ensure map is initialized even if YAML had nil/empty section
-	if cfg.NamespaceAliases == nil {
-		cfg.NamespaceAliases = make(map[string]string)
+	// Ensure slice is initialized even if YAML had nil/empty section
+	if cfg.DatasetPatterns == nil {
+		cfg.DatasetPatterns = []DatasetPattern{}
 	}
 
 	return cfg, nil

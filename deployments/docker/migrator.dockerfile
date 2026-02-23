@@ -19,13 +19,13 @@ COPY . .
 
 # Build the migrator binary with embedded migrations and version information
 # The go:embed directive will include SQL files at compile time
-ARG VERSION=1.0.0-dev
+ARG VERSION=0.1.0-dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -a -installsuffix cgo \
-    -ldflags "-X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X 'main.buildTime=${BUILD_TIME}'" \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X 'main.buildTime=${BUILD_TIME}'" \
     -o migrator ./migrations
 
 # Runtime stage

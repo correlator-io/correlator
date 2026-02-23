@@ -7,314 +7,470 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewResolver_WithValidConfig(t *testing.T) {
+// ==============================================================================
+// Unit Tests: Resolver Construction
+// ==============================================================================
+
+func TestNewResolver_WithValidPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgresql://prod-db:5432/mydb",
-			"mysql_prod":    "mysql://prod-db:3306/mydb",
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+			{Pattern: "old/{name}", Canonical: "new/{name}"},
 		},
 	}
 
 	r := NewResolver(cfg)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 2, r.GetAliasCount())
+	assert.Equal(t, 2, r.GetPatternCount())
 }
 
 func TestNewResolver_WithNilConfig(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	r := NewResolver(nil)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 0, r.GetAliasCount())
+	assert.Equal(t, 0, r.GetPatternCount())
 }
 
-func TestNewResolver_WithEmptyAliases(t *testing.T) {
+func TestNewResolver_WithEmptyPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
-		NamespaceAliases: map[string]string{},
+		DatasetPatterns: []DatasetPattern{},
 	}
 
 	r := NewResolver(cfg)
 
 	require.NotNil(t, r)
-	assert.Equal(t, 0, r.GetAliasCount())
+	assert.Equal(t, 0, r.GetPatternCount())
 }
 
-func TestResolver_AliasCount(t *testing.T) {
+func TestNewResolver_SkipsEmptyPattern(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "", Canonical: "canonical/{name}"},
+			{Pattern: "valid/{name}", Canonical: "output/{name}"},
+		},
+	}
+
+	r := NewResolver(cfg)
+
+	assert.Equal(t, 1, r.GetPatternCount())
+}
+
+func TestNewResolver_SkipsEmptyCanonical(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "input/{name}", Canonical: ""},
+			{Pattern: "valid/{name}", Canonical: "output/{name}"},
+		},
+	}
+
+	r := NewResolver(cfg)
+
+	assert.Equal(t, 1, r.GetPatternCount())
+}
+
+func TestNewResolver_AllPatternsValid(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// Note: Most "special character" patterns become valid after QuoteMeta escaping
+	// This test verifies patterns with regex-like characters work correctly
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "prefix[test]/{name}", Canonical: "output/{name}"},
+			{Pattern: "valid/{name}", Canonical: "output/{name}"},
+		},
+	}
+
+	r := NewResolver(cfg)
+
+	// Both patterns should be valid (special chars are escaped)
+	assert.Equal(t, 2, r.GetPatternCount())
+}
+
+// ==============================================================================
+// Unit Tests: Pattern Resolution
+// ==============================================================================
+
+func TestResolver_Resolve_SingleVariable(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("demo_postgres/customers")
+
+	assert.Equal(t, "postgresql://demo/marts.customers", result)
+}
+
+func TestResolver_Resolve_MultipleVariables(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "{namespace}/{schema}/{table}", Canonical: "postgresql://prod/{schema}.{table}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("mydb/public/users")
+
+	assert.Equal(t, "postgresql://prod/public.users", result)
+}
+
+func TestResolver_Resolve_PathCapture(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "s3://old-bucket/{path*}", Canonical: "s3://new-bucket/{path*}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("s3://old-bucket/data/warehouse/orders.parquet")
+
+	assert.Equal(t, "s3://new-bucket/data/warehouse/orders.parquet", result)
+}
+
+func TestResolver_Resolve_NoMatch(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	// Input doesn't match pattern - should return original
+	result := r.Resolve("other_namespace/customers")
+
+	assert.Equal(t, "other_namespace/customers", result)
+}
+
+func TestResolver_Resolve_FirstMatchWins(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "first/{name}"},
+			{Pattern: "demo_postgres/{name}", Canonical: "second/{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("demo_postgres/customers")
+
+	// First pattern should match
+	assert.Equal(t, "first/customers", result)
+}
+
+func TestResolver_Resolve_EmptyPatterns(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	r := NewResolver(nil)
+
+	// No patterns - should return original
+	result := r.Resolve("any/input")
+
+	assert.Equal(t, "any/input", result)
+}
+
+func TestResolver_Resolve_EmptyInput(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("")
+
+	assert.Empty(t, result)
+}
+
+func TestResolver_Resolve_NilResolver(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	var r *Resolver
+
+	result := r.Resolve("any/input")
+
+	assert.Equal(t, "any/input", result)
+}
+
+// ==============================================================================
+// Unit Tests: Match Detection
+// ==============================================================================
+
+func TestResolver_Match_Found(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	canonical, matched := r.Match("demo_postgres/customers")
+
+	assert.True(t, matched)
+	assert.Equal(t, "postgresql://demo/marts.customers", canonical)
+}
+
+func TestResolver_Match_NotFound(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	canonical, matched := r.Match("other/customers")
+
+	assert.False(t, matched)
+	assert.Empty(t, canonical)
+}
+
+// ==============================================================================
+// Unit Tests: Real-World Scenarios (TC-002 use case)
+// ==============================================================================
+
+func TestResolver_Resolve_DBTvsGE(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	// This is the exact use case from TC-002
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "GE customers → dbt format",
+			input:    "demo_postgres/customers",
+			expected: "postgresql://demo/marts.customers",
+		},
+		{
+			name:     "GE orders → dbt format",
+			input:    "demo_postgres/orders",
+			expected: "postgresql://demo/marts.orders",
+		},
+		{
+			name:     "dbt format unchanged (no match)",
+			input:    "postgresql://demo/marts.customers",
+			expected: "postgresql://demo/marts.customers",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := r.Resolve(tc.input)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestResolver_Resolve_SpecialCharacters(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "postgres://host:5432/{name}", Canonical: "postgresql://host/{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("postgres://host:5432/mydb.public.orders")
+
+	assert.Equal(t, "postgresql://host/mydb.public.orders", result)
+}
+
+func TestResolver_Resolve_Underscores(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	cfg := &Config{
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "raw_{env}/{name}", Canonical: "processed_{env}/{name}"},
+		},
+	}
+	r := NewResolver(cfg)
+
+	result := r.Resolve("raw_prod/customer_orders")
+
+	assert.Equal(t, "processed_prod/customer_orders", result)
+}
+
+// ==============================================================================
+// Unit Tests: Pattern Count
+// ==============================================================================
+
+func TestResolver_GetPatternCount(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name     string
-		aliases  map[string]string
+		patterns []DatasetPattern
 		expected int
 	}{
 		{
 			name:     "empty",
-			aliases:  map[string]string{},
+			patterns: []DatasetPattern{},
 			expected: 0,
 		},
 		{
-			name:     "one",
-			aliases:  map[string]string{"a": "b"},
+			name: "one",
+			patterns: []DatasetPattern{
+				{Pattern: "a/{name}", Canonical: "b/{name}"},
+			},
 			expected: 1,
 		},
 		{
-			name:     "multiple",
-			aliases:  map[string]string{"a": "b", "c": "d", "e": "f"},
+			name: "multiple",
+			patterns: []DatasetPattern{
+				{Pattern: "a/{name}", Canonical: "b/{name}"},
+				{Pattern: "c/{name}", Canonical: "d/{name}"},
+				{Pattern: "e/{name}", Canonical: "f/{name}"},
+			},
 			expected: 3,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewResolver(&Config{NamespaceAliases: tc.aliases})
-			assert.Equal(t, tc.expected, r.GetAliasCount())
+			r := NewResolver(&Config{DatasetPatterns: tc.patterns})
+			assert.Equal(t, tc.expected, r.GetPatternCount())
 		})
 	}
 }
 
-func TestResolver_AliasCount_NilResolver(t *testing.T) {
+func TestResolver_GetPatternCount_NilResolver(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	var r *Resolver
-	assert.Equal(t, 0, r.GetAliasCount())
+	assert.Equal(t, 0, r.GetPatternCount())
 }
 
-func TestResolver_Aliases_ReturnsCopy(t *testing.T) {
+// ==============================================================================
+// Concurrency Tests
+// ==============================================================================
+
+func TestResolver_ConcurrentAccess(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias1": "canonical1",
+		DatasetPatterns: []DatasetPattern{
+			{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/marts.{name}"},
+			{Pattern: "old_ns/{schema}/{table}", Canonical: "new_ns/{schema}.{table}"},
 		},
 	}
 	r := NewResolver(cfg)
 
-	// Get copy and modify it
-	cp := r.GetAliases()
-	cp["alias2"] = "canonical2"
-
-	// Original should be unchanged
-	assert.Equal(t, 1, r.GetAliasCount())
-
-	// Verify alias2 is not in the resolver's aliases
-	aliases := r.GetAliases()
-	_, exists := aliases["alias2"]
-	assert.False(t, exists)
-}
-
-func TestResolver_Aliases_Empty(t *testing.T) {
-	r := NewResolver(nil)
-
-	aliases := r.GetAliases()
-
-	assert.NotNil(t, aliases)
-	assert.Empty(t, aliases)
-}
-
-func TestResolver_AliasSlices(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias1": "canonical1",
-			"alias2": "canonical2",
-		},
-	}
-	r := NewResolver(cfg)
-
-	keys, values := r.GetAliasSlices()
-
-	assert.Len(t, keys, 2)
-	assert.Len(t, values, 2)
-
-	// Build a map from slices to verify correctness (order is not guaranteed)
-	resultMap := make(map[string]string)
-	for i := range keys {
-		resultMap[keys[i]] = values[i]
+	// Test URNs
+	testURNs := []string{
+		"demo_postgres/customers",
+		"demo_postgres/orders",
+		"old_ns/public/users",
+		"unmatched/dataset",
 	}
 
-	assert.Equal(t, "canonical1", resultMap["alias1"])
-	assert.Equal(t, "canonical2", resultMap["alias2"])
-}
+	// Run concurrent Resolve calls
+	const goroutines = 100
 
-func TestResolver_AliasSlices_Empty(t *testing.T) {
-	r := NewResolver(nil)
+	const iterations = 100
 
-	keys, values := r.GetAliasSlices()
+	done := make(chan bool, goroutines)
 
-	assert.Empty(t, keys)
-	assert.Empty(t, values)
-}
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < iterations; j++ {
+				for _, urn := range testURNs {
+					_ = r.Resolve(urn)
+					_, _ = r.Match(urn)
+					_ = r.GetPatternCount()
+				}
+			}
 
-func TestResolver_AliasSlices_NilResolver(t *testing.T) {
-	var r *Resolver
-
-	keys, values := r.GetAliasSlices()
-
-	assert.Empty(t, keys)
-	assert.Empty(t, values)
-}
-
-// Validation tests
-
-func TestNewResolver_SkipsSelfReferentialAlias(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod": "postgres_prod", // Self-referential - should be skipped
-			"mysql_prod":    "mysql://prod",  // Valid
-		},
+			done <- true
+		}()
 	}
 
-	r := NewResolver(cfg)
-
-	// Should only have the valid alias
-	assert.Equal(t, 1, r.GetAliasCount())
-
-	aliases := r.GetAliases()
-	_, hasSelfRef := aliases["postgres_prod"]
-	_, hasValid := aliases["mysql_prod"]
-
-	assert.False(t, hasSelfRef, "Self-referential alias should be skipped")
-	assert.True(t, hasValid, "Valid alias should be kept")
-}
-
-func TestNewResolver_SkipsCircularAlias(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias_a": "alias_b", // First alias (processed first due to sorting)
-			"alias_b": "alias_a", // Circular - skipped because alias_a already processed
-		},
+	// Wait for all goroutines
+	for i := 0; i < goroutines; i++ {
+		<-done
 	}
 
-	r := NewResolver(cfg)
-
-	// Processing is deterministic (sorted by key):
-	// 1. alias_a → alias_b is processed first (a < b alphabetically)
-	// 2. alias_b → alias_a is skipped because alias_a is already a valid alias key
-	assert.Equal(t, 1, r.GetAliasCount(), "Only one alias should be kept")
-
-	aliases := r.GetAliases()
-	_, hasA := aliases["alias_a"]
-	_, hasB := aliases["alias_b"]
-
-	assert.True(t, hasA, "alias_a should be kept (processed first)")
-	assert.False(t, hasB, "alias_b should be skipped (circular)")
-}
-
-func TestNewResolver_DeterministicCircularHandling(t *testing.T) {
-	// Run multiple times to verify determinism
-	for i := 0; i < 10; i++ {
-		cfg := &Config{
-			NamespaceAliases: map[string]string{
-				"zebra":  "apple",
-				"apple":  "zebra",
-				"banana": "cherry",
-			},
-		}
-
-		r := NewResolver(cfg)
-
-		// Sorted order: apple, banana, zebra
-		// 1. apple → zebra: kept (zebra not yet processed)
-		// 2. banana → cherry: kept (cherry is not an alias)
-		// 3. zebra → apple: skipped (apple already in validAliases)
-		assert.Equal(t, 2, r.GetAliasCount(), "Should have exactly 2 aliases")
-
-		aliases := r.GetAliases()
-		_, hasApple := aliases["apple"]
-		_, hasBanana := aliases["banana"]
-		_, hasZebra := aliases["zebra"]
-
-		assert.True(t, hasApple, "apple should be kept")
-		assert.True(t, hasBanana, "banana should be kept")
-		assert.False(t, hasZebra, "zebra should be skipped (circular with apple)")
-	}
-}
-
-func TestNewResolver_SkipsEmptyCanonical(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"alias1": "",      // Empty canonical - should be skipped
-			"alias2": "   ",   // Whitespace only - should be skipped
-			"alias3": "valid", // Valid
-		},
-	}
-
-	r := NewResolver(cfg)
-
-	// Should only have the valid alias
-	assert.Equal(t, 1, r.GetAliasCount())
-
-	aliases := r.GetAliases()
-	_, has1 := aliases["alias1"]
-	_, has2 := aliases["alias2"]
-	_, has3 := aliases["alias3"]
-
-	assert.False(t, has1, "Empty canonical should be skipped")
-	assert.False(t, has2, "Whitespace-only canonical should be skipped")
-	assert.True(t, has3, "Valid alias should be kept")
-}
-
-func TestNewResolver_TrimsWhitespace(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"  alias_with_spaces  ": "  canonical_with_spaces  ",
-		},
-	}
-
-	r := NewResolver(cfg)
-
-	// Keys and values should be trimmed
-	aliases := r.GetAliases()
-	canonical, exists := aliases["alias_with_spaces"]
-
-	assert.True(t, exists, "Trimmed alias key should exist")
-	assert.Equal(t, "canonical_with_spaces", canonical, "Canonical value should be trimmed")
-}
-
-func TestNewResolver_MultipleAliasesToSameCanonical(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod":           "postgresql://prod-db:5432/mydb",
-			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	assert.Equal(t, 2, r.GetAliasCount())
-
-	aliases := r.GetAliases()
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", aliases["postgres_prod"])
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", aliases["postgres://prod-db:5432"])
-}
-
-func TestNewResolver_TransitiveChainAllowed(t *testing.T) {
-	// A → B → C should be allowed (not circular)
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"postgres_prod":           "postgres://prod-db:5432",
-			"postgres://prod-db:5432": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	// Both aliases should be kept (transitive chains are valid)
-	assert.Equal(t, 2, r.GetAliasCount())
-
-	aliases := r.GetAliases()
-	_, has1 := aliases["postgres_prod"]
-	_, has2 := aliases["postgres://prod-db:5432"]
-
-	assert.True(t, has1)
-	assert.True(t, has2)
-}
-
-//nolint:gosmopolitan // testing unicode support intentionally
-func TestNewResolver_UnicodeAliases(t *testing.T) {
-	cfg := &Config{
-		NamespaceAliases: map[string]string{
-			"生产数据库": "postgresql://prod-db:5432/mydb",
-		},
-	}
-	r := NewResolver(cfg)
-
-	assert.Equal(t, 1, r.GetAliasCount())
-
-	aliases := r.GetAliases()
-	canonical, exists := aliases["生产数据库"]
-
-	assert.True(t, exists)
-	assert.Equal(t, "postgresql://prod-db:5432/mydb", canonical)
+	// Verify resolver still works correctly after concurrent access
+	assert.Equal(t, "postgresql://demo/marts.customers", r.Resolve("demo_postgres/customers"))
+	assert.Equal(t, "new_ns/public.users", r.Resolve("old_ns/public/users"))
+	assert.Equal(t, 2, r.GetPatternCount())
 }

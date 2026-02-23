@@ -326,6 +326,15 @@ type (
 		// DurationMs is the test execution time in milliseconds (optional).
 		// Used for performance analysis and regression detection.
 		DurationMs int
+
+		// ProducerName identifies the tool that ran this test.
+		// Examples: "great_expectations", "correlator-dbt", "correlator-ge", "soda"
+		// Extracted from OpenLineage producer URL during ingestion.
+		ProducerName string
+
+		// ProducerVersion is the version of the testing tool.
+		// Example: "0.18.0"
+		ProducerVersion string
 	}
 
 	// TestStatus represents valid test execution outcomes.

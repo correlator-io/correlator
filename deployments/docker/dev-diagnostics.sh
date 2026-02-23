@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🔍 Diagnosing Correlator development environment..."
+echo "[INFO] Diagnosing Correlator development environment..."
 echo ""
 
 # Color codes for output
@@ -20,24 +20,24 @@ ISSUES_FOUND=0
 
 # Helper function to report issues
 report_issue() {
-    echo -e "${RED}❌ $1${NC}"
+    echo -e "${RED}[FAIL] $1${NC}"
     ((ISSUES_FOUND++))
 }
 
 report_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    echo -e "${YELLOW}[WARN] $1${NC}"
 }
 
 report_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    echo -e "${GREEN}[OK] $1${NC}"
 }
 
 report_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    echo -e "${BLUE}[INFO] $1${NC}"
 }
 
 # Check if we're in the right directory
-echo "📂 Checking directory structure..."
+echo "[CHECK] Checking directory structure..."
 if [[ ! -f "docker-compose.yml" ]]; then
     report_issue "Must run from deployments/docker directory"
     echo "   Current directory: $(pwd)"
@@ -48,7 +48,7 @@ fi
 
 # Check .env file
 echo ""
-echo "📝 Checking environment configuration..."
+echo "[CHECK] Checking environment configuration..."
 if [[ ! -f ".env" ]]; then
     report_issue ".env file missing"
     echo "   Run: make start (to create from template)"
@@ -58,17 +58,17 @@ else
     report_success ".env file exists"
 
     # Check if .env has required variables
-    if grep -q "POSTGRES_PASSWORD=" .env && grep -q "DATABASE_URL=" .env; then
+    if grep -q "POSTGRES_PASSWORD=" .env && grep -q "LOG_LEVEL=" .env; then
         report_success "Required environment variables present"
     else
         report_warning "Some environment variables may be missing"
-        echo "   Check: POSTGRES_PASSWORD, DATABASE_URL"
+        echo "   Check: POSTGRES_PASSWORD, LOG_LEVEL"
     fi
 fi
 
 # Docker system diagnostics
 echo ""
-echo "🐳 Checking Docker system..."
+echo "[CHECK] Checking Docker system..."
 if ! command -v docker >/dev/null 2>&1; then
     report_issue "Docker not installed or not in PATH"
 else
@@ -100,7 +100,7 @@ fi
 
 # Port availability check
 echo ""
-echo "🔌 Checking port availability..."
+echo "[CHECK] Checking port availability..."
 check_port() {
     local port=$1
     local service=$2
@@ -117,11 +117,12 @@ check_port() {
 
 check_port 5432 "PostgreSQL"
 check_port 8080 "Correlator API"
-check_port 9090 "Correlator Metrics"
+check_port 9090 "Correlator Metrics (reserved)"
+check_port 3000 "Correlator UI"
 
 # Container status check
 echo ""
-echo "📦 Checking container status..."
+echo "[CHECK] Checking container status..."
 if docker compose ps >/dev/null 2>&1; then
     RUNNING_CONTAINERS=$(docker compose ps --services --filter "status=running" | wc -l)
     TOTAL_CONTAINERS=$(docker compose ps --services | wc -l)
@@ -145,7 +146,7 @@ fi
 
 # Migration files check
 echo ""
-echo "📋 Checking migration files..."
+echo "[CHECK] Checking migration files..."
 MIGRATIONS_DIR="../../migrations"
 if [[ ! -d "$MIGRATIONS_DIR" ]]; then
     report_issue "Migrations directory not found at $MIGRATIONS_DIR"
@@ -168,7 +169,7 @@ fi
 
 # Dev container diagnostics
 echo ""
-echo "🏗️  Checking dev container setup..."
+echo "[CHECK] Checking dev container setup..."
 if [[ -f "../../.devcontainer/devcontainer.json" ]]; then
     report_success "Dev container configuration found"
 
@@ -191,7 +192,7 @@ fi
 
 # Network connectivity (if containers are running)
 echo ""
-echo "🌐 Checking network connectivity..."
+echo "[CHECK] Checking network connectivity..."
 if docker compose ps postgres --format "table {{.State}}" | grep -q "running"; then
     if docker compose exec -T postgres pg_isready -U correlator >/dev/null 2>&1; then
         report_success "PostgreSQL is accepting connections"
@@ -205,7 +206,7 @@ fi
 
 # System resources check
 echo ""
-echo "💾 Checking system resources..."
+echo "[CHECK] Checking system resources..."
 if command -v df >/dev/null 2>&1; then
     DISK_USAGE=$(df -h . | awk 'NR==2 {print $5}' | sed 's/%//')
     if [[ $DISK_USAGE -gt 90 ]]; then
@@ -230,25 +231,25 @@ fi
 
 # Final summary
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
+echo "==============================================================================="
 if [[ $ISSUES_FOUND -eq 0 ]]; then
-    echo -e "${GREEN}🎉 No critical issues found! Environment looks healthy.${NC}"
+    echo -e "${GREEN}[SUCCESS] No critical issues found! Environment looks healthy.${NC}"
     echo ""
-    echo "🚀 Ready to develop:"
+    echo "Ready to develop:"
     echo "   make start    # Start development environment"
     echo "   make run      # Start development server (from host)"
     echo "   make check    # Run code quality checks (from dev container)"
 else
-    echo -e "${RED}🚨 Found $ISSUES_FOUND issue(s) that need attention.${NC}"
+    echo -e "${RED}[ALERT] Found $ISSUES_FOUND issue(s) that need attention.${NC}"
     echo ""
-    echo "🔧 Troubleshooting steps:"
+    echo "Troubleshooting steps:"
     echo "   1. Address the issues listed above"
     echo "   2. Run this diagnostic again: make docker health"
     echo "   3. Try: make reset && make start"
 fi
 
 echo ""
-echo "📚 Additional help:"
+echo "Additional help:"
 echo "   make help           # Show all available commands"
 echo "   make docker logs    # View container logs"
 echo "   make reset          # Nuclear reset (when things are broken)"

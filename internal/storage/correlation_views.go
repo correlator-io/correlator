@@ -11,6 +11,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/correlation"
 )
 
@@ -74,8 +75,9 @@ func (s *LineageStore) RefreshViews(ctx context.Context) error {
 // QueryIncidents implements correlation.Store.
 // Queries the incident_correlation_view with optional filters and pagination.
 //
-// This method provides type-safe access to the correlation view, which links
-// test failures to the job runs that produced the failing datasets.
+// When a pattern resolver is configured (via WithAliasResolver), this method
+// applies pattern-based URN resolution to correlate test failures across
+// different URN formats. Without a resolver, only exact URN matches are found.
 //
 // Parameters:
 //   - filter: Optional filter (nil = no filtering, returns all incidents)
@@ -85,12 +87,32 @@ func (s *LineageStore) RefreshViews(ctx context.Context) error {
 //   - IncidentQueryResult with incidents and total count
 //   - Error if query fails or context is cancelled
 //
+// Pattern Resolution:
+//   - If resolver is configured, test result dataset_urns are resolved to canonical form
+//   - Resolved URNs are used to find producing job runs
+//   - Incidents are returned with canonical dataset URNs
+//
 // Performance:
-//   - View is pre-materialized (fast queries, typically 10-50ms)
-//   - Uses COUNT(*) OVER() window function for efficient pagination
-//   - Uses indexes for filtered queries
+//   - View-based query (no patterns): typically 10-50ms
+//   - Pattern-resolved query: typically 50-200ms (additional lookups)
 //   - Call RefreshViews() to update data
 func (s *LineageStore) QueryIncidents(
+	ctx context.Context,
+	filter *correlation.IncidentFilter,
+	pagination *correlation.Pagination,
+) (*correlation.IncidentQueryResult, error) {
+	// Use pattern-resolved query if resolver is configured with patterns
+	if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
+		return s.queryIncidentsWithPatternResolution(ctx, filter, pagination)
+	}
+
+	// Fall back to view-based query (exact match only)
+	return s.queryIncidentsFromView(ctx, filter, pagination)
+}
+
+// queryIncidentsFromView queries the incident_correlation_view for exact URN matches.
+// This is the original implementation, used when no pattern resolver is configured.
+func (s *LineageStore) queryIncidentsFromView(
 	ctx context.Context,
 	filter *correlation.IncidentFilter,
 	pagination *correlation.Pagination,
@@ -165,6 +187,462 @@ func (s *LineageStore) QueryIncidents(
 		Incidents: results,
 		Total:     total,
 	}, nil
+}
+
+// queryIncidentsWithPatternResolution queries incidents with pattern-based URN resolution.
+// This enables correlation across different URN formats (e.g., GE → dbt).
+//
+// Algorithm (memory-efficient two-phase approach):
+//  1. Get produced dataset URNs (for correlation filtering)
+//  2. Find correlated failed tests (IDs only, not full data) - O(n) small integers
+//  3. Paginate the correlated tests
+//  4. Build full incidents only for paginated tests - O(page_size) records
+//
+// This approach bounds memory usage regardless of total incident count.
+func (s *LineageStore) queryIncidentsWithPatternResolution(
+	ctx context.Context,
+	filter *correlation.IncidentFilter,
+	pagination *correlation.Pagination,
+) (*correlation.IncidentQueryResult, error) {
+	start := time.Now()
+
+	producedURNs, err := s.getProducedDatasetURNs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(producedURNs) == 0 {
+		s.logger.Info("No produced datasets found")
+
+		return &correlation.IncidentQueryResult{Incidents: []correlation.Incident{}, Total: 0}, nil
+	}
+
+	correlatedTests, err := s.findCorrelatedFailedTestsWithPatternResolution(ctx, filter, producedURNs)
+	if err != nil {
+		return nil, err
+	}
+
+	totalCount := len(correlatedTests)
+	if totalCount == 0 {
+		s.logger.Info("No correlated test results found")
+
+		return &correlation.IncidentQueryResult{Incidents: []correlation.Incident{}, Total: 0}, nil
+	}
+
+	pageOfTests := paginateCorrelatedTests(correlatedTests, pagination)
+	if len(pageOfTests) == 0 {
+		return &correlation.IncidentQueryResult{Incidents: []correlation.Incident{}, Total: totalCount}, nil
+	}
+
+	incidents, err := s.buildIncidentsFromCorrelatedTests(ctx, pageOfTests)
+	if err != nil {
+		return nil, err
+	}
+
+	duration := time.Since(start)
+	s.logger.Info("Queried incidents with pattern resolution",
+		slog.Duration("duration", duration),
+		slog.Int("result_count", len(incidents)),
+		slog.Int("total", totalCount),
+		slog.Int("pattern_count", s.resolver.GetPatternCount()),
+		slog.Bool("filtered", filter != nil),
+		slog.Bool("paginated", pagination != nil))
+
+	return &correlation.IncidentQueryResult{
+		Incidents: incidents,
+		Total:     totalCount,
+	}, nil
+}
+
+// findCorrelatedFailedTestsWithPatternResolution finds failed tests that correlate to produced datasets.
+// Applies pattern resolution to each test's dataset URN before checking against produced URNs.
+func (s *LineageStore) findCorrelatedFailedTestsWithPatternResolution(
+	ctx context.Context,
+	filter *correlation.IncidentFilter,
+	producedURNs map[string]bool,
+) ([]correlatedTest, error) {
+	query := `
+		SELECT tr.id, tr.dataset_urn
+		FROM test_results tr
+		WHERE tr.status IN ('failed', 'error')
+	`
+
+	var args []any
+
+	paramIndex := 1
+
+	if filter != nil {
+		if filter.TestExecutedAfter != nil {
+			query += fmt.Sprintf(" AND tr.executed_at > $%d", paramIndex)
+			paramIndex++
+
+			args = append(args, *filter.TestExecutedAfter)
+		}
+
+		if filter.TestExecutedBefore != nil {
+			query += fmt.Sprintf(" AND tr.executed_at < $%d", paramIndex)
+
+			args = append(args, *filter.TestExecutedBefore)
+		}
+	}
+
+	query += " ORDER BY tr.executed_at DESC"
+
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var correlated []correlatedTest
+
+	for rows.Next() {
+		var testID int64
+
+		var datasetURN string
+
+		if err := rows.Scan(&testID, &datasetURN); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		resolvedURN := s.resolver.Resolve(datasetURN)
+		if producedURNs[resolvedURN] {
+			correlated = append(correlated, correlatedTest{TestID: testID, ResolvedURN: resolvedURN})
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return correlated, nil
+}
+
+// paginateCorrelatedTests returns a slice of correlated tests for the requested page.
+func paginateCorrelatedTests(
+	tests []correlatedTest,
+	pagination *correlation.Pagination,
+) []correlatedTest {
+	if pagination == nil {
+		return tests
+	}
+
+	start := pagination.Offset
+	end := pagination.Offset + pagination.Limit
+
+	switch {
+	case start > len(tests):
+		return []correlatedTest{}
+	case end > len(tests):
+		return tests[start:]
+	default:
+		return tests[start:end]
+	}
+}
+
+// buildIncidentsFromCorrelatedTests builds full Incident objects from correlated test info.
+// Fetches test results and producer job details, then assembles complete incidents.
+func (s *LineageStore) buildIncidentsFromCorrelatedTests(
+	ctx context.Context,
+	correlatedTests []correlatedTest,
+) ([]correlation.Incident, error) {
+	if len(correlatedTests) == 0 {
+		return []correlation.Incident{}, nil
+	}
+
+	// Extract test IDs and build resolved URN lookup
+	testIDs := make([]int64, len(correlatedTests))
+	resolvedURNByTestID := make(map[int64]string, len(correlatedTests))
+
+	uniqueResolvedURNs := make([]string, 0, len(correlatedTests))
+	seenURNs := make(map[string]bool)
+
+	for i, ct := range correlatedTests {
+		testIDs[i] = ct.TestID
+		resolvedURNByTestID[ct.TestID] = ct.ResolvedURN
+
+		if !seenURNs[ct.ResolvedURN] {
+			uniqueResolvedURNs = append(uniqueResolvedURNs, ct.ResolvedURN)
+			seenURNs[ct.ResolvedURN] = true
+		}
+	}
+
+	producersByURN, err := s.getProducerJobsByDatasetURN(ctx, uniqueResolvedURNs)
+	if err != nil {
+		return nil, err
+	}
+
+	testResults, err := s.getTestResultsByIDs(ctx, testIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Assemble incidents
+	incidents := make([]correlation.Incident, 0, len(correlatedTests))
+
+	for _, testResult := range testResults {
+		resolvedURN := resolvedURNByTestID[testResult.ID]
+
+		producer, found := producersByURN[resolvedURN]
+		if !found {
+			continue
+		}
+
+		incident := s.assembleIncident(testResult, resolvedURN, producer)
+		incidents = append(incidents, incident)
+	}
+
+	return incidents, nil
+}
+
+// getTestResultsByIDs queries full test result data for specific IDs.
+func (s *LineageStore) getTestResultsByIDs(
+	ctx context.Context,
+	testIDs []int64,
+) ([]failedTestResult, error) {
+	query := `
+		SELECT
+			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
+			tr.status, tr.message, tr.executed_at, tr.duration_ms, tr.producer_name
+		FROM test_results tr
+		WHERE tr.id = ANY($1)
+		ORDER BY tr.executed_at DESC
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, pq.Array(testIDs))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var results []failedTestResult
+
+	for rows.Next() {
+		var r failedTestResult
+
+		if err := rows.Scan(
+			&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
+			&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs, &r.ProducerName,
+		); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return results, nil
+}
+
+// assembleIncident constructs an Incident from a test result and its producer job info.
+func (s *LineageStore) assembleIncident(
+	testResult failedTestResult,
+	resolvedURN string,
+	producer producerJobInfo,
+) correlation.Incident {
+	incident := correlation.Incident{
+		// Test result fields
+		TestResultID:     testResult.ID,
+		TestName:         testResult.TestName,
+		TestType:         testResult.TestType,
+		TestStatus:       testResult.Status,
+		TestMessage:      testResult.Message.String,
+		TestExecutedAt:   testResult.ExecutedAt,
+		TestDurationMs:   testResult.DurationMs.Int64,
+		TestProducerName: testResult.ProducerName,
+		// Dataset fields (use canonical/resolved URN)
+		DatasetURN:  resolvedURN,
+		DatasetName: producer.DatasetName,
+		DatasetNS:   producer.DatasetNamespace,
+		// Job run fields
+		JobRunID:         producer.JobRunID,
+		OpenLineageRunID: producer.RunID,
+		JobName:          producer.JobName,
+		JobNamespace:     producer.JobNamespace,
+		JobStatus:        producer.JobStatus,
+		JobEventType:     producer.EventType,
+		JobStartedAt:     producer.StartedAt.Time,
+		ProducerName:     producer.ProducerName,
+		// Lineage edge fields
+		LineageEdgeID:    producer.EdgeID,
+		LineageEdgeType:  producer.EdgeType,
+		LineageCreatedAt: producer.EdgeCreatedAt,
+		// Parent job fields (from OpenLineage ParentRunFacet)
+		ParentJobRunID:     producer.ParentJobRunID.String,
+		ParentJobName:      producer.ParentJobName.String,
+		ParentJobNamespace: producer.ParentJobNamespace.String,
+		ParentJobStatus:    producer.ParentJobStatus.String,
+		ParentProducerName: producer.ParentProducerName.String,
+		// Root parent job fields (from OpenLineage ParentRunFacet root)
+		RootParentJobRunID:     producer.RootParentJobRunID.String,
+		RootParentJobName:      producer.RootParentJobName.String,
+		RootParentJobNamespace: producer.RootParentJobNamespace.String,
+		RootParentJobStatus:    producer.RootParentJobStatus.String,
+		RootParentProducerName: producer.RootParentProducerName.String,
+	}
+
+	// Set nullable fields
+	if producer.CompletedAt.Valid {
+		incident.JobCompletedAt = &producer.CompletedAt.Time
+	}
+
+	if producer.ProducerVersion.Valid {
+		incident.ProducerVersion = &producer.ProducerVersion.String
+	}
+
+	// Set parent job completed_at
+	if producer.ParentJobCompletedAt.Valid {
+		incident.ParentJobCompletedAt = &producer.ParentJobCompletedAt.Time
+	}
+
+	// Set root parent job completed_at
+	if producer.RootParentJobCompletedAt.Valid {
+		incident.RootParentJobCompletedAt = &producer.RootParentJobCompletedAt.Time
+	}
+
+	return incident
+}
+
+// failedTestResult holds a failed/error test result for pattern resolution.
+type failedTestResult struct {
+	ID           int64
+	TestName     string
+	TestType     string
+	DatasetURN   string
+	JobRunID     string
+	Status       string
+	Message      sql.NullString
+	ExecutedAt   time.Time
+	DurationMs   sql.NullInt64
+	ProducerName string
+}
+
+// producerJobInfo holds information about a job that produces a dataset.
+type producerJobInfo struct {
+	JobRunID         string
+	RunID            string
+	JobName          string
+	JobNamespace     string
+	JobStatus        string
+	EventType        string
+	StartedAt        sql.NullTime
+	CompletedAt      sql.NullTime
+	ProducerName     string
+	ProducerVersion  sql.NullString
+	DatasetName      string
+	DatasetNamespace string
+	EdgeID           int64
+	EdgeType         string
+	EdgeCreatedAt    time.Time
+	// Parent job fields (from OpenLineage ParentRunFacet)
+	ParentJobRunID       sql.NullString
+	ParentJobName        sql.NullString
+	ParentJobNamespace   sql.NullString
+	ParentJobStatus      sql.NullString
+	ParentJobCompletedAt sql.NullTime
+	ParentProducerName   sql.NullString
+	// Root parent job fields (from OpenLineage ParentRunFacet root)
+	RootParentJobRunID       sql.NullString
+	RootParentJobName        sql.NullString
+	RootParentJobNamespace   sql.NullString
+	RootParentJobStatus      sql.NullString
+	RootParentJobCompletedAt sql.NullTime
+	RootParentProducerName   sql.NullString
+}
+
+// getProducerJobsByDatasetURN fetches producer job info for a list of dataset URNs.
+// Returns a map of datasetURN → producerJobInfo for efficient lookup.
+func (s *LineageStore) getProducerJobsByDatasetURN(
+	ctx context.Context,
+	datasetURNs []string,
+) (map[string]producerJobInfo, error) {
+	if len(datasetURNs) == 0 {
+		return map[string]producerJobInfo{}, nil
+	}
+
+	query := `
+		SELECT
+			le.dataset_urn,
+			jr.job_run_id, jr.run_id, jr.job_name, jr.job_namespace,
+			jr.current_state, jr.event_type, jr.started_at, jr.completed_at,
+			jr.producer_name, jr.producer_version,
+			d.name, d.namespace,
+			le.id, le.edge_type, le.created_at,
+			jr.parent_job_run_id,
+			parent_jr.job_name,
+			parent_jr.job_namespace,
+			parent_jr.current_state,
+			parent_jr.completed_at,
+			parent_jr.producer_name,
+			jr.root_parent_job_run_id,
+			root_jr.job_name,
+			root_jr.job_namespace,
+			root_jr.current_state,
+			root_jr.completed_at,
+			root_jr.producer_name
+		FROM lineage_edges le
+		JOIN job_runs jr ON jr.job_run_id = le.job_run_id
+		JOIN datasets d ON d.dataset_urn = le.dataset_urn
+		LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
+		LEFT JOIN job_runs root_jr ON jr.root_parent_job_run_id = root_jr.job_run_id
+		WHERE le.edge_type = 'output'
+		  AND le.dataset_urn = ANY($1)
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, pq.Array(datasetURNs))
+	if err != nil {
+		s.logger.Error("Failed to query producer jobs", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	producersByURN := make(map[string]producerJobInfo)
+
+	for rows.Next() {
+		var datasetURN string
+
+		var producer producerJobInfo
+
+		if err := rows.Scan(
+			&datasetURN,
+			&producer.JobRunID, &producer.RunID, &producer.JobName, &producer.JobNamespace,
+			&producer.JobStatus, &producer.EventType, &producer.StartedAt, &producer.CompletedAt,
+			&producer.ProducerName, &producer.ProducerVersion,
+			&producer.DatasetName, &producer.DatasetNamespace,
+			&producer.EdgeID, &producer.EdgeType, &producer.EdgeCreatedAt,
+			&producer.ParentJobRunID, &producer.ParentJobName, &producer.ParentJobNamespace,
+			&producer.ParentJobStatus, &producer.ParentJobCompletedAt, &producer.ParentProducerName,
+			&producer.RootParentJobRunID, &producer.RootParentJobName,
+			&producer.RootParentJobNamespace, &producer.RootParentJobStatus,
+			&producer.RootParentJobCompletedAt, &producer.RootParentProducerName,
+		); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		// First match wins (deterministic behavior)
+		if _, exists := producersByURN[datasetURN]; !exists {
+			producersByURN[datasetURN] = producer
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return producersByURN, nil
 }
 
 // buildIncidentCorrelationQuery constructs SQL query with WHERE clause based on filter.
@@ -450,7 +928,11 @@ func (s *LineageStore) QueryRecentIncidents(
 }
 
 // QueryIncidentByID implements correlation.Store.
-// Queries a single incident by test_result_id from the incident_correlation_view.
+// Queries a single incident by test_result_id.
+//
+// When a pattern resolver is configured (via WithAliasResolver), this method
+// applies pattern-based URN resolution to correlate test failures across
+// different URN formats. Without a resolver, only exact URN matches are found.
 //
 // Parameters:
 //   - testResultID: Test result ID (primary key)
@@ -459,6 +941,20 @@ func (s *LineageStore) QueryRecentIncidents(
 //   - Pointer to Incident (nil if not found, no error)
 //   - Error if query fails or context is cancelled
 func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64) (*correlation.Incident, error) {
+	if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
+		return s.queryIncidentByIDWithPatternResolution(ctx, testResultID)
+	}
+
+	// Fall back to view-based query (exact match only)
+	return s.queryIncidentByIDFromView(ctx, testResultID)
+}
+
+// queryIncidentByIDFromView queries a single incident from the incident_correlation_view.
+// This is the original implementation, used when no pattern resolver is configured.
+func (s *LineageStore) queryIncidentByIDFromView(
+	ctx context.Context,
+	testResultID int64,
+) (*correlation.Incident, error) {
 	start := time.Now()
 
 	query := `
@@ -469,7 +965,11 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 			job_run_id, openlineage_run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
 			producer_name, producer_version,
-			lineage_edge_id, lineage_edge_type, lineage_created_at
+			lineage_edge_id, lineage_edge_type, lineage_created_at,
+			parent_job_run_id, parent_job_name, parent_job_namespace,
+			parent_job_status, parent_job_completed_at, parent_producer_name,
+			root_parent_job_run_id, root_parent_job_name, root_parent_job_namespace,
+			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
 		FROM incident_correlation_view
 		WHERE test_result_id = $1
 		LIMIT 1
@@ -479,6 +979,16 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	var r correlation.Incident
 
+	var parentJobRunID, parentJobName, parentJobNamespace, parentJobStatus, parentProducerName sql.NullString
+
+	var parentJobCompletedAt sql.NullTime
+
+	var rootParentJobRunID, rootParentJobName, rootParentJobNamespace sql.NullString
+
+	var rootParentJobStatus, rootParentProducerName sql.NullString
+
+	var rootParentJobCompletedAt sql.NullTime
+
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs,
@@ -487,26 +997,153 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 		&r.JobStartedAt, &r.JobCompletedAt,
 		&r.ProducerName, &r.ProducerVersion,
 		&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
+		&parentJobRunID, &parentJobName, &parentJobNamespace,
+		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
+		&rootParentJobRunID, &rootParentJobName, &rootParentJobNamespace,
+		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.logger.Info("Incident not found",
+			s.logger.Info("Incident not found in view",
 				slog.Duration("duration", time.Since(start)),
 				slog.Int64("id", testResultID))
 
 			return nil, nil //nolint:nilnil // Not found returns nil incident, not an error
 		}
 
-		s.logger.Error("Failed to query incident by ID",
+		s.logger.Error("Failed to query incident by ID from view",
 			slog.Any("error", err),
 			slog.Int64("id", testResultID))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	s.logger.Info("Queried incident by ID",
+	// Map nullable parent fields
+	r.ParentJobRunID = parentJobRunID.String
+	r.ParentJobName = parentJobName.String
+	r.ParentJobNamespace = parentJobNamespace.String
+	r.ParentJobStatus = parentJobStatus.String
+	r.ParentProducerName = parentProducerName.String
+
+	if parentJobCompletedAt.Valid {
+		r.ParentJobCompletedAt = &parentJobCompletedAt.Time
+	}
+
+	// Map nullable root parent fields
+	r.RootParentJobRunID = rootParentJobRunID.String
+	r.RootParentJobName = rootParentJobName.String
+	r.RootParentJobNamespace = rootParentJobNamespace.String
+	r.RootParentJobStatus = rootParentJobStatus.String
+	r.RootParentProducerName = rootParentProducerName.String
+
+	if rootParentJobCompletedAt.Valid {
+		r.RootParentJobCompletedAt = &rootParentJobCompletedAt.Time
+	}
+
+	s.logger.Info("Queried incident by ID from view",
 		slog.Duration("duration", time.Since(start)),
 		slog.Int64("id", testResultID))
+
+	return &r, nil
+}
+
+// queryIncidentByIDWithPatternResolution queries a single incident with pattern-based URN resolution.
+// This enables correlation across different URN formats (e.g., GE → dbt).
+//
+// Algorithm:
+//  1. Get test result by ID
+//  2. Check if status is failed/error (only incidents are correlatable)
+//  3. Apply pattern resolution to dataset URN
+//  4. Look up producer job using resolved URN
+//  5. Assemble incident with test data + producer data
+func (s *LineageStore) queryIncidentByIDWithPatternResolution(
+	ctx context.Context,
+	testResultID int64,
+) (*correlation.Incident, error) {
+	start := time.Now()
+
+	testResult, err := s.getTestResultByID(ctx, testResultID)
+	if err != nil {
+		return nil, err
+	}
+
+	if testResult == nil {
+		s.logger.Info("Test result not found",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID))
+
+		return nil, nil //nolint:nilnil // Not found returns nil incident, not an error
+	}
+
+	if testResult.Status != statusFailed && testResult.Status != "error" {
+		s.logger.Info("Test result is not failed/error, not an incident",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID),
+			slog.String("status", testResult.Status))
+
+		return nil, nil //nolint:nilnil // Not an incident
+	}
+
+	resolvedURN := s.resolver.Resolve(testResult.DatasetURN)
+
+	producersByURN, err := s.getProducerJobsByDatasetURN(ctx, []string{resolvedURN})
+	if err != nil {
+		return nil, err
+	}
+
+	producer, found := producersByURN[resolvedURN]
+	if !found {
+		s.logger.Info("No producer found for resolved URN",
+			slog.Duration("duration", time.Since(start)),
+			slog.Int64("id", testResultID),
+			slog.String("original_urn", testResult.DatasetURN),
+			slog.String("resolved_urn", resolvedURN))
+
+		return nil, nil //nolint:nilnil // No producer = not correlatable
+	}
+
+	incident := s.assembleIncident(*testResult, resolvedURN, producer)
+
+	s.logger.Info("Queried incident by ID with pattern resolution",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int64("id", testResultID),
+		slog.String("original_urn", testResult.DatasetURN),
+		slog.String("resolved_urn", resolvedURN),
+		slog.String("producer", producer.ProducerName))
+
+	return &incident, nil
+}
+
+// getTestResultByID queries a single test result by ID.
+// Returns nil if not found (not an error).
+func (s *LineageStore) getTestResultByID(ctx context.Context, testResultID int64) (*failedTestResult, error) {
+	query := `
+		SELECT
+			tr.id, tr.test_name, tr.test_type, tr.dataset_urn, tr.job_run_id,
+			tr.status, tr.message, tr.executed_at, tr.duration_ms, tr.producer_name
+		FROM test_results tr
+		WHERE tr.id = $1
+	`
+
+	row := s.conn.QueryRowContext(ctx, query, testResultID)
+
+	var r failedTestResult
+
+	err := row.Scan(
+		&r.ID, &r.TestName, &r.TestType, &r.DatasetURN, &r.JobRunID,
+		&r.Status, &r.Message, &r.ExecutedAt, &r.DurationMs, &r.ProducerName,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil //nolint:nilnil // Not found returns nil, not an error
+		}
+
+		s.logger.Error("Failed to query test result by ID",
+			slog.Any("error", err),
+			slog.Int64("id", testResultID))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
 
 	return &r, nil
 }
@@ -622,9 +1259,11 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				le.dataset_urn,
 				d.name AS dataset_name,
 				0 AS depth,
-				le.dataset_urn AS parent_urn
+				le.dataset_urn AS parent_urn,
+				COALESCE(jr.producer_name, '') AS producer
 			FROM lineage_edges le
 				JOIN datasets d ON le.dataset_urn = d.dataset_urn
+				LEFT JOIN job_runs jr ON le.job_run_id = jr.job_run_id
 			WHERE le.job_run_id = $1
 			  AND le.edge_type = 'output'
 
@@ -635,7 +1274,8 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				le_out.dataset_urn,
 				d.name,
 				dt.depth + 1,
-				dt.dataset_urn AS parent_urn
+				dt.dataset_urn AS parent_urn,
+				COALESCE(jr.producer_name, '') AS producer
 			FROM downstream_tree dt
 				-- Find jobs that consume this dataset as input
 				JOIN lineage_edges le_in ON dt.dataset_urn = le_in.dataset_urn
@@ -644,11 +1284,12 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				JOIN lineage_edges le_out ON le_in.job_run_id = le_out.job_run_id
 					AND le_out.edge_type = 'output'
 				JOIN datasets d ON le_out.dataset_urn = d.dataset_urn
+				LEFT JOIN job_runs jr ON le_out.job_run_id = jr.job_run_id
 			WHERE dt.depth < $2
 			  -- Prevent self-loops
 			  AND le_out.dataset_urn != dt.dataset_urn
 		)
-		SELECT DISTINCT dataset_urn, dataset_name, depth, parent_urn
+		SELECT DISTINCT dataset_urn, dataset_name, depth, parent_urn, producer
 		FROM downstream_tree
 		WHERE depth > 0
 		ORDER BY depth, dataset_urn
@@ -673,7 +1314,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 	for rows.Next() {
 		var r correlation.DownstreamResult
 
-		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ParentURN); err != nil {
+		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ParentURN, &r.Producer); err != nil {
 			s.logger.Error("Failed to scan downstream with parents row",
 				slog.Any("error", err))
 
@@ -699,87 +1340,84 @@ func (s *LineageStore) QueryDownstreamWithParents(
 	return results, nil
 }
 
-// QueryOrphanNamespaces implements correlation.Store.
-// Returns namespaces that appear in validation tests but have no corresponding
-// data producer output edges.
+// QueryUpstreamWithChildren implements correlation.Store.
+// Queries upstream datasets with child URN relationships for tree visualization.
 //
-// Orphan Detection Logic:
-//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
-//   - Validator namespaces: Namespaces from test_results joined to datasets and job_runs
-//   - Orphan = Validator namespace NOT IN Producer namespaces
+// This is the inverse of QueryDownstreamWithParents:
+//   - Downstream: follows output→input→output chain forward (consumers)
+//   - Upstream: follows input→output→input chain backward (producers)
 //
-// Namespace Alias Resolution:
-//
-//	If a resolver is configured (via WithAliasResolver), aliases are applied at query time
-//	using VALUES clause + LEFT JOIN. This allows orphan namespaces to be resolved to
-//	canonical namespaces, enabling cross-tool correlation for both historical and new data.
-//
-// This identifies namespace aliasing issues where different tools use different formats:
-//   - GE might emit: "postgres_prod"
-//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+// Parameters:
+//   - datasetURN: The root dataset URN (childURN for depth=1 results)
+//   - jobRunID: Job run ID that produced the root dataset
+//   - maxDepth: Maximum recursion depth (typically 3-10)
 //
 // Returns:
-//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
-//   - Empty slice if no orphan namespaces exist (healthy state)
+//   - Slice of UpstreamResult with child_urn for tree building
+//   - Empty slice if job has no inputs
 //   - Error if query fails or context is cancelled
 //
 // Performance:
-//   - Queries test_results, datasets, lineage_edges, job_runs tables
-//   - Filters out empty namespaces
-//   - Typical query time: 10-100ms depending on data volume
-//   - With aliases: minimal overhead from VALUES clause join
-func (s *LineageStore) QueryOrphanNamespaces(ctx context.Context) ([]correlation.OrphanNamespace, error) {
-	// Use alias-aware query if resolver is configured with aliases
-	if s.resolver != nil && s.resolver.GetAliasCount() > 0 {
-		return s.queryOrphanNamespacesWithAliases(ctx)
-	}
-
-	return s.queryOrphanNamespacesWithOutAliases(ctx)
-}
-
-// queryOrphanNamespacesWithOutAliases executes the original orphan detection query
-// without alias resolution. Used when no resolver is configured.
-func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) ([]correlation.OrphanNamespace, error) {
+//   - Uses recursive CTE (efficient in PostgreSQL)
+//   - Joins job_runs to get producer information
+//   - Typical query time: 5-30ms depending on graph size
+//   - maxDepth prevents runaway recursion
+func (s *LineageStore) QueryUpstreamWithChildren(
+	ctx context.Context,
+	datasetURN string,
+	jobRunID string,
+	maxDepth int,
+) ([]correlation.UpstreamResult, error) {
 	start := time.Now()
 
 	query := `
-		WITH producer_namespaces AS (
-			-- Namespaces that have output lineage edges (data producers)
-			SELECT DISTINCT d.namespace
-			FROM lineage_edges le
-			JOIN datasets d ON le.dataset_urn = d.dataset_urn
-			WHERE le.edge_type = 'output'
-			  AND d.namespace != ''
-		),
-		validator_namespaces AS (
-			-- Namespaces from test results (validators)
+		WITH RECURSIVE upstream_tree AS (
 			SELECT
-				d.namespace,
-				jr.producer_name,
-				MAX(tr.executed_at) AS last_seen,
-				COUNT(*) AS event_count
-			FROM test_results tr
-			JOIN datasets d ON tr.dataset_urn = d.dataset_urn
-			JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
-			WHERE d.namespace != ''
-			GROUP BY d.namespace, jr.producer_name
+				le.dataset_urn,
+				d.name AS dataset_name,
+				1 AS depth,
+				$1::text AS child_urn,
+				COALESCE(jr.producer_name, '') AS producer
+			FROM lineage_edges le
+				JOIN datasets d ON le.dataset_urn = d.dataset_urn
+				LEFT JOIN lineage_edges le_prod ON le.dataset_urn = le_prod.dataset_urn
+					AND le_prod.edge_type = 'output'
+				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
+			WHERE le.job_run_id = $2
+			  AND le.edge_type = 'input'
+
+			UNION ALL
+
+			SELECT
+				le_in.dataset_urn,
+				d.name,
+				ut.depth + 1,
+				ut.dataset_urn AS child_urn,
+				COALESCE(jr.producer_name, '') AS producer
+			FROM upstream_tree ut
+				JOIN lineage_edges le_out ON ut.dataset_urn = le_out.dataset_urn
+					AND le_out.edge_type = 'output'
+				JOIN lineage_edges le_in ON le_out.job_run_id = le_in.job_run_id
+					AND le_in.edge_type = 'input'
+				JOIN datasets d ON le_in.dataset_urn = d.dataset_urn
+				LEFT JOIN lineage_edges le_prod ON le_in.dataset_urn = le_prod.dataset_urn
+					AND le_prod.edge_type = 'output'
+				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
+			WHERE ut.depth < $3
+			  AND le_in.dataset_urn != ut.dataset_urn
 		)
-		-- Orphans: validator namespaces not in producer namespaces
-		SELECT
-			vn.namespace,
-			vn.producer_name,
-			vn.last_seen,
-			vn.event_count
-		FROM validator_namespaces vn
-		WHERE vn.namespace NOT IN (SELECT namespace FROM producer_namespaces)
-		ORDER BY vn.event_count DESC, vn.namespace, vn.producer_name
+		SELECT DISTINCT dataset_urn, dataset_name, depth, child_urn, producer
+		FROM upstream_tree
+		ORDER BY depth, dataset_urn
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query)
+	rows, err := s.conn.QueryContext(ctx, query, datasetURN, jobRunID, maxDepth)
 	if err != nil {
-		s.logger.Error("Failed to query orphan namespaces",
+		s.logger.Error("Failed to query upstream with children",
 			slog.Any("error", err),
-			slog.Duration("duration", time.Since(start)))
+			slog.String("dataset_urn", datasetURN),
+			slog.String("job_run_id", jobRunID),
+			slog.Int("max_depth", maxDepth))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
@@ -788,13 +1426,14 @@ func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) 
 		_ = rows.Close()
 	}()
 
-	var results []correlation.OrphanNamespace
+	var results []correlation.UpstreamResult
 
 	for rows.Next() {
-		var r correlation.OrphanNamespace
+		var r correlation.UpstreamResult
 
-		if err := rows.Scan(&r.Namespace, &r.Producer, &r.LastSeen, &r.EventCount); err != nil {
-			s.logger.Error("Failed to scan orphan namespace row", slog.Any("error", err))
+		if err := rows.Scan(&r.DatasetURN, &r.DatasetName, &r.Depth, &r.ChildURN, &r.Producer); err != nil {
+			s.logger.Error("Failed to scan upstream with children row",
+				slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
@@ -803,82 +1442,91 @@ func (s *LineageStore) queryOrphanNamespacesWithOutAliases(ctx context.Context) 
 	}
 
 	if err := rows.Err(); err != nil {
-		s.logger.Error("Error iterating orphan namespace rows", slog.Any("error", err))
+		s.logger.Error("Error iterating upstream with children rows",
+			slog.Any("error", err))
 
 		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	s.logger.Info("Queried orphan namespaces",
+	s.logger.Info("Queried upstream with children",
 		slog.Duration("duration", time.Since(start)),
+		slog.String("dataset_urn", datasetURN),
+		slog.String("job_run_id", jobRunID),
+		slog.Int("max_depth", maxDepth),
 		slog.Int("result_count", len(results)))
 
 	return results, nil
 }
 
-// queryOrphanNamespacesWithAliases executes orphan detection with alias resolution.
-// Uses VALUES clause + unnest() + LEFT JOIN for scalable alias mapping.
-func (s *LineageStore) queryOrphanNamespacesWithAliases(ctx context.Context) ([]correlation.OrphanNamespace, error) {
+// QueryOrphanDatasets implements correlation.Store.
+// Returns datasets that have test results but no corresponding data producer output edges.
+//
+// When a pattern resolver is configured (via WithAliasResolver), datasets that resolve
+// to produced datasets via patterns are NOT considered orphans. This reflects the
+// effective correlation state after pattern resolution is applied.
+//
+// Orphan Detection Logic:
+//   - Orphan = Dataset with test results where:
+//     a) Dataset URN is NOT in produced datasets, AND
+//     b) Resolved URN (via patterns) is also NOT in produced datasets
+//
+// Likely Match Algorithm:
+//   - Extract table name from orphan URN using canonicalization.ExtractTableName()
+//   - Extract table name from each produced dataset URN
+//   - If exact match found, set LikelyMatch with Confidence=1.0
+//
+// Returns:
+//   - Slice of OrphanDataset sorted by test_count DESC (most impactful first)
+//   - Each orphan includes LikelyMatch if a candidate was found
+//   - Empty slice if no orphan datasets exist (healthy state)
+//   - Error if query fails or context is cancelled
+//
+// Performance:
+//   - Queries test_results and lineage_edges tables
+//   - Table name extraction done in Go (not SQL) for flexibility
+//   - Pattern resolution adds minimal overhead (in-memory regex)
+//   - Typical query time: 20-100ms depending on data volume
+func (s *LineageStore) QueryOrphanDatasets(ctx context.Context) ([]correlation.OrphanDataset, error) {
 	start := time.Now()
 
-	aliasKeys, canonicalValues := s.resolver.GetAliasSlices()
+	orphans, _, err := s.findTrueOrphans(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	s.logger.Debug("Querying orphan namespaces with alias resolution",
-		slog.Int("alias_count", len(aliasKeys)))
+	duration := time.Since(start)
+	s.logger.Info("Queried orphan datasets",
+		slog.Duration("duration", duration),
+		slog.Int("orphan_count", len(orphans)))
 
-	// Query with alias resolution using VALUES clause and LEFT JOIN
-	// This approach scales well and uses standard SQL join semantics
+	return orphans, nil
+}
+
+// queryTestedDatasetsWithoutProducer queries datasets with test results but no output edges.
+func (s *LineageStore) queryTestedDatasetsWithoutProducer(ctx context.Context) ([]correlation.OrphanDataset, error) {
 	query := `
-		WITH aliases(alias, canonical) AS (
-			-- Build alias lookup table from parameters
-			SELECT unnest($1::text[]), unnest($2::text[])
+		WITH produced_datasets AS (
+			SELECT DISTINCT dataset_urn
+			FROM lineage_edges
+			WHERE edge_type = 'output'
 		),
-		resolved_datasets AS (
-			-- Resolve dataset namespaces using alias map
+		tested_datasets AS (
 			SELECT
-				d.dataset_urn,
-				COALESCE(a.canonical, d.namespace) AS namespace
-			FROM datasets d
-			LEFT JOIN aliases a ON d.namespace = a.alias
-		),
-		producer_namespaces AS (
-			-- Namespaces that have output lineage edges (data producers)
-			-- Uses resolved namespaces for matching
-			SELECT DISTINCT rd.namespace
-			FROM lineage_edges le
-			JOIN resolved_datasets rd ON le.dataset_urn = rd.dataset_urn
-			WHERE le.edge_type = 'output'
-			  AND rd.namespace != ''
-		),
-		validator_namespaces AS (
-			-- Namespaces from test results (validators)
-			-- Uses resolved namespaces for matching
-			SELECT
-				rd.namespace,
-				jr.producer_name,
-				MAX(tr.executed_at) AS last_seen,
-				COUNT(*) AS event_count
-			FROM test_results tr
-			JOIN resolved_datasets rd ON tr.dataset_urn = rd.dataset_urn
-			JOIN job_runs jr ON tr.job_run_id = jr.job_run_id
-			WHERE rd.namespace != ''
-			GROUP BY rd.namespace, jr.producer_name
+				dataset_urn,
+				COUNT(*) AS test_count,
+				MAX(executed_at) AS last_seen
+			FROM test_results
+			GROUP BY dataset_urn
 		)
-		-- Orphans: resolved validator namespaces not in resolved producer namespaces
-		SELECT
-			vn.namespace,
-			vn.producer_name,
-			vn.last_seen,
-			vn.event_count
-		FROM validator_namespaces vn
-		WHERE vn.namespace NOT IN (SELECT namespace FROM producer_namespaces)
-		ORDER BY vn.event_count DESC, vn.namespace, vn.producer_name
+		SELECT td.dataset_urn, td.test_count, td.last_seen
+		FROM tested_datasets td
+		WHERE td.dataset_urn NOT IN (SELECT dataset_urn FROM produced_datasets)
+		ORDER BY td.test_count DESC, td.dataset_urn
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, pq.Array(aliasKeys), pq.Array(canonicalValues))
+	rows, err := s.conn.QueryContext(ctx, query)
 	if err != nil {
-		s.logger.Error("Failed to query orphan namespaces with aliases",
-			slog.Any("error", err),
-			slog.Duration("duration", time.Since(start)))
+		s.logger.Error("Failed to query orphan datasets", slog.Any("error", err))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
@@ -887,103 +1535,164 @@ func (s *LineageStore) queryOrphanNamespacesWithAliases(ctx context.Context) ([]
 		_ = rows.Close()
 	}()
 
-	var results []correlation.OrphanNamespace
+	var orphans []correlation.OrphanDataset
 
 	for rows.Next() {
-		var r correlation.OrphanNamespace
+		var o correlation.OrphanDataset
 
-		if err := rows.Scan(&r.Namespace, &r.Producer, &r.LastSeen, &r.EventCount); err != nil {
-			s.logger.Error("Failed to scan orphan namespace row", slog.Any("error", err))
+		if err := rows.Scan(&o.DatasetURN, &o.TestCount, &o.LastSeen); err != nil {
+			s.logger.Error("Failed to scan orphan dataset row", slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
 
-		results = append(results, r)
+		orphans = append(orphans, o)
 	}
 
 	if err := rows.Err(); err != nil {
-		s.logger.Error("Error iterating orphan namespace rows", slog.Any("error", err))
+		s.logger.Error("Error iterating orphan dataset rows", slog.Any("error", err))
 
 		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	s.logger.Info("Queried orphan namespaces with aliases",
-		slog.Duration("duration", time.Since(start)),
-		slog.Int("result_count", len(results)),
-		slog.Int("alias_count", len(aliasKeys)))
+	return orphans, nil
+}
 
-	return results, nil
+// getProducedDatasetURNs returns a set of all produced dataset URNs.
+// Used for efficient correlation filtering in pattern resolution.
+func (s *LineageStore) getProducedDatasetURNs(ctx context.Context) (map[string]bool, error) {
+	query := `
+		SELECT DISTINCT dataset_urn
+		FROM lineage_edges
+		WHERE edge_type = 'output'
+		ORDER BY dataset_urn
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		s.logger.Error("Failed to query produced URN set", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	result := make(map[string]bool)
+
+	for rows.Next() {
+		var urn string
+
+		if err := rows.Scan(&urn); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		result[urn] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return result, nil
+}
+
+// buildTableNameToProducedURNIndex queries produced datasets and indexes them by extracted table name.
+// Results are ordered for deterministic first-match-wins behavior.
+func (s *LineageStore) buildTableNameToProducedURNIndex(ctx context.Context) (map[string]string, error) {
+	query := `
+		SELECT DISTINCT dataset_urn
+		FROM lineage_edges
+		WHERE edge_type = 'output'
+		ORDER BY dataset_urn
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		s.logger.Error("Failed to query produced datasets", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	tableNameToProduced := make(map[string]string)
+
+	for rows.Next() {
+		var producedURN string
+
+		if err := rows.Scan(&producedURN); err != nil {
+			s.logger.Error("Failed to scan produced dataset row", slog.Any("error", err))
+
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		tableName := canonicalization.ExtractTableName(producedURN)
+		if tableName != "" {
+			// First match wins (deterministic ordering from query)
+			if _, exists := tableNameToProduced[tableName]; !exists {
+				tableNameToProduced[tableName] = producedURN
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		s.logger.Error("Error iterating produced dataset rows", slog.Any("error", err))
+
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return tableNameToProduced, nil
 }
 
 // QueryCorrelationHealth implements correlation.Store.
 // Returns overall correlation health metrics including correlation rate,
-// total datasets, and orphan namespaces.
+// dataset counts, orphan datasets, and suggested patterns.
+//
+// When a pattern resolver is configured, the correlation rate reflects
+// pattern-resolved correlations (incidents that correlate via patterns are counted).
 //
 // Correlation Rate Calculation:
-//   - Numerator: Incidents where dataset namespace has producer output edges
-//   - Denominator: All incidents from incident_correlation_view
+//   - Numerator: Incidents where dataset resolves (via pattern or exact) to producer output
+//   - Denominator: All failed test results
 //   - If denominator = 0, returns 1.0 (no incidents = healthy)
 //
 // Returns:
-//   - Pointer to Health with metrics
+//   - Pointer to Health with metrics, orphans, and suggested patterns
 //   - Error if query fails or context is cancelled
 //
 // Performance:
-//   - Calls QueryOrphanNamespaces internally
-//   - Queries incident_correlation_view for rate calculation
+//   - Queries produced datasets once (shared across orphan detection and rate calculation)
 //   - Typical query time: 50-200ms
 func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation.Health, error) {
 	start := time.Now()
 
-	// Query orphan namespaces first
-	orphans, err := s.QueryOrphanNamespaces(ctx)
+	// Query orphan datasets and "known" producers
+	orphans, knownProducedURNs, err := s.findTrueOrphans(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build set of orphan namespaces for efficient lookup
-	orphanNSSet := make(map[string]bool)
-	for _, o := range orphans {
-		orphanNSSet[o.Namespace] = true
-	}
+	// Generate pattern suggestions from orphans
+	suggestedPatterns := correlation.SuggestPatterns(orphans)
 
-	// Query correlation rate and total datasets
-	query := `
-		WITH all_failed_tests AS (
-			-- Total failed/error tests across all datasets
-			SELECT COUNT(*) AS total_incidents
-			FROM test_results
-			WHERE status IN ('failed', 'error')
-		),
-		correlated_incidents AS (
-			-- Incidents that have lineage correlation (in the view)
-			SELECT COUNT(*) AS correlated_count
-			FROM incident_correlation_view
-		),
-		dataset_stats AS (
-			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
-			FROM test_results
-		)
-		SELECT
-			COALESCE(a.total_incidents, 0) AS total_incidents,
-			COALESCE(c.correlated_count, 0) AS correlated_incidents,
-			COALESCE(d.total_datasets, 0) AS total_datasets
-		FROM all_failed_tests a, correlated_incidents c, dataset_stats d
-	`
-
-	var totalIncidents, correlatedIncidents, totalDatasets int
-
-	err = s.conn.QueryRowContext(ctx, query).Scan(&totalIncidents, &correlatedIncidents, &totalDatasets)
+	// Query health statistics
+	stats, err := s.queryHealthStats(ctx)
 	if err != nil {
-		// Handle case where no data exists (query returns no rows)
 		if errors.Is(err, sql.ErrNoRows) {
 			s.logger.Info("Queried correlation health (empty state)",
 				slog.Duration("duration", time.Since(start)))
 
 			return &correlation.Health{
-				CorrelationRate:  1.0, // No incidents = healthy
-				TotalDatasets:    0,
-				OrphanNamespaces: orphans,
+				CorrelationRate:    1.0, // No incidents = healthy
+				TotalDatasets:      0,
+				ProducedDatasets:   0,
+				CorrelatedDatasets: 0,
+				OrphanDatasets:     orphans,
+				SuggestedPatterns:  suggestedPatterns,
 			}, nil
 		}
 
@@ -994,25 +1703,362 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
 
-	// Calculate correlation rate (avoid division by zero)
-	correlationRate := 1.0
-
-	if totalIncidents > 0 {
-		correlationRate = float64(correlatedIncidents) / float64(totalIncidents)
-	}
+	correlationRate := s.calculateCorrelationRate(ctx, stats, knownProducedURNs)
 
 	duration := time.Since(start)
 	s.logger.Info("Queried correlation health",
 		slog.Duration("duration", duration),
 		slog.Float64("correlation_rate", correlationRate),
-		slog.Int("total_incidents", totalIncidents),
-		slog.Int("correlated_incidents", correlatedIncidents),
-		slog.Int("total_datasets", totalDatasets),
-		slog.Int("orphan_namespaces", len(orphans)))
+		slog.Int("total_datasets", stats.totalDatasets),
+		slog.Int("produced_datasets", stats.producedDatasets),
+		slog.Int("correlated_datasets", stats.correlatedDatasets),
+		slog.Int("orphan_datasets", len(orphans)),
+		slog.Int("suggested_patterns", len(suggestedPatterns)))
 
 	return &correlation.Health{
-		CorrelationRate:  correlationRate,
-		TotalDatasets:    totalDatasets,
-		OrphanNamespaces: orphans,
+		CorrelationRate:    correlationRate,
+		TotalDatasets:      stats.totalDatasets,
+		ProducedDatasets:   stats.producedDatasets,
+		CorrelatedDatasets: stats.correlatedDatasets,
+		OrphanDatasets:     orphans,
+		SuggestedPatterns:  suggestedPatterns,
 	}, nil
+}
+
+// findTrueOrphans filters down to "real" orphans after pattern resolution.
+func (s *LineageStore) findTrueOrphans(ctx context.Context) ([]correlation.OrphanDataset, map[string]bool, error) {
+	tableNameToProducedURNIndex, err := s.buildTableNameToProducedURNIndex(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// these are the "known" producers
+	knownProducedURNs := make(map[string]bool)
+	for _, urn := range tableNameToProducedURNIndex {
+		knownProducedURNs[urn] = true
+	}
+
+	orphans, err := s.findUnresolvedOrphanDatasets(ctx, tableNameToProducedURNIndex, knownProducedURNs)
+
+	return orphans, knownProducedURNs, err
+}
+
+// findUnresolvedOrphanDatasets returns true orphan datasets.
+// It filters out pattern-resolved matches and enriching with likely matches.
+func (s *LineageStore) findUnresolvedOrphanDatasets(
+	ctx context.Context,
+	tableNameToProducedURNIndex map[string]string,
+	knownProducedURNs map[string]bool,
+) ([]correlation.OrphanDataset, error) {
+	// Query orphan datasets (datasets with test results but no output edges)
+	orphans, err := s.queryTestedDatasetsWithoutProducer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(orphans) == 0 {
+		return orphans, nil
+	}
+
+	// Filter orphans that resolve to produced datasets via patterns
+	filteredOrphans := make([]correlation.OrphanDataset, 0, len(orphans))
+
+	for _, o := range orphans {
+		// Check if this orphan resolves to a produced dataset via patterns
+		if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
+			resolved := s.resolver.Resolve(o.DatasetURN)
+			if knownProducedURNs[resolved] {
+				continue // Resolved via pattern - not an orphan
+			}
+		}
+
+		// Try to find likely match by table name
+		orphanTableName := canonicalization.ExtractTableName(o.DatasetURN)
+		if orphanTableName != "" {
+			if producedURN, found := tableNameToProducedURNIndex[orphanTableName]; found {
+				o.LikelyMatch = &correlation.DatasetMatch{
+					DatasetURN:  producedURN,
+					Confidence:  1.0,
+					MatchReason: "exact_table_name",
+				}
+			}
+		}
+
+		filteredOrphans = append(filteredOrphans, o)
+	}
+
+	return filteredOrphans, nil
+}
+
+// calculateCorrelationRate computes the correlation rate for the health endpoint.
+//
+// This is the main entry point for correlation rate calculation. It selects the
+// appropriate strategy based on whether a pattern resolver is configured:
+//   - With patterns: Uses calculateCorrelationRateWithPatternResolution (query-time URN resolution)
+//   - Without patterns: Uses calculateCorrelationRateFromHealthStats (pre-computed database stats)
+//
+// Formula: correlated_failed_datasets / total_failed_datasets
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - stats: Pre-queried health statistics from queryHealthStats()
+//   - knownProducedURNs: Set of test dataset URNs with producer output edges
+//
+// Returns:
+//   - Correlation rate between 0.0 and 1.0 (1.0 = all failed test datasets can be traced to a producer)
+func (s *LineageStore) calculateCorrelationRate(
+	ctx context.Context,
+	stats *healthStats,
+	knownProducedURNs map[string]bool,
+) float64 {
+	if s.resolver != nil && s.resolver.GetPatternCount() > 0 {
+		rate, err := s.calculateCorrelationRateWithPatternResolution(ctx, stats.totalFailedTestedDatasets, knownProducedURNs)
+		if err != nil {
+			s.logger.Error("Failed to calculate pattern-resolved correlation rate",
+				slog.Any("error", err))
+
+			return s.calculateCorrelationRateFromHealthStats(stats)
+		}
+
+		return rate
+	}
+
+	return s.calculateCorrelationRateFromHealthStats(stats)
+}
+
+// calculateCorrelationRateFromHealthStats computes correlation rate using pre-computed database statistics.
+//
+// This is the fallback strategy when no pattern resolver is configured. It uses counts
+// already computed by queryHealthStats(), avoiding additional database queries.
+//
+// Formula: correlatedFailedTestedDatasets / totalFailedTestedDatasets
+//
+// Parameters:
+//   - stats: Pre-queried health statistics containing distinct dataset counts
+//
+// Returns:
+//   - Correlation rate between 0.0 and 1.0
+//   - Returns 1.0 if no failed tests exist (healthy state)
+func (s *LineageStore) calculateCorrelationRateFromHealthStats(stats *healthStats) float64 {
+	if stats.totalFailedTestedDatasets > 0 {
+		return float64(stats.correlatedFailedTestedDatasets) / float64(stats.totalFailedTestedDatasets)
+	}
+
+	return 1.0 // No failed tests = healthy
+}
+
+// calculateCorrelationRateWithPatternResolution computes correlation rate using query-time URN resolution.
+//
+// This strategy is used when a pattern resolver is configured. It queries all distinct
+// dataset URNs with failed tests, applies pattern resolution to each URN, and checks
+// if the resolved URN exists in the set of known produced datasets.
+//
+// This approach enables correlation across different URN formats (e.g., GE's "demo_postgres/customers"
+// resolving to dbt's "postgresql://demo/marts.customers" via configured patterns).
+//
+// Formula: correlated_failed_datasets / total_failed_datasets
+// Where correlated = resolved URN exists in knownProducedURNs
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - totalFailedTestedDatasets: Count of distinct datasets with failed tests (denominator)
+//   - knownProducedURNs: Set of dataset URNs with producer output edges
+//
+// Returns:
+//   - Correlation rate between 0.0 and 1.0
+//   - Returns 1.0 if no failed tests exist (healthy state)
+//   - Error if database query fails
+func (s *LineageStore) calculateCorrelationRateWithPatternResolution(
+	ctx context.Context,
+	totalTestedDatasets int,
+	producedURNSet map[string]bool,
+) (float64, error) {
+	if totalTestedDatasets == 0 {
+		return 1.0, nil
+	}
+
+	// Query distinct dataset URNs with failed tests
+	query := `
+		SELECT DISTINCT dataset_urn
+		FROM test_results
+		WHERE status IN ('failed', 'error')
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	// Count distinct datasets that resolve to produced datasets
+	correlatedCount := 0
+
+	for rows.Next() {
+		var datasetURN string
+
+		if err := rows.Scan(&datasetURN); err != nil {
+			return 0, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		resolved := s.resolver.Resolve(datasetURN)
+		if producedURNSet[resolved] {
+			correlatedCount++
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return float64(correlatedCount) / float64(totalTestedDatasets), nil
+}
+
+// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+// up to the root orchestrator using a recursive CTE.
+// Returns the ancestor chain ordered from root (index 0) to immediate parent (last).
+// The starting job itself is excluded from the result.
+func (s *LineageStore) QueryOrchestrationChain(
+	ctx context.Context,
+	jobRunID string,
+	maxDepth int,
+) ([]correlation.OrchestrationNode, error) {
+	start := time.Now()
+
+	query := `
+		WITH RECURSIVE chain AS (
+			SELECT
+				jr.job_run_id,
+				jr.job_name,
+				jr.job_namespace,
+				jr.producer_name,
+				jr.current_state,
+				jr.parent_job_run_id,
+				1 AS depth
+			FROM job_runs jr
+			WHERE jr.job_run_id = (
+				SELECT parent_job_run_id FROM job_runs WHERE job_run_id = $1
+			)
+
+			UNION ALL
+
+			SELECT
+				jr.job_run_id,
+				jr.job_name,
+				jr.job_namespace,
+				jr.producer_name,
+				jr.current_state,
+				jr.parent_job_run_id,
+				c.depth + 1
+			FROM job_runs jr
+			JOIN chain c ON jr.job_run_id = c.parent_job_run_id
+			WHERE c.depth < $2
+		)
+		SELECT job_run_id, job_name, job_namespace, producer_name, current_state, depth
+		FROM chain
+		ORDER BY depth DESC
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, jobRunID, maxDepth)
+	if err != nil {
+		s.logger.Error("Failed to query orchestration chain",
+			slog.Any("error", err),
+			slog.String("job_run_id", jobRunID))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chain []correlation.OrchestrationNode
+
+	for rows.Next() {
+		var node correlation.OrchestrationNode
+
+		var depth int
+
+		if err := rows.Scan(
+			&node.JobRunID, &node.JobName, &node.JobNamespace,
+			&node.ProducerName, &node.Status, &depth,
+		); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		chain = append(chain, node)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried orchestration chain",
+		slog.Duration("duration", time.Since(start)),
+		slog.String("job_run_id", jobRunID),
+		slog.Int("chain_length", len(chain)))
+
+	return chain, nil
+}
+
+// queryHealthStats queries database for health statistics.
+// All metrics use DISTINCT dataset_urn counts for accurate correlation rate calculation.
+func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, error) {
+	query := `
+		WITH failed_tested_datasets AS (
+			-- Distinct datasets with failed/error tests (denominator for correlation rate)
+			SELECT COUNT(DISTINCT dataset_urn) AS total_count
+			FROM test_results
+			WHERE status IN ('failed', 'error')
+		),
+		correlated_failed_datasets AS (
+			-- Distinct datasets with failed tests AND producer output edges (numerator)
+			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			FROM test_results tr
+			WHERE tr.status IN ('failed', 'error')
+			AND EXISTS (
+				SELECT 1 FROM lineage_edges le
+				WHERE le.dataset_urn = tr.dataset_urn AND le.edge_type = 'output'
+			)
+		),
+		all_tested_datasets AS (
+			-- Distinct datasets with any test results
+			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
+			FROM test_results
+		),
+		produced_datasets AS (
+			-- Distinct datasets with output edges
+			SELECT COUNT(DISTINCT dataset_urn) AS produced_count
+			FROM lineage_edges
+			WHERE edge_type = 'output'
+		),
+		correlated_datasets AS (
+			-- Distinct datasets with both tests (any status) AND output edges
+			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			FROM test_results tr
+			WHERE EXISTS (
+				SELECT 1 FROM lineage_edges le
+				WHERE le.dataset_urn = tr.dataset_urn AND le.edge_type = 'output'
+			)
+		)
+		SELECT
+			COALESCE(ftd.total_count, 0),
+			COALESCE(cfd.correlated_count, 0),
+			COALESCE(atd.total_datasets, 0),
+			COALESCE(pd.produced_count, 0),
+			COALESCE(cd.correlated_count, 0)
+		FROM failed_tested_datasets ftd, correlated_failed_datasets cfd,
+		     all_tested_datasets atd, produced_datasets pd, correlated_datasets cd
+	`
+
+	var stats healthStats
+
+	err := s.conn.QueryRowContext(ctx, query).Scan(
+		&stats.totalFailedTestedDatasets, &stats.correlatedFailedTestedDatasets, &stats.totalDatasets,
+		&stats.producedDatasets, &stats.correlatedDatasets,
+	)
+
+	return &stats, err
 }

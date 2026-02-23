@@ -42,3 +42,19 @@ CLAUDE.md
 
 # MCPs
 .playwright-mcp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Demo artifacts (dbt)
+deployments/demo/dbt/.user.yml
+deployments/demo/dbt/logs/
+deployments/demo/dbt/target/
+
+# screenshots
+*.png
+
+.secrets.baseline

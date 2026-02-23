@@ -55,21 +55,43 @@ func (s *Server) handleGetCorrelationHealth(w http.ResponseWriter, r *http.Reque
 
 // mapHealthToResponse converts a domain Health to an API CorrelationHealthResponse.
 func mapHealthToResponse(health *correlation.Health) CorrelationHealthResponse {
-	orphans := make([]OrphanNamespaceResponse, 0, len(health.OrphanNamespaces))
+	orphans := make([]OrphanDatasetResponse, 0, len(health.OrphanDatasets))
 
-	for _, o := range health.OrphanNamespaces {
-		orphans = append(orphans, OrphanNamespaceResponse{
-			Namespace:      o.Namespace,
-			Producer:       o.Producer,
-			LastSeen:       o.LastSeen,
-			EventCount:     o.EventCount,
-			SuggestedAlias: o.SuggestedAlias,
+	for _, o := range health.OrphanDatasets {
+		response := OrphanDatasetResponse{
+			DatasetURN: o.DatasetURN,
+			TestCount:  o.TestCount,
+			LastSeen:   o.LastSeen,
+		}
+
+		if o.LikelyMatch != nil {
+			response.LikelyMatch = &DatasetMatchResponse{
+				DatasetURN:  o.LikelyMatch.DatasetURN,
+				Confidence:  o.LikelyMatch.Confidence,
+				MatchReason: o.LikelyMatch.MatchReason,
+			}
+		}
+
+		orphans = append(orphans, response)
+	}
+
+	patterns := make([]SuggestedPatternResponse, 0, len(health.SuggestedPatterns))
+
+	for _, p := range health.SuggestedPatterns {
+		patterns = append(patterns, SuggestedPatternResponse{
+			Pattern:         p.Pattern,
+			Canonical:       p.Canonical,
+			ResolvesCount:   p.ResolvesCount,
+			OrphansResolved: p.OrphansResolved,
 		})
 	}
 
 	return CorrelationHealthResponse{
-		CorrelationRate:  health.CorrelationRate,
-		TotalDatasets:    health.TotalDatasets,
-		OrphanNamespaces: orphans,
+		CorrelationRate:    health.CorrelationRate,
+		TotalDatasets:      health.TotalDatasets,
+		ProducedDatasets:   health.ProducedDatasets,
+		CorrelatedDatasets: health.CorrelatedDatasets,
+		OrphanDatasets:     orphans,
+		SuggestedPatterns:  patterns,
 	}
 }

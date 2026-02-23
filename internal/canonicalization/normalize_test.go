@@ -4,6 +4,10 @@ package canonicalization
 import "testing"
 
 func TestNormalizeNamespace(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
 	tests := []struct {
 		name  string
 		input string

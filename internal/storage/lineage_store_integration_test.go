@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -20,9 +21,11 @@ const defaultTestProducer = "https://github.com/dbt-labs/dbt-core/tree/1.5.0"
 type (
 	// assertionData holds test data for creating assertions.
 	assertionData struct {
-		assertion string
-		success   bool
-		column    string
+		assertion  string
+		success    bool
+		column     string
+		durationMs int    // Extended field: test execution duration in milliseconds
+		message    string // Extended field: test failure message
 	}
 
 	// testResultRow holds query results for test result verification.
@@ -31,6 +34,8 @@ type (
 		status     string
 		datasetURN string
 		jobRunID   string
+		durationMs int    // Extended field
+		message    string // Extended field
 	}
 )
 
@@ -70,6 +75,7 @@ func TestLineageStoreIntegration(t *testing.T) {
 	t.Run("StoreEvent_DatasetFacetMerge", testStoreEventDatasetFacetMerge(ctx, store, conn))
 	t.Run("StoreEvent_InputValidation", testStoreEventInputValidation(ctx, store))
 	t.Run("StoreEvent_ContextCancellation", testStoreEventContextCancellation(ctx, store))
+	t.Run("StoreEvent_ParentRunFacet", testStoreEventParentRunFacet(ctx, store, conn))
 
 	// Close the main store BEFORE running cleanup tests to prevent goroutine interference
 	// Cleanup tests create their own stores with custom intervals
@@ -1662,6 +1668,9 @@ func TestExtractDataQualityAssertions(t *testing.T) {
 	t.Run("MalformedFacet", func(t *testing.T) {
 		testExtractMalformedFacet(ctx, t, store, conn)
 	})
+	t.Run("ExtendedFields", func(t *testing.T) {
+		testExtractExtendedFields(ctx, t, store, conn)
+	})
 }
 
 // testExtractSingleAssertion verifies extraction of a single assertion
@@ -1777,6 +1786,56 @@ func testExtractMalformedFacet(ctx context.Context, t *testing.T, store *Lineage
 	assert.Equal(t, 0, count, "Should have 0 test results (malformed facet)")
 }
 
+// testExtractExtendedFields verifies extraction of extended fields (durationMs, message)
+// from dataQualityAssertions facets. These are spec-compliant extensions allowed by
+// OpenLineage's additionalProperties: true in the facet schema.
+func testExtractExtendedFields(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	// Create event with assertions containing extended fields
+	event := createEventWithAssertions(
+		"extended-fields-test",
+		[]assertionData{
+			{
+				assertion:  "unique_customer_id",
+				success:    false,
+				column:     "customer_id",
+				durationMs: 1250,
+				message:    "Got 5 results, configured to fail if != 0",
+			},
+			{
+				assertion:  "not_null_customer_name",
+				success:    true,
+				column:     "customer_name",
+				durationMs: 823,
+				message:    "", // Passed tests typically don't have message
+			},
+		},
+	)
+
+	// Store event
+	stored, duplicate, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored, "Event should be stored")
+	assert.False(t, duplicate, "Event should not be duplicate")
+
+	// Verify test_results table
+	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	assert.Equal(t, 2, count, "Should have 2 test results extracted from facet")
+
+	// Verify extended fields for failed test
+	failedResult := getTestResultByTestName(ctx, t, conn, "unique_customer_id")
+	assert.Equal(t, "failed", failedResult.status)
+	assert.Equal(t, 1250, failedResult.durationMs, "durationMs should be extracted")
+	assert.Equal(t, "Got 5 results, configured to fail if != 0", failedResult.message, "message should be extracted")
+
+	// Verify extended fields for passed test
+	passedResult := getTestResultByTestName(ctx, t, conn, "not_null_customer_name")
+	assert.Equal(t, "passed", passedResult.status)
+	assert.Equal(t, 823, passedResult.durationMs, "durationMs should be extracted for passed test")
+	assert.Empty(t, passedResult.message, "message should be empty for passed test")
+}
+
 // ============================================================================
 // Facet Extraction Helper Types and Functions
 // ============================================================================
@@ -1794,6 +1853,14 @@ func createEventWithAssertions(runID string, assertions []assertionData) *ingest
 		}
 		if a.column != "" {
 			assertion["column"] = a.column
+		}
+		// Add extended fields if provided
+		if a.durationMs > 0 {
+			assertion["durationMs"] = float64(a.durationMs) // JSON numbers are float64
+		}
+
+		if a.message != "" {
+			assertion["message"] = a.message
 		}
 
 		assertionsArray[i] = assertion
@@ -1847,16 +1914,104 @@ func countTestResultsByStatus(ctx context.Context, t *testing.T, conn *Connectio
 func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection, testName string) testResultRow {
 	t.Helper()
 
-	var result testResultRow
+	var (
+		result  testResultRow
+		message sql.NullString
+	)
 
-	query := "SELECT test_name, status, dataset_urn, job_run_id FROM test_results WHERE test_name = $1"
+	query := `SELECT test_name, status, dataset_urn, job_run_id, duration_ms, message
+              FROM test_results WHERE test_name = $1`
 
 	err := conn.QueryRowContext(ctx, query, testName).Scan(
 		&result.testName, &result.status, &result.datasetURN, &result.jobRunID,
+		&result.durationMs, &message,
 	)
 	if err != nil {
 		t.Fatalf("Failed to get test result: %v", err)
 	}
 
+	result.message = message.String
+
 	return result
+}
+
+// testStoreEventParentRunFacet verifies that ParentRunFacet is correctly extracted and stored.
+// Expected: parent_job_run_id column is populated with canonical ID from ParentRunFacet.
+func testStoreEventParentRunFacet(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
+	return func(t *testing.T) {
+		parentRunUUID := uuid.New().String()
+		childRunUUID := uuid.New().String()
+		parentJobNamespace := "dbt://demo"
+		parentJobName := "jaffle_shop.build"
+
+		// Build ParentRunFacet as it comes from OpenLineage JSON
+		parentRunFacet := map[string]interface{}{
+			"job": map[string]interface{}{
+				"namespace": parentJobNamespace,
+				"name":      parentJobName,
+			},
+			"run": map[string]interface{}{
+				"runId": parentRunUUID,
+			},
+		}
+
+		// Create event with ParentRunFacet
+		event := &ingestion.RunEvent{
+			EventTime: time.Now(),
+			EventType: ingestion.EventTypeRunning,
+			Producer:  "https://github.com/correlator-io/correlator-dbt/0.1.2",
+			SchemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+			Run: ingestion.Run{
+				ID: childRunUUID,
+				Facets: map[string]interface{}{
+					"parent": parentRunFacet,
+				},
+			},
+			Job: ingestion.Job{
+				Namespace: parentJobNamespace,
+				Name:      "model.jaffle_shop.orders",
+				Facets:    map[string]interface{}{},
+			},
+			Inputs: []ingestion.Dataset{},
+			Outputs: []ingestion.Dataset{
+				{
+					Namespace: "postgresql://demo",
+					Name:      "marts.orders",
+					Facets:    map[string]interface{}{},
+				},
+			},
+		}
+
+		stored, duplicate, err := store.StoreEvent(ctx, event)
+		if err != nil {
+			t.Fatalf("StoreEvent() error = %v", err)
+		}
+
+		if !stored {
+			t.Error("StoreEvent() stored = false, want true")
+		}
+
+		if duplicate {
+			t.Error("StoreEvent() duplicate = true, want false")
+		}
+
+		// Verify parent_job_run_id is stored correctly
+		var storedParentJobRunID *string
+
+		err = conn.QueryRowContext(ctx, `
+			SELECT parent_job_run_id FROM job_runs WHERE run_id = $1
+		`, childRunUUID).Scan(&storedParentJobRunID)
+		if err != nil {
+			t.Fatalf("Failed to query parent_job_run_id: %v", err)
+		}
+
+		if storedParentJobRunID == nil {
+			t.Fatal("parent_job_run_id should not be NULL")
+		}
+
+		expectedParentJobRunID := "dbt:" + parentRunUUID
+		if *storedParentJobRunID != expectedParentJobRunID {
+			t.Errorf("parent_job_run_id = %q, want %q", *storedParentJobRunID, expectedParentJobRunID)
+		}
+	}
 }

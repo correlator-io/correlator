@@ -19,6 +19,8 @@ import "context"
 //   - Future CQRS pattern (separate read/write stores) without breaking clients
 //
 // Implemented by: storage.LineageStore.
+//
+//nolint:interfacebloat
 type Store interface {
 	// RefreshViews refreshes all correlation materialized views in dependency order.
 	//
@@ -34,7 +36,7 @@ type Store interface {
 	//   - Before serving correlation queries (if data freshness critical)
 	//
 	// Returns error if refresh fails or context is cancelled.
-	RefreshViews(ctx context.Context) error
+	RefreshViews(ctx context.Context) error //TODO: do we need this method on the interface?
 
 	// QueryIncidents queries the incident_correlation_view with optional filters and pagination.
 	//
@@ -149,32 +151,77 @@ type Store interface {
 	// not downstream. Use QueryLineageImpact with maxDepth=-1 to get direct outputs.
 	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
 
-	// QueryOrphanNamespaces returns namespaces that appear in validation tests
-	// but have no corresponding data producer output edges.
+	// QueryUpstreamWithChildren queries upstream datasets with child URN relationships.
+	// This enables the frontend to build a lineage tree visualization showing data provenance.
 	//
-	// Orphan Detection Logic:
-	//   - Producer namespaces: Namespaces with lineage_edges where edge_type='output'
-	//   - Validator namespaces: Namespaces from test_results joined to datasets
-	//   - Orphan = Validator namespace NOT IN Producer namespaces
+	// This is the inverse of QueryDownstreamWithParents:
+	//   - Downstream: "What datasets are affected if this job fails?" (follows consumers)
+	//   - Upstream: "What datasets were consumed to produce this output?" (follows producers)
 	//
-	// This identifies namespace aliasing issues where tools use different formats:
-	//   - GE might emit: "postgres_prod"
-	//   - dbt might emit: "postgresql://prod-db:5432/mydb"
+	// The query performs a recursive traversal starting from the job's direct inputs,
+	// following output→input relationships through producing jobs backward.
+	//
+	// Parameters:
+	//   - datasetURN: The root dataset URN (typically the tested dataset from the incident).
+	//     This becomes the childURN for depth=1 results, anchoring the tree.
+	//   - jobRunID: Job run ID that produced the root dataset
+	//   - maxDepth: Maximum recursion depth (typically 3-10)
 	//
 	// Returns:
-	//   - Slice of OrphanNamespace sorted by event_count DESC (most impactful first)
-	//   - Empty slice if no orphan namespaces exist (healthy state)
+	//   - Slice of UpstreamResult with child_urn for tree building
+	//   - Depth=1: Direct inputs to the job, childURN = datasetURN (the root)
+	//   - Depth=2+: Upstream of those inputs, childURN = previous level's dataset
+	//   - Each result includes the producer tool that created that upstream dataset
+	//   - Empty slice if no upstream datasets (job has no inputs)
+	//   - Error if query fails or context is cancelled
+	//
+	// The ChildURN field represents the "feeds into" relationship:
+	// the upstream dataset was consumed to produce the child dataset.
+	//
+	// Example: If job transforms staging.customers → marts.customers (tested):
+	//   - UpstreamResult{URN: "staging.customers", Depth: 1, ChildURN: "marts.customers"}
+	//   - UpstreamResult{URN: "raw_customers", Depth: 2, ChildURN: "staging.customers"}
+	//
+	// Performance:
+	//   - Uses recursive CTE (efficient in PostgreSQL)
+	//   - Joins job_runs table to get producer information
+	//   - Typical query time: 5-30ms depending on graph size
+	//   - maxDepth prevents runaway recursion
+	QueryUpstreamWithChildren(
+		ctx context.Context, datasetURN string, jobRunID string, maxDepth int,
+	) ([]UpstreamResult, error)
+
+	// QueryOrphanDatasets returns datasets that have test results but no corresponding
+	// data producer output edges.
+	//
+	// Orphan Detection Logic:
+	//   - Produced datasets: Datasets with lineage_edges where edge_type='output'
+	//   - Tested datasets: Datasets with test_results
+	//   - Orphan = Tested dataset NOT IN Produced datasets
+	//
+	// This identifies Entity Resolution issues where different tools emit different
+	// URN formats for the same logical dataset:
+	//   - GE might emit: "demo_postgres/customers"
+	//   - dbt might emit: "postgresql://demo/marts.customers"
+	//
+	// For each orphan, the method attempts to find a likely match among produced
+	// datasets by comparing extracted table names.
+	//
+	// Returns:
+	//   - Slice of OrphanDataset sorted by test_count DESC (most impactful first)
+	//   - Each orphan includes LikelyMatch if a candidate was found
+	//   - Empty slice if no orphan datasets exist (healthy state)
 	//   - Error if query fails or context is cancelled
 	//
 	// Performance:
-	//   - Queries test_results, datasets, lineage_edges tables
-	//   - Filters out empty/null namespaces
-	//   - Typical query time: 10-100ms depending on data volume
+	//   - Queries test_results, lineage_edges tables
+	//   - Table name extraction done in Go (not SQL)
+	//   - Typical query time: 20-100ms depending on data volume
 	//
 	// Used by:
 	//   - GET /api/v1/health/correlation endpoint
-	//   - Incident list/detail handlers (for has_correlation_issue field)
-	QueryOrphanNamespaces(ctx context.Context) ([]OrphanNamespace, error)
+	//   - Pattern suggestion algorithm
+	QueryOrphanDatasets(ctx context.Context) ([]OrphanDataset, error)
 
 	// QueryCorrelationHealth returns overall correlation health metrics.
 	//
@@ -200,4 +247,18 @@ type Store interface {
 	// Used by:
 	//   - GET /api/v1/health/correlation endpoint
 	QueryCorrelationHealth(ctx context.Context) (*Health, error)
+
+	// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+	// up to the root orchestrator. Returns the ancestor chain ordered from root to
+	// the immediate parent (excludes the starting job itself).
+	//
+	// Parameters:
+	//   - jobRunID: The job run ID to walk up from
+	//   - maxDepth: Safety limit to prevent infinite loops (typically 10)
+	//
+	// Returns:
+	//   - Slice of OrchestrationNode from root (index 0) to immediate parent (last)
+	//   - Empty slice if job has no parent
+	//   - Error if query fails or context is cancelled
+	QueryOrchestrationChain(ctx context.Context, jobRunID string, maxDepth int) ([]OrchestrationNode, error)
 }

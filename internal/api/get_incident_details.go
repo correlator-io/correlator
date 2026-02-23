@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -13,12 +14,12 @@ import (
 const defaultMaxDepth = 10
 
 // handleGetIncidentDetails handles GET /api/v1/incidents/{id}.
-// Returns detailed incident information with downstream impact.
+// Returns detailed incident information with upstream and downstream lineage.
 //
 // Path Parameters:
 //   - id: Test result ID (numeric string)
 //
-// Response: IncidentDetailResponse with test, dataset, job, and downstream info.
+// Response: IncidentDetailResponse with test, dataset, job, upstream, and downstream info.
 func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	correlationID := middleware.GetCorrelationID(ctx)
@@ -55,32 +56,7 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	downstream, err := s.correlationStore.QueryDownstreamWithParents(ctx, incident.JobRunID, defaultMaxDepth)
-	if err != nil {
-		s.logger.ErrorContext(ctx, "Failed to query downstream",
-			"correlation_id", correlationID,
-			"incident_id", id,
-			"job_run_id", incident.JobRunID,
-			"error", err.Error(),
-		)
-		// Non-fatal: continue with empty downstream
-		downstream = nil
-	}
-
-	orphanNamespaces, err := s.correlationStore.QueryOrphanNamespaces(ctx)
-	if err != nil {
-		s.logger.ErrorContext(ctx, "Failed to query orphan namespaces",
-			"correlation_id", correlationID,
-			"incident_id", id,
-			"error", err.Error(),
-		)
-		// Non-fatal: continue with empty orphan set
-		orphanNamespaces = nil
-	}
-
-	orphanNSSet := buildOrphanNamespaceSet(orphanNamespaces)
-
-	response := mapIncidentToDetail(incident, downstream, orphanNSSet)
+	response := s.assembleIncidentDetailResponse(ctx, id, correlationID, incident)
 
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -99,12 +75,83 @@ func (s *Server) handleGetIncidentDetails(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(data)
 }
 
-// mapIncidentToDetail converts a domain Incident and downstream results to API response.
-// The orphanNSSet is used to determine the correlation status.
+// assembleIncidentDetailResponse gathers upstream, downstream, orphan, and orchestration
+// data for a single incident and composes the full API response. All sub-queries are
+// non-fatal; partial results are returned rather than failing the request.
+func (s *Server) assembleIncidentDetailResponse(
+	ctx context.Context,
+	id int64,
+	correlationID string,
+	incident *correlation.Incident,
+) IncidentDetailResponse {
+	downstream, err := s.correlationStore.QueryDownstreamWithParents(ctx, incident.JobRunID, defaultMaxDepth)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to query downstream",
+			"correlation_id", correlationID,
+			"incident_id", id,
+			"job_run_id", incident.JobRunID,
+			"error", err.Error(),
+		)
+		// Non-fatal: continue with empty downstream
+		downstream = nil
+	}
+
+	upstream, err := s.correlationStore.QueryUpstreamWithChildren(
+		ctx, incident.DatasetURN, incident.JobRunID, defaultMaxDepth)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to query upstream",
+			"correlation_id", correlationID,
+			"incident_id", id,
+			"dataset_urn", incident.DatasetURN,
+			"job_run_id", incident.JobRunID,
+			"error", err.Error(),
+		)
+		// Non-fatal: continue with empty upstream
+		upstream = nil
+	}
+
+	orphanDatasets, err := s.correlationStore.QueryOrphanDatasets(ctx)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to query orphan datasets",
+			"correlation_id", correlationID,
+			"incident_id", id,
+			"error", err.Error(),
+		)
+		// Non-fatal: continue with empty orphan set
+		orphanDatasets = nil
+	}
+
+	orphanDatasetSet := buildOrphanDatasetSet(orphanDatasets)
+
+	// Query orchestration chain (ancestors from root to immediate parent)
+	var orchestrationChain []correlation.OrchestrationNode
+
+	if incident.JobRunID != "" {
+		chain, err := s.correlationStore.QueryOrchestrationChain(ctx, incident.JobRunID, defaultMaxDepth)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "Failed to query orchestration chain",
+				"correlation_id", correlationID,
+				"incident_id", id,
+				"job_run_id", incident.JobRunID,
+				"error", err.Error(),
+			)
+			// Non-fatal: continue without orchestration chain
+		} else {
+			orchestrationChain = chain
+		}
+	}
+
+	return mapIncidentToDetail(incident, upstream, downstream, orphanDatasetSet, orchestrationChain)
+}
+
+// mapIncidentToDetail converts a domain Incident with lineage results to API response.
+// The orphanDatasetSet is used to determine the correlation status.
 func mapIncidentToDetail(
 	inc *correlation.Incident,
+	upstream []correlation.UpstreamResult,
 	downstream []correlation.DownstreamResult,
-	orphanNSSet map[string]bool,
+	orphanDatasetSet map[string]bool,
+	orchestrationChain []correlation.OrchestrationNode,
 ) IncidentDetailResponse {
 	response := IncidentDetailResponse{
 		ID: strconv.FormatInt(inc.TestResultID, 10),
@@ -115,30 +162,101 @@ func mapIncidentToDetail(
 			Message:    inc.TestMessage,
 			ExecutedAt: inc.TestExecutedAt,
 			DurationMs: inc.TestDurationMs,
+			Producer:   inc.TestProducerName,
 		},
 		Dataset: DatasetDetail{
 			URN:       inc.DatasetURN,
 			Name:      inc.DatasetName,
 			Namespace: inc.DatasetNS,
 		},
+		Upstream:          mapUpstreamResults(upstream),
 		Downstream:        mapDownstreamResults(downstream),
-		CorrelationStatus: determineCorrelationStatus(inc, orphanNSSet),
+		CorrelationStatus: determineCorrelationStatus(inc, orphanDatasetSet),
 	}
 
-	// Include job details if correlated
 	if inc.JobRunID != "" {
+		jobStatus := inc.JobStatus
+		jobCompletedAt := inc.JobCompletedAt
+
+		// Resolve status from immediate parent when job is stuck in non-terminal state
+		if isNonTerminalStatus(jobStatus) && inc.ParentJobStatus != "" && isTerminalStatus(inc.ParentJobStatus) {
+			jobStatus = inc.ParentJobStatus
+			jobCompletedAt = inc.ParentJobCompletedAt
+		}
+
 		response.Job = &JobDetail{
 			Name:        inc.JobName,
 			Namespace:   inc.JobNamespace,
 			RunID:       inc.JobRunID,
 			Producer:    inc.ProducerName,
-			Status:      inc.JobStatus,
+			Status:      jobStatus,
 			StartedAt:   inc.JobStartedAt,
-			CompletedAt: inc.JobCompletedAt,
+			CompletedAt: jobCompletedAt,
+		}
+
+		if inc.ParentJobRunID != "" {
+			response.Job.Parent = &ParentJob{
+				Name:        inc.ParentJobName,
+				Namespace:   inc.ParentJobNamespace,
+				RunID:       inc.ParentJobRunID,
+				Producer:    inc.ParentProducerName,
+				Status:      inc.ParentJobStatus,
+				CompletedAt: inc.ParentJobCompletedAt,
+			}
+		}
+
+		if len(orchestrationChain) > 0 {
+			response.Job.Orchestration = mapOrchestrationChain(orchestrationChain)
 		}
 	}
 
 	return response
+}
+
+// isNonTerminalStatus returns true if the job status indicates it hasn't reached a final state.
+func isNonTerminalStatus(status string) bool {
+	return status == "RUNNING" || status == "START" || status == "OTHER" || status == ""
+}
+
+// isTerminalStatus returns true if the job status indicates it has reached a final state.
+func isTerminalStatus(status string) bool {
+	return status == "COMPLETE" || status == "FAIL" || status == "ABORT"
+}
+
+// mapOrchestrationChain converts domain OrchestrationNode slice to API OrchestrationNode slice.
+func mapOrchestrationChain(chain []correlation.OrchestrationNode) []OrchestrationNode {
+	nodes := make([]OrchestrationNode, 0, len(chain))
+	for _, n := range chain {
+		nodes = append(nodes, OrchestrationNode{
+			Name:      n.JobName,
+			Namespace: n.JobNamespace,
+			RunID:     n.JobRunID,
+			Producer:  n.ProducerName,
+			Status:    n.Status,
+		})
+	}
+
+	return nodes
+}
+
+// mapUpstreamResults converts domain UpstreamResult slice to API response slice.
+func mapUpstreamResults(results []correlation.UpstreamResult) []UpstreamDataset {
+	if len(results) == 0 {
+		return []UpstreamDataset{}
+	}
+
+	datasets := make([]UpstreamDataset, 0, len(results))
+	for _, r := range results {
+		datasets = append(datasets, UpstreamDataset{
+			URN:      r.DatasetURN,
+			Name:     r.DatasetName,
+			Depth:    r.Depth,
+			ChildURN: r.ChildURN,
+			Producer: r.Producer,
+		})
+	}
+
+	return datasets
 }
 
 // mapDownstreamResults converts domain DownstreamResult slice to API response slice.
@@ -154,6 +272,7 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 			Name:      r.DatasetName,
 			Depth:     r.Depth,
 			ParentURN: r.ParentURN,
+			Producer:  r.Producer,
 		})
 	}
 
@@ -164,19 +283,19 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 //
 // Status Logic:
 //   - "unknown": No job correlation (JobRunID is empty)
-//   - "orphan": Namespace aliasing issue (namespace in orphan set)
+//   - "orphan": Dataset URN aliasing issue (dataset in orphan set)
 //   - "correlated": Fully correlated with data-producing job
 //
 // Note: "unknown" takes priority over "orphan" because it indicates a more
 // fundamental correlation failure (no job association at all).
-func determineCorrelationStatus(inc *correlation.Incident, orphanNSSet map[string]bool) string {
+func determineCorrelationStatus(inc *correlation.Incident, orphanDatasetSet map[string]bool) string {
 	// No job correlation at all
 	if inc.JobRunID == "" {
 		return CorrelationStatusUnknown
 	}
 
-	// Namespace aliasing issue
-	if orphanNSSet[inc.DatasetNS] {
+	// Dataset URN aliasing issue
+	if orphanDatasetSet[inc.DatasetURN] {
 		return CorrelationStatusOrphan
 	}
 
