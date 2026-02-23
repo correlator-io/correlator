@@ -408,8 +408,10 @@ SELECT
     -- Parent job information (from OpenLineage ParentRunFacet)
     jr.parent_job_run_id,
     parent_jr.job_name      AS parent_job_name,
+    parent_jr.job_namespace AS parent_job_namespace,
     parent_jr.current_state AS parent_job_status,
     parent_jr.completed_at  AS parent_job_completed_at,
+    parent_jr.producer_name AS parent_producer_name,
 
     -- Root parent job information (from OpenLineage ParentRunFacet root)
     jr.root_parent_job_run_id,

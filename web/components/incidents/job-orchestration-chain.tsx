@@ -38,7 +38,7 @@ export function JobOrchestrationChain({ levels }: JobOrchestrationChainProps) {
   return (
     <div>
       <p className="text-xs font-medium text-muted-foreground mb-2">
-        Orchestration
+        Triggered by
       </p>
       <div className="relative">
         {levels.map((level, index) => {

@@ -1,4 +1,4 @@
-import type { Producer, ParentJob } from "./types";
+import type { Producer, OrchestrationNode } from "./types";
 
 /**
  * A single level in the orchestration chain, from root to leaf.
@@ -15,9 +15,11 @@ export interface ChainLevel {
 /**
  * Build the orchestration chain from job hierarchy data.
  *
- * Returns levels ordered root → ... → leaf.
+ * Uses the `orchestration` array (root → immediate parent) returned by the API,
+ * then appends the current producing job as the leaf.
+ *
+ * Falls back to `parent` when `orchestration` is absent (backward compat).
  * Returns empty array if no parent exists (no chain to show).
- * Deduplicates when rootParent.runId === parent.runId.
  */
 export function buildOrchestrationChain(job: {
   name: string;
@@ -25,36 +27,38 @@ export function buildOrchestrationChain(job: {
   runId: string;
   producer: Producer;
   status: string;
-  parent?: ParentJob;
-  rootParent?: ParentJob;
+  parent?: { name: string; namespace?: string; runId: string; producer: Producer; status: string };
+  orchestration?: OrchestrationNode[];
 }): ChainLevel[] {
-  if (!job.parent) return [];
+  if (!job.parent && (!job.orchestration || job.orchestration.length === 0)) {
+    return [];
+  }
 
   const levels: ChainLevel[] = [];
 
-  // Add root if present and different from parent
-  if (job.rootParent && job.rootParent.runId !== job.parent.runId) {
+  if (job.orchestration && job.orchestration.length > 0) {
+    for (const node of job.orchestration) {
+      levels.push({
+        name: node.name,
+        namespace: node.namespace,
+        runId: node.runId,
+        producer: node.producer,
+        status: node.status,
+        isCurrent: false,
+      });
+    }
+  } else if (job.parent) {
     levels.push({
-      name: job.rootParent.name,
-      namespace: job.rootParent.namespace,
-      runId: job.rootParent.runId,
-      producer: job.rootParent.producer,
-      status: job.rootParent.status,
+      name: job.parent.name,
+      namespace: job.parent.namespace,
+      runId: job.parent.runId,
+      producer: job.parent.producer,
+      status: job.parent.status,
       isCurrent: false,
     });
   }
 
-  // Add parent
-  levels.push({
-    name: job.parent.name,
-    namespace: job.parent.namespace,
-    runId: job.parent.runId,
-    producer: job.parent.producer,
-    status: job.parent.status,
-    isCurrent: false,
-  });
-
-  // Add leaf (current producing job)
+  // Append leaf (current producing job)
   levels.push({
     name: job.name,
     namespace: job.namespace,

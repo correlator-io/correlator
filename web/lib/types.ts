@@ -42,9 +42,9 @@ export interface IncidentDetail {
     producer: Producer;
     status: string;
     startedAt: string; // ISO 8601
-    completedAt: string; // ISO 8601
+    completedAt: string | null; // ISO 8601, null if still running
     parent?: ParentJob;
-    rootParent?: ParentJob;
+    orchestration?: OrchestrationNode[];
   } | null;
   upstream: UpstreamDataset[];
   downstream: DownstreamDataset[];
@@ -55,9 +55,17 @@ export interface ParentJob {
   name: string;
   namespace?: string;
   runId: string;
-  producer?: Producer;
+  producer: Producer;
   status: string;
   completedAt: string | null;
+}
+
+export interface OrchestrationNode {
+  name: string;
+  namespace: string;
+  runId: string;
+  producer: Producer;
+  status: string;
 }
 
 export interface DownstreamDataset {
@@ -74,17 +82,6 @@ export interface UpstreamDataset {
   depth: number;
   childUrn: string; // What this dataset feeds into
   producer?: Producer;
-}
-
-/**
- * @deprecated Use OrphanDataset instead. Kept for backwards compatibility.
- */
-export interface OrphanNamespace {
-  namespace: string;
-  producer: Producer;
-  lastSeen: string; // ISO 8601
-  eventCount: number;
-  suggestedAlias: string | null;
 }
 
 // ============================================================
@@ -137,7 +134,3 @@ export interface IncidentListResponse {
   offset: number;
   orphanCount: number; // Datasets with test failures but no producer correlation
 }
-
-export type IncidentDetailResponse = IncidentDetail;
-
-export type CorrelationHealthResponse = CorrelationHealth;

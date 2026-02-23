@@ -15,14 +15,14 @@ describe("buildOrchestrationChain", () => {
     expect(result).toEqual([]);
   });
 
-  it("returns 2 levels for parent only (no root)", () => {
+  it("returns 2 levels for parent only (no orchestration)", () => {
     const result = buildOrchestrationChain({
       ...baseJob,
       parent: {
         name: "jaffle_shop_demo.run",
         runId: "dbt:parent-001",
+        producer: "dbt",
         status: "COMPLETE",
-        completedAt: "2026-01-23T10:29:00Z",
       },
     });
 
@@ -31,7 +31,7 @@ describe("buildOrchestrationChain", () => {
       name: "jaffle_shop_demo.run",
       namespace: undefined,
       runId: "dbt:parent-001",
-      producer: undefined,
+      producer: "dbt",
       status: "COMPLETE",
       isCurrent: false,
     });
@@ -45,23 +45,50 @@ describe("buildOrchestrationChain", () => {
     });
   });
 
-  it("returns 3 levels for root + parent + leaf", () => {
+  it("falls back to parent when orchestration is empty array", () => {
     const result = buildOrchestrationChain({
       ...baseJob,
       parent: {
         name: "jaffle_shop_demo.run",
         runId: "dbt:parent-001",
+        producer: "dbt",
         status: "COMPLETE",
-        completedAt: "2026-01-23T10:29:00Z",
       },
-      rootParent: {
-        name: "demo_pipeline",
-        namespace: "airflow://demo",
-        runId: "airflow:root-001",
-        producer: "airflow",
-        status: "FAIL",
-        completedAt: "2026-01-23T10:30:00Z",
+      orchestration: [],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("jaffle_shop_demo.run");
+    expect(result[0].isCurrent).toBe(false);
+    expect(result[1].name).toBe("model.jaffle_shop_demo.stg_orders");
+    expect(result[1].isCurrent).toBe(true);
+  });
+
+  it("uses orchestration chain when provided (root + parent + leaf)", () => {
+    const result = buildOrchestrationChain({
+      ...baseJob,
+      parent: {
+        name: "jaffle_shop_demo.run",
+        runId: "dbt:parent-001",
+        producer: "dbt",
+        status: "COMPLETE",
       },
+      orchestration: [
+        {
+          name: "demo_pipeline",
+          namespace: "airflow://demo",
+          runId: "airflow:root-001",
+          producer: "airflow",
+          status: "FAIL",
+        },
+        {
+          name: "jaffle_shop_demo.run",
+          namespace: "dbt://demo",
+          runId: "dbt:parent-001",
+          producer: "dbt",
+          status: "COMPLETE",
+        },
+      ],
     });
 
     expect(result).toHaveLength(3);
@@ -74,55 +101,29 @@ describe("buildOrchestrationChain", () => {
     expect(result[2].isCurrent).toBe(true);
   });
 
-  it("deduplicates when rootParent.runId === parent.runId", () => {
-    const sharedRunId = "airflow:same-001";
-
-    const result = buildOrchestrationChain({
-      ...baseJob,
-      parent: {
-        name: "demo_pipeline",
-        namespace: "airflow://demo",
-        runId: sharedRunId,
-        producer: "airflow",
-        status: "COMPLETE",
-        completedAt: "2026-01-23T10:30:00Z",
-      },
-      rootParent: {
-        name: "demo_pipeline",
-        namespace: "airflow://demo",
-        runId: sharedRunId,
-        producer: "airflow",
-        status: "COMPLETE",
-        completedAt: "2026-01-23T10:30:00Z",
-      },
-    });
-
-    expect(result).toHaveLength(2);
-    expect(result[0].name).toBe("demo_pipeline");
-    expect(result[1].name).toBe("model.jaffle_shop_demo.stg_orders");
-  });
-
   it("propagates producer on each level", () => {
     const result = buildOrchestrationChain({
       ...baseJob,
-      parent: {
-        name: "jaffle_shop_demo.run",
-        runId: "dbt:parent-001",
-        status: "COMPLETE",
-        completedAt: null,
-      },
-      rootParent: {
-        name: "demo_pipeline",
-        namespace: "airflow://demo",
-        runId: "airflow:root-001",
-        producer: "airflow",
-        status: "FAIL",
-        completedAt: null,
-      },
+      orchestration: [
+        {
+          name: "demo_pipeline",
+          namespace: "airflow://demo",
+          runId: "airflow:root-001",
+          producer: "airflow",
+          status: "FAIL",
+        },
+        {
+          name: "jaffle_shop_demo.run",
+          namespace: "dbt://demo",
+          runId: "dbt:parent-001",
+          producer: "dbt",
+          status: "COMPLETE",
+        },
+      ],
     });
 
     expect(result[0].producer).toBe("airflow");
-    expect(result[1].producer).toBeUndefined(); // parent has no producer
+    expect(result[1].producer).toBe("dbt");
     expect(result[2].producer).toBe("dbt");
   });
 });

@@ -7,7 +7,7 @@ import { buildOrchestrationChain } from "@/lib/orchestration";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import { PlayCircle, CheckCircle } from "lucide-react";
-import type { Producer, ParentJob } from "@/lib/types";
+import type { Producer, ParentJob, OrchestrationNode } from "@/lib/types";
 
 interface JobDetailsCardProps {
   job: {
@@ -17,18 +17,17 @@ interface JobDetailsCardProps {
     producer: Producer;
     status: string;
     startedAt: string;
-    completedAt: string;
+    completedAt: string | null;
     parent?: ParentJob;
-    rootParent?: ParentJob;
+    orchestration?: OrchestrationNode[];
   };
 }
 
 export function JobDetailsCard({ job }: JobDetailsCardProps) {
   const chain = buildOrchestrationChain(job);
 
-  // Use root > parent > job status fallback for the header badge
-  const displayStatus = job.rootParent?.status || job.parent?.status || job.status;
-  const displayCompletedAt = job.rootParent?.completedAt || job.parent?.completedAt || job.completedAt;
+  const displayStatus = job.status;
+  const displayCompletedAt = job.completedAt;
 
   const statusVariant = displayStatus === "COMPLETE" ? "default" : "secondary";
 

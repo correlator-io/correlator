@@ -477,9 +477,11 @@ func (s *LineageStore) assembleIncident(
 		LineageEdgeType:  producer.EdgeType,
 		LineageCreatedAt: producer.EdgeCreatedAt,
 		// Parent job fields (from OpenLineage ParentRunFacet)
-		ParentJobRunID:  producer.ParentJobRunID.String,
-		ParentJobName:   producer.ParentJobName.String,
-		ParentJobStatus: producer.ParentJobStatus.String,
+		ParentJobRunID:     producer.ParentJobRunID.String,
+		ParentJobName:      producer.ParentJobName.String,
+		ParentJobNamespace: producer.ParentJobNamespace.String,
+		ParentJobStatus:    producer.ParentJobStatus.String,
+		ParentProducerName: producer.ParentProducerName.String,
 		// Root parent job fields (from OpenLineage ParentRunFacet root)
 		RootParentJobRunID:     producer.RootParentJobRunID.String,
 		RootParentJobName:      producer.RootParentJobName.String,
@@ -544,8 +546,10 @@ type producerJobInfo struct {
 	// Parent job fields (from OpenLineage ParentRunFacet)
 	ParentJobRunID       sql.NullString
 	ParentJobName        sql.NullString
+	ParentJobNamespace   sql.NullString
 	ParentJobStatus      sql.NullString
 	ParentJobCompletedAt sql.NullTime
+	ParentProducerName   sql.NullString
 	// Root parent job fields (from OpenLineage ParentRunFacet root)
 	RootParentJobRunID       sql.NullString
 	RootParentJobName        sql.NullString
@@ -575,8 +579,10 @@ func (s *LineageStore) getProducerJobsByDatasetURN(
 			le.id, le.edge_type, le.created_at,
 			jr.parent_job_run_id,
 			parent_jr.job_name,
+			parent_jr.job_namespace,
 			parent_jr.current_state,
 			parent_jr.completed_at,
+			parent_jr.producer_name,
 			jr.root_parent_job_run_id,
 			root_jr.job_name,
 			root_jr.job_namespace,
@@ -617,8 +623,8 @@ func (s *LineageStore) getProducerJobsByDatasetURN(
 			&producer.ProducerName, &producer.ProducerVersion,
 			&producer.DatasetName, &producer.DatasetNamespace,
 			&producer.EdgeID, &producer.EdgeType, &producer.EdgeCreatedAt,
-			&producer.ParentJobRunID, &producer.ParentJobName,
-			&producer.ParentJobStatus, &producer.ParentJobCompletedAt,
+			&producer.ParentJobRunID, &producer.ParentJobName, &producer.ParentJobNamespace,
+			&producer.ParentJobStatus, &producer.ParentJobCompletedAt, &producer.ParentProducerName,
 			&producer.RootParentJobRunID, &producer.RootParentJobName,
 			&producer.RootParentJobNamespace, &producer.RootParentJobStatus,
 			&producer.RootParentJobCompletedAt, &producer.RootParentProducerName,
@@ -960,7 +966,8 @@ func (s *LineageStore) queryIncidentByIDFromView(
 			job_started_at, job_completed_at,
 			producer_name, producer_version,
 			lineage_edge_id, lineage_edge_type, lineage_created_at,
-			parent_job_run_id, parent_job_name, parent_job_status, parent_job_completed_at,
+			parent_job_run_id, parent_job_name, parent_job_namespace,
+			parent_job_status, parent_job_completed_at, parent_producer_name,
 			root_parent_job_run_id, root_parent_job_name, root_parent_job_namespace,
 			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
 		FROM incident_correlation_view
@@ -972,7 +979,7 @@ func (s *LineageStore) queryIncidentByIDFromView(
 
 	var r correlation.Incident
 
-	var parentJobRunID, parentJobName, parentJobStatus sql.NullString
+	var parentJobRunID, parentJobName, parentJobNamespace, parentJobStatus, parentProducerName sql.NullString
 
 	var parentJobCompletedAt sql.NullTime
 
@@ -990,7 +997,8 @@ func (s *LineageStore) queryIncidentByIDFromView(
 		&r.JobStartedAt, &r.JobCompletedAt,
 		&r.ProducerName, &r.ProducerVersion,
 		&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
-		&parentJobRunID, &parentJobName, &parentJobStatus, &parentJobCompletedAt,
+		&parentJobRunID, &parentJobName, &parentJobNamespace,
+		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
 		&rootParentJobRunID, &rootParentJobName, &rootParentJobNamespace,
 		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
 	)
@@ -1013,7 +1021,9 @@ func (s *LineageStore) queryIncidentByIDFromView(
 	// Map nullable parent fields
 	r.ParentJobRunID = parentJobRunID.String
 	r.ParentJobName = parentJobName.String
+	r.ParentJobNamespace = parentJobNamespace.String
 	r.ParentJobStatus = parentJobStatus.String
+	r.ParentProducerName = parentProducerName.String
 
 	if parentJobCompletedAt.Valid {
 		r.ParentJobCompletedAt = &parentJobCompletedAt.Time
@@ -1904,6 +1914,93 @@ func (s *LineageStore) calculateCorrelationRateWithPatternResolution(
 	}
 
 	return float64(correlatedCount) / float64(totalTestedDatasets), nil
+}
+
+// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+// up to the root orchestrator using a recursive CTE.
+// Returns the ancestor chain ordered from root (index 0) to immediate parent (last).
+// The starting job itself is excluded from the result.
+func (s *LineageStore) QueryOrchestrationChain(
+	ctx context.Context,
+	jobRunID string,
+	maxDepth int,
+) ([]correlation.OrchestrationNode, error) {
+	start := time.Now()
+
+	query := `
+		WITH RECURSIVE chain AS (
+			SELECT
+				jr.job_run_id,
+				jr.job_name,
+				jr.job_namespace,
+				jr.producer_name,
+				jr.current_state,
+				jr.parent_job_run_id,
+				1 AS depth
+			FROM job_runs jr
+			WHERE jr.job_run_id = (
+				SELECT parent_job_run_id FROM job_runs WHERE job_run_id = $1
+			)
+
+			UNION ALL
+
+			SELECT
+				jr.job_run_id,
+				jr.job_name,
+				jr.job_namespace,
+				jr.producer_name,
+				jr.current_state,
+				jr.parent_job_run_id,
+				c.depth + 1
+			FROM job_runs jr
+			JOIN chain c ON jr.job_run_id = c.parent_job_run_id
+			WHERE c.depth < $2
+		)
+		SELECT job_run_id, job_name, job_namespace, producer_name, current_state, depth
+		FROM chain
+		ORDER BY depth DESC
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, jobRunID, maxDepth)
+	if err != nil {
+		s.logger.Error("Failed to query orchestration chain",
+			slog.Any("error", err),
+			slog.String("job_run_id", jobRunID))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var chain []correlation.OrchestrationNode
+
+	for rows.Next() {
+		var node correlation.OrchestrationNode
+
+		var depth int
+
+		if err := rows.Scan(
+			&node.JobRunID, &node.JobName, &node.JobNamespace,
+			&node.ProducerName, &node.Status, &depth,
+		); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		chain = append(chain, node)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried orchestration chain",
+		slog.Duration("duration", time.Since(start)),
+		slog.String("job_run_id", jobRunID),
+		slog.Int("chain_length", len(chain)))
+
+	return chain, nil
 }
 
 // queryHealthStats queries database for health statistics.

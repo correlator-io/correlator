@@ -96,8 +96,10 @@ type (
 		// Parent job fields (from OpenLineage ParentRunFacet)
 		ParentJobRunID       string     // Canonical parent job run ID (empty if no parent)
 		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
+		ParentJobNamespace   string     // Parent job namespace (e.g., "dbt://demo")
 		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
 		ParentJobCompletedAt *time.Time // Parent job completion timestamp
+		ParentProducerName   string     // Parent producer name (e.g., "correlator-dbt")
 		// Root parent job fields (from OpenLineage ParentRunFacet root)
 		RootParentJobRunID       string     // Canonical root parent job run ID (empty if no root)
 		RootParentJobName        string     // Root parent job name (e.g., "demo_pipeline")
@@ -105,6 +107,16 @@ type (
 		RootParentJobStatus      string     // Root parent job status
 		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
 		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
+	}
+
+	// OrchestrationNode represents one level in the orchestration chain.
+	// Used to build the full hierarchy from root orchestrator to producing job.
+	OrchestrationNode struct {
+		JobRunID     string
+		JobName      string
+		JobNamespace string
+		ProducerName string
+		Status       string
 	}
 
 	// RecentIncidentSummary represents a single row from the recent_incidents_summary materialized view.

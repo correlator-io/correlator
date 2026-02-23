@@ -19,6 +19,8 @@ import "context"
 //   - Future CQRS pattern (separate read/write stores) without breaking clients
 //
 // Implemented by: storage.LineageStore.
+//
+//nolint:interfacebloat
 type Store interface {
 	// RefreshViews refreshes all correlation materialized views in dependency order.
 	//
@@ -34,7 +36,7 @@ type Store interface {
 	//   - Before serving correlation queries (if data freshness critical)
 	//
 	// Returns error if refresh fails or context is cancelled.
-	RefreshViews(ctx context.Context) error
+	RefreshViews(ctx context.Context) error //TODO: do we need this method on the interface?
 
 	// QueryIncidents queries the incident_correlation_view with optional filters and pagination.
 	//
@@ -245,4 +247,18 @@ type Store interface {
 	// Used by:
 	//   - GET /api/v1/health/correlation endpoint
 	QueryCorrelationHealth(ctx context.Context) (*Health, error)
+
+	// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+	// up to the root orchestrator. Returns the ancestor chain ordered from root to
+	// the immediate parent (excludes the starting job itself).
+	//
+	// Parameters:
+	//   - jobRunID: The job run ID to walk up from
+	//   - maxDepth: Safety limit to prevent infinite loops (typically 10)
+	//
+	// Returns:
+	//   - Slice of OrchestrationNode from root (index 0) to immediate parent (last)
+	//   - Empty slice if job has no parent
+	//   - Error if query fails or context is cancelled
+	QueryOrchestrationChain(ctx context.Context, jobRunID string, maxDepth int) ([]OrchestrationNode, error)
 }

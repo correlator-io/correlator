@@ -120,9 +120,17 @@ interface ApiParentJob {
   name: string;
   namespace?: string;
   run_id: string;
-  producer?: string;
+  producer: string;
   status: string;
   completed_at: string | null;
+}
+
+interface ApiOrchestrationNode {
+  name: string;
+  namespace: string;
+  run_id: string;
+  producer: string;
+  status: string;
 }
 
 interface ApiJobDetail {
@@ -134,7 +142,7 @@ interface ApiJobDetail {
   started_at: string;
   completed_at: string;
   parent?: ApiParentJob;
-  root_parent?: ApiParentJob;
+  orchestration?: ApiOrchestrationNode[];
 }
 
 interface ApiDownstreamDataset {
@@ -161,17 +169,6 @@ export interface ApiIncidentDetailResponse {
   upstream: ApiUpstreamDataset[];
   downstream: ApiDownstreamDataset[];
   correlation_status: string;
-}
-
-/**
- * @deprecated Use ApiOrphanDataset instead
- */
-export interface ApiOrphanNamespace {
-  namespace: string;
-  producer: string;
-  last_seen: string;
-  event_count: number;
-  suggested_alias: string | null;
 }
 
 // ============================================================
@@ -214,6 +211,16 @@ export interface ApiCorrelationHealthResponse {
 // TODO: For production, consider using Zod for runtime validation of API responses.
 // Current `as` casts assume the API contract is correct. If the backend returns
 // unexpected enum values (e.g., a new status), TypeScript won't catch it at runtime.
+
+/**
+ * Normalize Go zero-value timestamps to null.
+ * Go's time.Time zero value serializes as "0001-01-01T00:00:00Z".
+ * These represent unset timestamps (e.g., completedAt for a RUNNING job).
+ */
+function normalizeTimestamp(ts: string | null | undefined): string | null {
+  if (!ts || ts.startsWith("0001-01-01")) return null;
+  return ts;
+}
 
 /**
  * Normalize producer field from API format to frontend format.
@@ -277,31 +284,24 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
           producer: normalizeProducer(api.job.producer),
           status: api.job.status,
           startedAt: api.job.started_at,
-          completedAt: api.job.completed_at,
+          completedAt: normalizeTimestamp(api.job.completed_at),
           parent: api.job.parent
             ? {
                 name: api.job.parent.name,
                 namespace: api.job.parent.namespace,
                 runId: api.job.parent.run_id,
-                producer: api.job.parent.producer
-                  ? normalizeProducer(api.job.parent.producer)
-                  : undefined,
+                producer: normalizeProducer(api.job.parent.producer),
                 status: api.job.parent.status,
-                completedAt: api.job.parent.completed_at || null,
+                completedAt: normalizeTimestamp(api.job.parent.completed_at),
               }
             : undefined,
-          rootParent: api.job.root_parent
-            ? {
-                name: api.job.root_parent.name,
-                namespace: api.job.root_parent.namespace,
-                runId: api.job.root_parent.run_id,
-                producer: api.job.root_parent.producer
-                  ? normalizeProducer(api.job.root_parent.producer)
-                  : undefined,
-                status: api.job.root_parent.status,
-                completedAt: api.job.root_parent.completed_at || null,
-              }
-            : undefined,
+          orchestration: api.job.orchestration?.map((n) => ({
+            name: n.name,
+            namespace: n.namespace,
+            runId: n.run_id,
+            producer: normalizeProducer(n.producer),
+            status: n.status,
+          })),
         }
       : null,
     upstream: (api.upstream || []).map((u): UpstreamDataset => ({
@@ -421,6 +421,7 @@ export async function fetchCorrelationHealth(): Promise<CorrelationHealth> {
 // ============================================================
 
 export const __testing__ = {
+  normalizeTimestamp,
   transformIncident,
   transformIncidentDetail,
   transformDatasetMatch,

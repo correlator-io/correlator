@@ -66,26 +66,40 @@ type (
 
 	// JobDetail contains job information for incident detail view.
 	// This is nil when the incident is uncorrelated (orphan namespace).
+	//
+	// Status Resolution: The handler layer resolves status from the immediate parent because the
+	// job shows non-terminal state (e.g., RUNNING) but the parent has completed.
+	// This ensures the frontend receives the accurate effective status without fallback logic.
 	JobDetail struct {
-		Name        string     `json:"name"`
-		Namespace   string     `json:"namespace"`
-		RunID       string     `json:"run_id"` //nolint:tagliatelle
-		Producer    string     `json:"producer"`
-		Status      string     `json:"status"`
-		StartedAt   time.Time  `json:"started_at"`             //nolint:tagliatelle
-		CompletedAt *time.Time `json:"completed_at,omitempty"` //nolint:tagliatelle
-		Parent      *ParentJob `json:"parent,omitempty"`
-		RootParent  *ParentJob `json:"root_parent,omitempty"` //nolint:tagliatelle
+		Name          string              `json:"name"`
+		Namespace     string              `json:"namespace"`
+		RunID         string              `json:"run_id"` //nolint:tagliatelle
+		Producer      string              `json:"producer"`
+		Status        string              `json:"status"`
+		StartedAt     time.Time           `json:"started_at"`             //nolint:tagliatelle
+		CompletedAt   *time.Time          `json:"completed_at,omitempty"` //nolint:tagliatelle
+		Parent        *ParentJob          `json:"parent,omitempty"`
+		Orchestration []OrchestrationNode `json:"orchestration,omitempty"`
 	}
 
-	// ParentJob contains parent/root parent job information for incident detail view.
+	// ParentJob contains immediate parent job information for incident detail view.
 	ParentJob struct {
 		Name        string     `json:"name"`
 		Namespace   string     `json:"namespace,omitempty"`
 		RunID       string     `json:"run_id"` //nolint:tagliatelle
-		Producer    string     `json:"producer,omitempty"`
+		Producer    string     `json:"producer"`
 		Status      string     `json:"status"`
 		CompletedAt *time.Time `json:"completed_at,omitempty"` //nolint:tagliatelle
+	}
+
+	// OrchestrationNode represents one level in the orchestration chain (ancestors only, root to immediate parent).
+	// Ordered from root (index 0) to the producing job's immediate parent (last element).
+	OrchestrationNode struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		RunID     string `json:"run_id"` //nolint:tagliatelle
+		Producer  string `json:"producer"`
+		Status    string `json:"status"`
 	}
 
 	// DownstreamDataset represents a downstream dataset in the lineage tree.

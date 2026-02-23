@@ -7,10 +7,33 @@ import {
 } from "./api";
 
 const {
+  normalizeTimestamp,
   transformIncident,
   transformIncidentDetail,
   transformCorrelationHealth,
 } = __testing__;
+
+describe("normalizeTimestamp", () => {
+  it("returns null for Go zero-value timestamp", () => {
+    expect(normalizeTimestamp("0001-01-01T00:00:00Z")).toBeNull();
+  });
+
+  it("returns null for Go zero-value with microseconds", () => {
+    expect(normalizeTimestamp("0001-01-01T00:00:00.000000Z")).toBeNull();
+  });
+
+  it("returns null for null input", () => {
+    expect(normalizeTimestamp(null)).toBeNull();
+  });
+
+  it("returns null for undefined input", () => {
+    expect(normalizeTimestamp(undefined)).toBeNull();
+  });
+
+  it("passes through valid timestamps", () => {
+    expect(normalizeTimestamp("2026-02-22T15:23:13Z")).toBe("2026-02-22T15:23:13Z");
+  });
+});
 
 describe("transformIncident", () => {
   it("transforms snake_case API response to camelCase", () => {
@@ -97,6 +120,7 @@ describe("transformIncidentDetail", () => {
         started_at: "2026-01-23T10:25:00Z",
         completed_at: "2026-01-23T10:28:45Z",
       },
+      upstream: [],
       downstream: [
         {
           urn: "postgresql://prod/public.fct_revenue",
@@ -116,7 +140,7 @@ describe("transformIncidentDetail", () => {
     expect(result.job?.runId).toBe("dbt:abc123");
     expect(result.job?.startedAt).toBe("2026-01-23T10:25:00Z");
     expect(result.job?.parent).toBeUndefined();
-    expect(result.job?.rootParent).toBeUndefined();
+    expect(result.job?.orchestration).toBeUndefined();
     expect(result.correlationStatus).toBe("correlated");
     expect(result.downstream[0].parentUrn).toBe(
       "postgresql://prod/public.orders"
@@ -141,6 +165,7 @@ describe("transformIncidentDetail", () => {
         namespace: "postgres_prod.public",
       },
       job: null,
+      upstream: [],
       downstream: [],
       correlation_status: "orphan",
     };
@@ -152,7 +177,7 @@ describe("transformIncidentDetail", () => {
     expect(result.correlationStatus).toBe("orphan");
   });
 
-  it("transforms parent with namespace and producer", () => {
+  it("transforms parent and normalizes Go zero-time to null", () => {
     const apiDetail: ApiIncidentDetailResponse = {
       id: "789",
       test: {
@@ -180,6 +205,7 @@ describe("transformIncidentDetail", () => {
         parent: {
           name: "jaffle_shop_demo.run",
           run_id: "dbt:invocation-789",
+          producer: "correlator-dbt",
           status: "COMPLETE",
           completed_at: "2026-01-23T10:29:00Z",
         },
@@ -191,18 +217,22 @@ describe("transformIncidentDetail", () => {
 
     const result = transformIncidentDetail(apiDetail);
 
+    // Go zero-time completedAt normalized to null
+    expect(result.job?.completedAt).toBeNull();
+
+    // Parent with real timestamp preserved
     expect(result.job?.parent).toEqual({
       name: "jaffle_shop_demo.run",
       namespace: undefined,
       runId: "dbt:invocation-789",
-      producer: undefined,
+      producer: "dbt",
       status: "COMPLETE",
       completedAt: "2026-01-23T10:29:00Z",
     });
-    expect(result.job?.rootParent).toBeUndefined();
+    expect(result.job?.orchestration).toBeUndefined();
   });
 
-  it("transforms parent + rootParent with producer normalization", () => {
+  it("transforms parent + orchestration chain with producer normalization", () => {
     const apiDetail: ApiIncidentDetailResponse = {
       id: "36",
       test: {
@@ -230,17 +260,26 @@ describe("transformIncidentDetail", () => {
         parent: {
           name: "jaffle_shop_demo.run",
           run_id: "dbt:019c85f1-parent",
+          producer: "correlator-dbt",
           status: "COMPLETE",
           completed_at: "2026-02-22T15:22:07Z",
         },
-        root_parent: {
-          name: "demo_pipeline",
-          namespace: "airflow://demo",
-          run_id: "airflow:019c85f1-root",
-          producer: "airflow",
-          status: "FAIL",
-          completed_at: "2026-02-22T15:23:13Z",
-        },
+        orchestration: [
+          {
+            name: "demo_pipeline",
+            namespace: "airflow://demo",
+            run_id: "airflow:019c85f1-root",
+            producer: "airflow",
+            status: "FAIL",
+          },
+          {
+            name: "jaffle_shop_demo.run",
+            namespace: "dbt://demo",
+            run_id: "dbt:019c85f1-parent",
+            producer: "correlator-dbt",
+            status: "COMPLETE",
+          },
+        ],
       },
       upstream: [],
       downstream: [],
@@ -249,25 +288,31 @@ describe("transformIncidentDetail", () => {
 
     const result = transformIncidentDetail(apiDetail);
 
-    // Parent: no namespace/producer from API
     expect(result.job?.parent).toEqual({
       name: "jaffle_shop_demo.run",
       namespace: undefined,
       runId: "dbt:019c85f1-parent",
-      producer: undefined,
+      producer: "dbt",
       status: "COMPLETE",
       completedAt: "2026-02-22T15:22:07Z",
     });
 
-    // Root parent: full fields, producer normalized from "airflow"
-    expect(result.job?.rootParent).toEqual({
-      name: "demo_pipeline",
-      namespace: "airflow://demo",
-      runId: "airflow:019c85f1-root",
-      producer: "airflow",
-      status: "FAIL",
-      completedAt: "2026-02-22T15:23:13Z",
-    });
+    expect(result.job?.orchestration).toEqual([
+      {
+        name: "demo_pipeline",
+        namespace: "airflow://demo",
+        runId: "airflow:019c85f1-root",
+        producer: "airflow",
+        status: "FAIL",
+      },
+      {
+        name: "jaffle_shop_demo.run",
+        namespace: "dbt://demo",
+        runId: "dbt:019c85f1-parent",
+        producer: "dbt",
+        status: "COMPLETE",
+      },
+    ]);
   });
 });
 
