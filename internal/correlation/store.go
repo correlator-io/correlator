@@ -19,8 +19,6 @@ import "context"
 //   - Future CQRS pattern (separate read/write stores) without breaking clients
 //
 // Implemented by: storage.LineageStore.
-//
-//nolint:interfacebloat
 type Store interface {
 	// RefreshViews refreshes all correlation materialized views in dependency order.
 	//
@@ -57,54 +55,6 @@ type Store interface {
 	//   - Uses indexes: incident_correlation_view_pk, idx_incident_correlation_view_job_run_id
 	//   - Refresh latency: Call RefreshViews() to update data.
 	QueryIncidents(ctx context.Context, filter *IncidentFilter, pagination *Pagination) (*IncidentQueryResult, error)
-
-	// QueryLineageImpact queries the lineage_impact_analysis view for downstream impact.
-	//
-	// This view performs recursive lineage traversal to find all datasets and jobs
-	// affected by a specific job run, up to 10 levels deep.
-	//
-	// Parameters:
-	//   - jobRunID: Job run ID to analyze downstream impact for
-	//   - maxDepth: Maximum recursion depth (0 = unlimited, -1 = direct outputs only, >0 = depth limit)
-	//
-	// Returns:
-	//   - Slice of ImpactResult sorted by depth (empty slice if no downstream datasets)
-	//   - Error if query fails or context is cancelled
-	//
-	// Example:
-	//   // Get all downstream datasets (unlimited depth)
-	//   impact, err := store.QueryLineageImpact(ctx, "job-123", 0)
-	//
-	//   // Get only direct outputs (depth 0)
-	//   directOutputs, err := store.QueryLineageImpact(ctx, "job-123", -1)
-	//
-	//   // Get up to 3 levels downstream
-	//   impact, err := store.QueryLineageImpact(ctx, "job-123", 3).
-	QueryLineageImpact(ctx context.Context, jobRunID string, maxDepth int) ([]ImpactResult, error)
-
-	// QueryRecentIncidents queries the recent_incidents_summary view for 7-day overview.
-	//
-	// This view aggregates test failures per job run for the last 7 days, providing:
-	//   - Failed test counts per job run
-	//   - Affected dataset counts
-	//   - Downstream impact estimates
-	//   - Time-windowed filtering (NOW() - 7 days)
-	//
-	// Parameters:
-	//   - limit: Maximum number of results to return (0 = no limit)
-	//
-	// Returns:
-	//   - Slice of RecentIncidentSummary sorted by most recent failure first
-	//   - Empty slice if no incidents in 7-day window
-	//   - Error if query fails or context is cancelled
-	//
-	// Example:
-	//   // Get top 10 recent incidents
-	//   incidents, err := store.QueryRecentIncidents(ctx, 10)
-	//
-	//   // Get all incidents (no limit)
-	//   allIncidents, err := store.QueryRecentIncidents(ctx, 0).
-	QueryRecentIncidents(ctx context.Context, limit int) ([]RecentIncidentSummary, error)
 
 	// QueryIncidentByID queries a single incident by test_result_id.
 	//
@@ -147,8 +97,7 @@ type Store interface {
 	//   - Empty slice if no downstream datasets
 	//   - Error if query fails or context is cancelled
 	//
-	// Note: Results exclude depth=0 (direct outputs) since those are the starting point,
-	// not downstream. Use QueryLineageImpact with maxDepth=-1 to get direct outputs.
+	// Note: Results exclude depth=0 (direct outputs) since those are the starting point, not downstream.
 	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
 
 	// QueryUpstreamWithChildren queries upstream datasets with child URN relationships.

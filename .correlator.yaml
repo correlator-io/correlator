@@ -19,4 +19,4 @@ dataset_patterns:
   # GE emits: demo_postgres/customers, demo_postgres/orders
   # dbt emits: postgresql://demo/marts.customers, postgresql://demo/marts.orders
   - pattern: "demo_postgres/{name}"
-    canonical: "postgresql://demo/marts.{name}"
+    canonical: "postgresql://demo/{name}"
