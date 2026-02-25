@@ -33,6 +33,8 @@ func TestListIncidents_Integration(t *testing.T) {
 	setupIncidentTestData(ctx, t, ts, jobRunID, datasetURN, now)
 
 	// Refresh materialized views
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 	_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 
@@ -154,6 +156,8 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 	testResultID := setupIncidentTestData(ctx, t, ts, jobRunID, datasetURN, now)
 
 	// Refresh materialized views
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 	_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 
@@ -245,6 +249,8 @@ func TestIncidents_HasCorrelationIssue_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to update dataset namespace")
 
 	// Refresh materialized views
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 	_, err = ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 
@@ -357,6 +363,8 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 	require.NoError(t, err, "Failed to insert test result")
 
 	// Refresh materialized views
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 	_, err = ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 
@@ -439,6 +447,8 @@ func TestIncidentsWithDownstream_Integration(t *testing.T) {
 	setupDownstreamJob(ctx, t, ts, jobRunID2, datasetA, datasetB, now)
 
 	// Refresh materialized views
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 	_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 	require.NoError(t, err, "Failed to refresh views")
 

@@ -103,10 +103,10 @@ type (
 		correlatedDatasets int
 	}
 
-	// correlatedTest holds a test ID and its pattern-resolved dataset URN.
-	correlatedTest struct {
-		TestID      int64
-		ResolvedURN string
+	// urnMapping holds a raw-to-canonical URN pair for the resolved_datasets table.
+	urnMapping struct {
+		raw       string
+		canonical string
 	}
 )
 

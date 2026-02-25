@@ -57,6 +57,10 @@ func TestViewRefreshPerformance(t *testing.T) {
 		_ = store.Close()
 	}()
 
+	// Populate resolved_datasets so views can JOIN through canonical URNs
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	// Measure refresh time
 	start := time.Now()
 
@@ -114,7 +118,10 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 		_ = store.Close()
 	}()
 
-	// Refresh views
+	// Populate resolved_datasets and refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -212,6 +219,9 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		_ = store.Close()
 	}()
 
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -286,7 +296,9 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		// Create a lineage chain first
 		jobRunID := createLineageChain(ctx, t, testDB.Connection, 3)
 
-		// Refresh views to include new data
+		// Refresh resolved_datasets and views to include new data
+		require.NoError(t, store.InitResolvedDatasets(ctx))
+
 		err := store.refreshViews(ctx)
 		require.NoError(t, err)
 

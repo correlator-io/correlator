@@ -1,241 +1,247 @@
 package storage
 
 import (
-	"database/sql"
-	"database/sql/driver"
-	"fmt"
-	"log/slog"
-	"os"
-	"sync/atomic"
+	"context"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/correlator-io/correlator/internal/config"
 )
 
-// mockRefreshDriver is a minimal SQL driver that counts ExecContext calls.
-// Used by debounce tests to verify refresh behavior without a real database.
-type mockRefreshDriver struct {
-	count *atomic.Int64
-}
-
-func (d *mockRefreshDriver) Open(_ string) (driver.Conn, error) {
-	return &mockRefreshConn{count: d.count}, nil
-}
-
-type mockRefreshConn struct {
-	count *atomic.Int64
-}
-
-func (c *mockRefreshConn) Prepare(_ string) (driver.Stmt, error) {
-	return &mockRefreshStmt{count: c.count}, nil
-}
-
-func (c *mockRefreshConn) Close() error              { return nil }
-func (c *mockRefreshConn) Begin() (driver.Tx, error) { return &mockRefreshTx{}, nil }
-
-type mockRefreshStmt struct {
-	count *atomic.Int64
-}
-
-func (s *mockRefreshStmt) Close() error  { return nil }
-func (s *mockRefreshStmt) NumInput() int { return 0 }
-
-func (s *mockRefreshStmt) Exec(_ []driver.Value) (driver.Result, error) {
-	s.count.Add(1)
-
-	return driver.RowsAffected(0), nil
-}
-
-func (s *mockRefreshStmt) Query(_ []driver.Value) (driver.Rows, error) {
-	s.count.Add(1)
-
-	return &mockRefreshRows{}, nil
-}
-
-type mockRefreshTx struct{}
-
-func (t *mockRefreshTx) Commit() error   { return nil }
-func (t *mockRefreshTx) Rollback() error { return nil }
-
-type mockRefreshRows struct{ done bool }
-
-func (r *mockRefreshRows) Columns() []string { return []string{"result"} }
-func (r *mockRefreshRows) Close() error      { return nil }
-
-func (r *mockRefreshRows) Next(dest []driver.Value) error {
-	if r.done {
-		return sql.ErrNoRows
-	}
-
-	r.done = true
-	dest[0] = ""
-
-	return nil
-}
-
-// newMockRefreshDB creates an *sql.DB backed by the mock driver that counts calls.
-func newMockRefreshDB(t *testing.T, count *atomic.Int64) *sql.DB {
+// setupDebounceStore creates a LineageStore with the given debounce delay backed
+// by a real PostgreSQL testcontainer. Caller is responsible for cleanup via t.Cleanup.
+func setupDebounceStore(t *testing.T, delay time.Duration) *LineageStore {
 	t.Helper()
 
-	driverName := fmt.Sprintf("mock_refresh_%s_%d", t.Name(), time.Now().UnixNano())
-	sql.Register(driverName, &mockRefreshDriver{count: count})
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
 
-	db, err := sql.Open(driverName, "")
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	conn := &Connection{DB: testDB.Connection}
+
+	store, err := NewLineageStore(conn, 1*time.Hour, WithViewRefreshDelay(delay))
 	require.NoError(t, err)
 
-	return db
+	t.Cleanup(func() { _ = store.Close() })
+
+	return store
 }
 
-// newTestStoreForDebounce creates a minimal LineageStore for testing the debounce mechanism.
-func newTestStoreForDebounce(t *testing.T, delay time.Duration) (*LineageStore, *atomic.Int64) {
+// seedMinimalCorrelationData inserts one job run, dataset, lineage edge, and
+// failed test result — the minimum needed to produce a row in incident_correlation_view
+// after resolved_datasets + view refresh.
+func seedMinimalCorrelationData(t *testing.T, store *LineageStore) {
 	t.Helper()
 
-	var refreshCount atomic.Int64
+	ctx := context.Background()
+	now := time.Now()
+	jobRunID := "dbt:" + uuid.New().String()
+	datasetURN := "postgresql://prod-db/public.debounce_test_" + uuid.New().String()[:8]
 
-	mockDB := newMockRefreshDB(t, &refreshCount)
+	db := store.conn.DB
 
-	store := &LineageStore{
-		conn: &Connection{DB: mockDB},
-		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})),
-		cleanupInterval: 1 * time.Hour,
-		cleanupStop:     make(chan struct{}),
-		cleanupDone:     make(chan struct{}),
-		refreshDelay:    delay,
-		refreshStop:     make(chan struct{}),
-	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO job_runs (
+			job_run_id, run_id, job_name, job_namespace, current_state,
+		    event_type, event_time, started_at, producer_name)
+		VALUES ($1, $2, 'debounce_test_job', 'test', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
+	`, jobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+	require.NoError(t, err)
 
-	go store.runCleanup()
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace) VALUES ($1, 'debounce_test_ds', 'test')
+	`, datasetURN)
+	require.NoError(t, err)
 
-	return store, &refreshCount
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type) VALUES ($1, $2, 'output')
+	`, jobRunID, datasetURN)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO test_results (test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms)
+		VALUES ('test_not_null', 'not_null', $1, $2, 'failed', 'found nulls', $3, 50)
+	`, datasetURN, jobRunID, now)
+	require.NoError(t, err)
 }
 
-// TestNotifyDataChanged_DebounceBurst verifies that rapid calls to notifyDataChanged
-// result in exactly one refresh after the debounce delay.
-func TestNotifyDataChanged_DebounceBurst(t *testing.T) {
-	store, refreshCount := newTestStoreForDebounce(t, 100*time.Millisecond)
+// countIncidentViewRows returns the current row count of incident_correlation_view.
+func countIncidentViewRows(t *testing.T, store *LineageStore) int {
+	t.Helper()
 
-	defer func() { _ = store.Close() }()
+	var count int
 
-	// Fire 50 notifications in rapid succession
+	err := store.conn.DB.QueryRowContext(context.Background(),
+		"SELECT count(*) FROM incident_correlation_view",
+	).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+// countResolvedDatasets returns the current row count of the resolved_datasets table.
+func countResolvedDatasets(t *testing.T, store *LineageStore) int {
+	t.Helper()
+
+	var count int
+
+	err := store.conn.DB.QueryRowContext(context.Background(),
+		"SELECT count(*) FROM resolved_datasets",
+	).Scan(&count)
+	require.NoError(t, err)
+
+	return count
+}
+
+// TestDebounceBurst verifies that 50 rapid notifyDataChanged calls produce
+// exactly one refresh cycle (resolved_datasets populated once, view refreshed once).
+func TestDebounceBurst(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	store := setupDebounceStore(t, 200*time.Millisecond)
+	seedMinimalCorrelationData(t, store)
+
+	assert.Equal(t, 0, countResolvedDatasets(t, store),
+		"resolved_datasets should be empty before any refresh")
+
 	for range 50 {
 		store.notifyDataChanged()
 	}
 
-	// Wait for debounce delay + buffer for goroutine execution
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the single debounced refresh to complete
+	time.Sleep(500 * time.Millisecond)
 
-	assert.Equal(t, int64(1), refreshCount.Load(),
-		"50 rapid notifyDataChanged calls should produce exactly 1 refresh")
+	assert.Positive(t, countResolvedDatasets(t, store),
+		"resolved_datasets should be populated after debounced refresh")
+	assert.Equal(t, 1, countIncidentViewRows(t, store),
+		"1 correlated incident should appear after single refresh cycle")
 }
 
-// TestNotifyDataChanged_DisabledWhenZeroDelay verifies that notifyDataChanged
-// is a no-op when refreshDelay is zero.
-func TestNotifyDataChanged_DisabledWhenZeroDelay(t *testing.T) {
-	store, refreshCount := newTestStoreForDebounce(t, 0)
+// TestDebounceDisabledWhenZeroDelay verifies that notifyDataChanged is a no-op
+// when the refresh delay is zero — no refresh cycle runs.
+func TestDebounceDisabledWhenZeroDelay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 
-	defer func() { _ = store.Close() }()
+	store := setupDebounceStore(t, 0)
+	seedMinimalCorrelationData(t, store)
 
 	store.notifyDataChanged()
 	store.notifyDataChanged()
 	store.notifyDataChanged()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, int64(0), refreshCount.Load(),
-		"notifyDataChanged should be a no-op when refreshDelay is 0")
+	assert.Equal(t, 0, countResolvedDatasets(t, store),
+		"resolved_datasets should remain empty when debounce is disabled")
+	assert.Equal(t, 0, countIncidentViewRows(t, store),
+		"view should remain empty when debounce is disabled")
 }
 
-// TestClose_CancelsPendingRefresh verifies that Close() cancels a pending
-// debounce timer before it fires.
-func TestClose_CancelsPendingRefresh(t *testing.T) {
-	store, refreshCount := newTestStoreForDebounce(t, 500*time.Millisecond)
+// TestCloseCancelsPendingRefresh verifies that Close() cancels a pending
+// debounce timer before it fires — no refresh cycle runs.
+func TestCloseCancelsPendingRefresh(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 
-	// Trigger debounce (timer will fire in 500ms)
+	ctx := context.Background()
+	testDB := config.SetupTestDatabase(ctx, t)
+
+	t.Cleanup(func() {
+		_ = testDB.Connection.Close()
+		_ = testcontainers.TerminateContainer(testDB.Container)
+	})
+
+	conn := &Connection{DB: testDB.Connection}
+
+	store, err := NewLineageStore(conn, 1*time.Hour, WithViewRefreshDelay(2*time.Second))
+	require.NoError(t, err)
+
+	seedMinimalCorrelationData(t, store)
+
+	// Trigger debounce (timer will fire in 2s)
 	store.notifyDataChanged()
 
-	// Close immediately (before timer fires)
-	err := store.Close()
+	// Close immediately — should cancel the pending timer
+	err = store.Close()
 	require.NoError(t, err)
 
 	// Wait past the original debounce delay
-	time.Sleep(700 * time.Millisecond)
+	time.Sleep(2500 * time.Millisecond)
 
-	assert.Equal(t, int64(0), refreshCount.Load(),
-		"Close() should cancel pending refresh timer")
+	assert.Equal(t, 0, countResolvedDatasets(t, store),
+		"resolved_datasets should remain empty — Close() cancelled the pending refresh")
 }
 
-// TestClose_WaitsForInflightRefresh verifies that Close() waits for an
-// in-flight refresh goroutine to finish before returning.
-func TestClose_WaitsForInflightRefresh(t *testing.T) {
-	store, refreshCount := newTestStoreForDebounce(t, 10*time.Millisecond)
+// TestCloseWaitsForInflightRefresh verifies that Close() blocks until an
+// already-running refresh cycle completes.
+func TestCloseWaitsForInflightRefresh(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 
-	// Trigger debounce with very short delay
+	store := setupDebounceStore(t, 10*time.Millisecond)
+	seedMinimalCorrelationData(t, store)
+
 	store.notifyDataChanged()
 
-	// Wait for refresh to start
+	// Wait for the refresh goroutine to start executing
 	time.Sleep(50 * time.Millisecond)
 
-	// Close should wait for in-flight refresh
+	// Close() must block until the in-flight refresh finishes
 	err := store.Close()
 	require.NoError(t, err)
 
-	// The refresh should have completed before Close returned
-	assert.Equal(t, int64(1), refreshCount.Load(),
-		"Close() should wait for in-flight refresh to complete")
+	assert.Positive(t, countResolvedDatasets(t, store),
+		"resolved_datasets should be populated — Close() waited for in-flight refresh")
+	assert.Equal(t, 1, countIncidentViewRows(t, store),
+		"view should be populated — Close() waited for in-flight refresh")
 }
 
-// TestNotifyDataChanged_TimerResets verifies that each call resets the debounce timer.
-func TestNotifyDataChanged_TimerResets(t *testing.T) {
-	store, refreshCount := newTestStoreForDebounce(t, 200*time.Millisecond)
+// TestDebounceTimerResets verifies that a second notifyDataChanged call resets
+// the debounce timer — the refresh fires only after the LAST call's delay.
+func TestDebounceTimerResets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 
-	defer func() { _ = store.Close() }()
+	store := setupDebounceStore(t, 300*time.Millisecond)
+	seedMinimalCorrelationData(t, store)
 
-	// First notification
+	// First notification starts the 300ms timer
 	store.notifyDataChanged()
 
-	// Wait 150ms (within the 200ms debounce window)
+	// At 200ms, fire a second notification which resets the timer
+	time.Sleep(200 * time.Millisecond)
+	store.notifyDataChanged()
+
+	// At 350ms total (150ms after second call) — the original timer would have
+	// fired at 300ms but was reset; the new timer hasn't fired yet.
 	time.Sleep(150 * time.Millisecond)
 
-	// Second notification resets the timer
-	store.notifyDataChanged()
+	assert.Equal(t, 0, countResolvedDatasets(t, store),
+		"resolved_datasets should still be empty — timer was reset")
 
-	// At 100ms after second notification, the first timer would have fired at 200ms
-	// but it was reset. Only the second timer should fire.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the reset timer to fire (300ms after second call = ~500ms total)
+	time.Sleep(300 * time.Millisecond)
 
-	assert.Equal(t, int64(0), refreshCount.Load(),
-		"Timer should have been reset — no refresh yet at 100ms after second call")
-
-	// Wait for the second timer to fire (200ms after second call)
-	time.Sleep(200 * time.Millisecond)
-
-	assert.Equal(t, int64(1), refreshCount.Load(),
-		"Exactly 1 refresh should fire after timer reset")
-}
-
-// TestStoreEvent_DuplicateDoesNotTriggerRefresh verifies that duplicate events
-// (stored=false) do not trigger notifyDataChanged.
-// This is verified structurally: StoreEvent only calls notifyDataChanged after
-// returning (true, false, nil). Duplicate detection returns (false, true, nil)
-// before reaching the notifyDataChanged call.
-func TestStoreEvent_DuplicateDoesNotTriggerRefresh(t *testing.T) {
-	// This test verifies the structural property by reading the source.
-	// The notifyDataChanged call is on the stored=true path (after commit),
-	// and duplicate detection returns early (before commit).
-	// The test exists to document this design decision.
-
-	// Verify notifyDataChanged is a no-op when disabled (safety check)
-	store, refreshCount := newTestStoreForDebounce(t, 0)
-
-	defer func() { _ = store.Close() }()
-
-	store.notifyDataChanged()
-
-	assert.Equal(t, int64(0), refreshCount.Load())
+	assert.Positive(t, countResolvedDatasets(t, store),
+		"resolved_datasets should be populated after reset timer fires")
+	assert.Equal(t, 1, countIncidentViewRows(t, store),
+		"view should be populated after reset timer fires")
 }
 
 // TestWithViewRefreshDelay verifies the functional option sets the delay.

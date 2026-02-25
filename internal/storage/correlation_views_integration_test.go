@@ -42,6 +42,9 @@ func TestRefreshCorrelationViews(t *testing.T) {
 	}()
 
 	// Test: Refresh should succeed even with no data
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err, "Refresh should succeed with empty tables")
 }
@@ -117,6 +120,9 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -429,6 +435,9 @@ func TestQueryCorrelationHealth_FullyCorrelated(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -509,6 +518,9 @@ func TestQueryCorrelationHealth_ZeroCorrelated(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -597,6 +609,9 @@ func TestQueryCorrelationHealth_MixedState(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -697,6 +712,9 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -787,6 +805,9 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -878,6 +899,9 @@ func TestDetectOrphanDatasets_MultipleOrphans(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -996,6 +1020,9 @@ func TestDetectOrphanDatasets_HealthyState(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1112,6 +1139,9 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views (needed for incident_correlation_view)
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1226,6 +1256,9 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1322,6 +1355,9 @@ func TestQueryIncidents_NoPatternResolver(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1414,6 +1450,9 @@ func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1514,6 +1553,9 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1652,6 +1694,9 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views (needed for incident_correlation_view)
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1757,6 +1802,9 @@ func TestQueryIncidentByID_WithPatternResolution_NotFound(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1850,6 +1898,9 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 	}()
 
 	// Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -1999,6 +2050,9 @@ func TestParentRunFacetCorrelation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 4: Refresh materialized views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -2104,6 +2158,9 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 3: Refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
@@ -2145,6 +2202,9 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.True(t, stored)
 
 	// Step 6: Refresh views again
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 

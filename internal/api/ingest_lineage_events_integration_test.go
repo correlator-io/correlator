@@ -26,9 +26,10 @@ import (
 // testServer encapsulates test server dependencies for lineage integration tests.
 // Only stores fields used by helper methods - cleanup dependencies captured in t.Cleanup closures.
 type testServer struct {
-	server *Server
-	apiKey string
-	db     *sql.DB // For database verification helpers
+	server       *Server
+	apiKey       string
+	db           *sql.DB               // For database verification helpers
+	lineageStore *storage.LineageStore // For calling InitResolvedDatasets in tests
 }
 
 // setupTestServer creates a fully configured test server with all dependencies.
@@ -90,9 +91,10 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	})
 
 	return &testServer{
-		server: server,
-		apiKey: testAPIKey,
-		db:     testDB.Connection,
+		server:       server,
+		apiKey:       testAPIKey,
+		db:           testDB.Connection,
+		lineageStore: lineageStore,
 	}
 }
 

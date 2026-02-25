@@ -2,10 +2,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 
@@ -25,7 +27,10 @@ var (
 	buildTime = "unknown"   // Build timestamp (set at build time)
 )
 
-const name = "correlator"
+const (
+	name        = "correlator"
+	initTimeout = 30 * time.Second
+)
 
 // Version returns the build version.
 func Version() string { return version }
@@ -165,6 +170,24 @@ func main() {
 		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),
 		slog.Duration("database_conn_max_idle_time", storageConfig.ConnMaxIdleTime),
 	)
+
+	// Initialize resolved_datasets lookup table (must run before serving traffic)
+	initCtx, initCancel := context.WithTimeout(context.Background(), initTimeout)
+
+	if err := lineageStore.InitResolvedDatasets(initCtx); err != nil {
+		initCancel()
+
+		logger.Error("Failed to initialize resolved_datasets", slog.String("error", err.Error()))
+
+		_ = lineageStore.Close()
+		_ = dbConn.Close()
+
+		os.Exit(1)
+	}
+
+	initCancel()
+
+	logger.Info("Resolved datasets lookup table initialized")
 
 	// lineageStore implements both ingestion.Store and correlation.Store interfaces
 	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore)

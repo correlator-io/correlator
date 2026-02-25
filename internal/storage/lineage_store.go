@@ -199,6 +199,13 @@ func NewLineageStore(
 	return store, nil
 }
 
+// InitResolvedDatasets populates the resolved_datasets lookup table.
+// Must be called once at startup before serving traffic to ensure materialized
+// views can use resolved URNs from the first query.
+func (s *LineageStore) InitResolvedDatasets(ctx context.Context) error {
+	return s.refreshResolvedDatasets(ctx)
+}
+
 // Close stops background goroutines gracefully.
 // This method is safe to call multiple times.
 //
@@ -458,6 +465,13 @@ func (s *LineageStore) notifyDataChanged() {
 
 		ctx, cancel := context.WithTimeout(context.Background(), viewRefreshTimeout)
 		defer cancel()
+
+		// Refresh resolved_datasets BEFORE views (views depend on this table)
+		if err := s.refreshResolvedDatasets(ctx); err != nil {
+			s.logger.Error("Background resolved_datasets refresh failed", slog.Any("error", err))
+
+			return // Don't refresh views if lookup table failed
+		}
 
 		if err := s.refreshViews(ctx); err != nil {
 			s.logger.Error("Background view refresh failed", slog.Any("error", err))

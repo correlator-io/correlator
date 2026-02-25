@@ -53,6 +53,8 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		setupCorrelatedTestData(ctx, t, ts, jobRunID, datasetURN, now)
 
 		// Refresh materialized views
+		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 		_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 		require.NoError(t, err, "Failed to refresh views")
 
@@ -84,6 +86,8 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		setupOrphanTestData(ctx, t, ts, geJobRunID, orphanNamespace, orphanDatasetURN, now)
 
 		// Refresh materialized views
+		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 		_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 		require.NoError(t, err, "Failed to refresh views")
 
@@ -138,6 +142,8 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		setupOrphanTestData(ctx, t, ts, geJobRunID, orphanNS, orphanDataset, now)
 
 		// Refresh materialized views
+		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
 		_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
 		require.NoError(t, err, "Failed to refresh views")
 

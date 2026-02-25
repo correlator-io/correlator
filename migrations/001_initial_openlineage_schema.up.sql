@@ -146,6 +146,32 @@ COMMENT ON COLUMN datasets.dataset_urn IS 'OpenLineage dataset URN: namespace/na
 COMMENT ON COLUMN datasets.facets IS 'OpenLineage dataset facets: schema, statistics, documentation, ownership (all metadata in JSONB)';
 
 -- =====================================================
+-- 3. RESOLVED DATASETS - URN resolution lookup table
+-- =====================================================
+-- Materializes the output of the aliasing.Resolver so that
+-- materialized views can JOIN through canonical URNs without
+-- Go-level pattern resolution at query time.
+--
+-- Populated by Go (LineageStore.refreshResolvedDatasets):
+--   1. Identity row for every URN in datasets table
+--   2. Override rows where resolver.Resolve(urn) != urn
+--
+-- When no resolver is configured, all rows are identity mappings
+-- (canonical_urn = raw_urn), making view JOINs equivalent to
+-- direct dataset_urn equality.
+-- =====================================================
+CREATE TABLE resolved_datasets (
+    raw_urn       TEXT PRIMARY KEY,
+    canonical_urn TEXT NOT NULL
+);
+
+CREATE INDEX idx_resolved_datasets_canonical ON resolved_datasets (canonical_urn);
+
+COMMENT ON TABLE resolved_datasets IS 'URN resolution lookup: maps raw dataset URNs to canonical form. Identity mapping when no resolver configured.';
+COMMENT ON COLUMN resolved_datasets.raw_urn IS 'Original dataset URN as stored in datasets/test_results/lineage_edges tables';
+COMMENT ON COLUMN resolved_datasets.canonical_urn IS 'Canonical URN after pattern resolution. Equals raw_urn when no pattern matches.';
+
+-- =====================================================
 -- 4. LINEAGE EDGES - OpenLineage lineage relationships
 -- =====================================================
 -- 
@@ -388,8 +414,8 @@ SELECT
     tr.executed_at          AS test_executed_at,
     tr.duration_ms          AS test_duration_ms,
 
-    -- Dataset information
-    tr.dataset_urn,
+    -- Dataset information (canonical URN from resolved_datasets for cross-tool correlation)
+    rd_test.canonical_urn   AS dataset_urn,
     d.name                  AS dataset_name,
     d.namespace             AS dataset_namespace,
 
@@ -427,8 +453,10 @@ SELECT
     le.created_at           AS lineage_created_at
 
 FROM test_results tr
-    JOIN datasets d ON tr.dataset_urn = d.dataset_urn
-    JOIN lineage_edges le ON d.dataset_urn = le.dataset_urn AND le.edge_type = 'output'
+    JOIN resolved_datasets rd_test ON tr.dataset_urn = rd_test.raw_urn
+    JOIN resolved_datasets rd_edge ON rd_test.canonical_urn = rd_edge.canonical_urn
+    JOIN lineage_edges le ON le.dataset_urn = rd_edge.raw_urn AND le.edge_type = 'output'
+    JOIN datasets d ON le.dataset_urn = d.dataset_urn
     JOIN job_runs jr ON le.job_run_id = jr.job_run_id
     LEFT JOIN job_runs parent_jr ON jr.parent_job_run_id = parent_jr.job_run_id
     LEFT JOIN job_runs root_jr ON jr.root_parent_job_run_id = root_jr.job_run_id
@@ -718,6 +746,10 @@ BEGIN
         RAISE EXCEPTION 'Table datasets not created';
     END IF;
     
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'resolved_datasets') THEN
+        RAISE EXCEPTION 'Table resolved_datasets not created';
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'lineage_edges') THEN
         RAISE EXCEPTION 'Table lineage_edges not created';
     END IF;
@@ -750,7 +782,7 @@ END $$;
 -- Success message
 SELECT
     'Initial OpenLineage schema migration completed' as status,
-    8 as tables_created,
+    9 as tables_created,
     3 as materialized_views_created,
     1 as functions_created,
     'OpenLineage v1.0 compliant, correlation-ready' as note,
