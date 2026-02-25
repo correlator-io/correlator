@@ -4,33 +4,6 @@ package correlation
 import "time"
 
 type (
-	// ImpactResult represents a single row from the lineage_impact_analysis materialized view.
-	//
-	// This is a domain type representing the business concept of "downstream impact analysis".
-	//
-	// Fields:
-	//   - JobRunID: Canonical ID of the job run that produced this dataset
-	//   - DatasetURN: Unique resource name of the dataset (e.g., "urn:postgres:warehouse:public.customers")
-	//   - DatasetName: Human-readable dataset name (e.g., "customers")
-	//   - Depth: How many hops downstream from the original job run (0 = direct output, 1+ = downstream)
-	//
-	// Example:
-	//
-	//	If job1 produces dataset_a, which is consumed by job2 that produces dataset_b:
-	//	- ImpactResult{JobRunID: "job1", DatasetURN: "dataset_a", Depth: 0}  // job1's direct output
-	//	- ImpactResult{JobRunID: "job2", DatasetURN: "dataset_b", Depth: 1}  // 1 hop downstream from job1
-	//
-	// Used by:
-	//   - Correlation engine to calculate blast radius of job failures
-	//   - UI to visualize downstream impact in lineage graph
-	//   - Alerting system to determine affected teams/datasets
-	ImpactResult struct {
-		JobRunID    string
-		DatasetURN  string
-		DatasetName string
-		Depth       int
-	}
-
 	// Incident represents a single row from the incident_correlation_view materialized view.
 	//
 	// This domain type maps to the materialized view schema and contains all fields needed
@@ -117,46 +90,6 @@ type (
 		JobNamespace string
 		ProducerName string
 		Status       string
-	}
-
-	// RecentIncidentSummary represents a single row from the recent_incidents_summary materialized view.
-	//
-	// This domain type provides a 7-day aggregated view of test failures per job run.
-	//
-	// Fields:
-	//   - JobRunID: Canonical ID of the job run
-	//   - JobName: Name of the job
-	//   - JobNamespace: Job namespace
-	//   - JobStatus: Job execution status
-	//   - ProducerName: Tool that generated the lineage event
-	//   - FailedTestCount: Number of failed tests for this job run
-	//   - AffectedDatasetCount: Number of distinct datasets with failed tests
-	//   - FailedTestNames: Array of failed test names
-	//   - AffectedDatasetURNs: Array of affected dataset URNs
-	//   - FirstTestFailureAt: Timestamp of first test failure
-	//   - LastTestFailureAt: Timestamp of most recent test failure
-	//   - JobStartedAt: When the job started
-	//   - JobCompletedAt: When the job completed (nil if still running)
-	//   - DownstreamAffectedCount: Number of downstream datasets impacted
-	//
-	// Used by:
-	//   - correlation.Store.QueryRecentIncidents() - Returns this type
-	//   - Dashboard/UI - Should convert to response types
-	RecentIncidentSummary struct {
-		JobRunID                string
-		JobName                 string
-		JobNamespace            string
-		JobStatus               string
-		ProducerName            string
-		FailedTestCount         int64
-		AffectedDatasetCount    int64
-		FailedTestNames         []string
-		AffectedDatasetURNs     []string
-		FirstTestFailureAt      time.Time
-		LastTestFailureAt       time.Time
-		JobStartedAt            time.Time
-		JobCompletedAt          *time.Time
-		DownstreamAffectedCount int64
 	}
 
 	// IncidentFilter provides filtering options for querying incident_correlation_view.

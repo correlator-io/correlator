@@ -57,10 +57,14 @@ func TestViewRefreshPerformance(t *testing.T) {
 		_ = store.Close()
 	}()
 
+	// Populate resolved_datasets so views can JOIN through canonical URNs
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
 	// Measure refresh time
 	start := time.Now()
 
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 
 	duration := time.Since(start)
 
@@ -114,8 +118,11 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 		_ = store.Close()
 	}()
 
-	// Refresh views
-	err = store.RefreshViews(ctx)
+	// Populate resolved_datasets and refresh views
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test unfiltered query (no pagination)
@@ -174,112 +181,6 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 	})
 }
 
-// TestQueryLineageImpactPerformance measures QueryLineageImpact performance.
-//
-// Performance targets (realistic for production):
-//   - P95: <20ms for typical 3-level chains
-//   - P99: <100ms for deep graphs (10 levels)
-//
-// Results: ✅ PASS
-//   - Actual: ~0.5-1.2ms for 3-level chains (well under targets)
-//   - Production buffer: ~20-40x (accounts for network latency, recursive CTE overhead)
-func TestQueryLineageImpactPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping performance test in short mode")
-	}
-
-	ctx := context.Background()
-	testDB := config.SetupTestDatabase(ctx, t)
-
-	t.Cleanup(func() {
-		_ = testDB.Connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.Container)
-	})
-
-	// Create a 3-level lineage chain
-	jobRunID := createLineageChain(ctx, t, testDB.Connection, 3)
-
-	// Create LineageStore
-	conn := &Connection{DB: testDB.Connection}
-
-	store, err := NewLineageStore(conn, 1*time.Hour)
-	require.NoError(t, err)
-
-	defer func() {
-		_ = store.Close()
-	}()
-
-	// Refresh views
-	err = store.RefreshViews(ctx)
-	require.NoError(t, err)
-
-	start := time.Now()
-
-	impact, err := store.QueryLineageImpact(ctx, jobRunID, 0)
-
-	duration := time.Since(start)
-
-	require.NoError(t, err)
-	t.Logf("✅ QueryLineageImpact returned %d results in %v (P95 target: <20ms)", len(impact), duration)
-
-	// P95 target: <20ms for typical 3-level chains (realistic production target)
-	assert.Less(t, duration, 20*time.Millisecond,
-		"QueryLineageImpact should complete in <20ms (P95)")
-}
-
-// TestQueryRecentIncidentsPerformance measures QueryRecentIncidents performance.
-//
-// Performance targets (realistic for production):
-//   - P95: <5ms for 7-day window with 50 incidents
-//   - P99: <20ms for peak load
-//
-// Results: ✅ PASS
-//   - Actual: ~0.4-0.8ms for 50 incidents (well under targets)
-//   - Production buffer: ~10-25x (accounts for network latency, aggregation overhead)
-func TestQueryRecentIncidentsPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping performance test in short mode")
-	}
-
-	ctx := context.Background()
-	testDB := config.SetupTestDatabase(ctx, t)
-	t.Cleanup(func() {
-		_ = testDB.Connection.Close()
-		_ = testcontainers.TerminateContainer(testDB.Container)
-	})
-
-	// Load sample data
-	load100JobRuns(ctx, t, testDB.Connection)
-	load50TestResults(ctx, t, testDB.Connection)
-
-	// Create LineageStore
-	conn := &Connection{DB: testDB.Connection}
-
-	store, err := NewLineageStore(conn, 1*time.Hour)
-	require.NoError(t, err)
-
-	defer func() {
-		_ = store.Close()
-	}()
-
-	// Refresh views
-	err = store.RefreshViews(ctx)
-	require.NoError(t, err)
-
-	start := time.Now()
-
-	incidents, err := store.QueryRecentIncidents(ctx, 10)
-
-	duration := time.Since(start)
-
-	require.NoError(t, err)
-	t.Logf("✅ QueryRecentIncidents returned %d incidents in %v (P95 target: <5ms)", len(incidents), duration)
-
-	// P95 target: <5ms for 7-day window (realistic production target)
-	assert.Less(t, duration, 5*time.Millisecond,
-		"QueryRecentIncidents should complete in <5ms (P95)")
-}
-
 // TestQueryPlansUseIndexes verifies that correlation view queries use indexes efficiently.
 //
 // This test runs EXPLAIN ANALYZE on all correlation queries to ensure:
@@ -318,7 +219,10 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		_ = store.Close()
 	}()
 
-	err = store.RefreshViews(ctx)
+	err = store.InitResolvedDatasets(ctx)
+	require.NoError(t, err)
+
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test 1: Incident Correlation View - Unfiltered Query
@@ -392,8 +296,10 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		// Create a lineage chain first
 		jobRunID := createLineageChain(ctx, t, testDB.Connection, 3)
 
-		// Refresh views to include new data
-		err := store.RefreshViews(ctx)
+		// Refresh resolved_datasets and views to include new data
+		require.NoError(t, store.InitResolvedDatasets(ctx))
+
+		err := store.refreshViews(ctx)
 		require.NoError(t, err)
 
 		explainQuery := fmt.Sprintf(`

@@ -65,6 +65,8 @@ const (
 	cleanupBatchSize = 10000
 	// batchSleepDuration is the sleep time between batches to avoid overwhelming the database.
 	batchSleepDuration = 100 * time.Millisecond
+	// viewRefreshTimeout is the maximum time allowed for a single materialized view refresh.
+	viewRefreshTimeout = 30 * time.Second
 	producerURLParts   = 4
 	// run states.
 	stateComplete = "COMPLETE"
@@ -89,6 +91,12 @@ type (
 		cleanupDone     chan struct{} // Signal cleanup has stopped
 		closeOnce       sync.Once
 		resolver        *aliasing.Resolver // Optional alias resolver for query-time namespace resolution
+		// Debounced view refresh fields
+		refreshDelay time.Duration  // Debounce delay for view refresh after data changes (0 = disabled)
+		refreshMu    sync.Mutex     // Serializes timer management (not ingestion)
+		refreshTimer *time.Timer    // Debounce timer; nil when no refresh pending
+		refreshStop  chan struct{}  // Signal to stop in-flight refresh (closed on Close)
+		refreshWg    sync.WaitGroup // Tracks in-flight refresh goroutines for graceful shutdown
 	}
 
 	// LineageStoreOption configures optional LineageStore behavior.
@@ -122,6 +130,20 @@ type (
 func WithAliasResolver(r *aliasing.Resolver) LineageStoreOption {
 	return func(s *LineageStore) {
 		s.resolver = r
+	}
+}
+
+// WithViewRefreshDelay sets the debounce delay for post-ingestion materialized view refresh.
+// When set to a positive duration, views auto-refresh after the specified quiet period
+// following data changes. Default: 0 (disabled).
+//
+// Example:
+//
+//	store, err := storage.NewLineageStore(conn, interval,
+//	    storage.WithViewRefreshDelay(2 * time.Second))
+func WithViewRefreshDelay(d time.Duration) LineageStoreOption {
+	return func(s *LineageStore) {
+		s.refreshDelay = d
 	}
 }
 
@@ -162,6 +184,13 @@ func NewLineageStore(
 		opt(store)
 	}
 
+	// Initialize debounced view refresh stop channel (always, even if disabled — safe default)
+	store.refreshStop = make(chan struct{})
+
+	if store.refreshDelay > 0 {
+		store.logger.Info("View refresh debounce enabled", slog.Duration("delay", store.refreshDelay))
+	}
+
 	// Start cleanup goroutine
 	go store.runCleanup()
 
@@ -170,19 +199,42 @@ func NewLineageStore(
 	return store, nil
 }
 
-// Close stops the cleanup goroutine gracefully.
+// InitResolvedDatasets populates the resolved_datasets lookup table.
+// Must be called once at startup before serving traffic to ensure materialized
+// views can use resolved URNs from the first query.
+func (s *LineageStore) InitResolvedDatasets(ctx context.Context) error {
+	return s.refreshResolvedDatasets(ctx)
+}
+
+// Close stops background goroutines gracefully.
 // This method is safe to call multiple times.
 //
 // Note: Does NOT close the database connection, as the connection is managed externally
 // via dependency injection. The caller is responsible for closing the connection.
 //
 // Shutdown sequence:
-//  1. Signal cleanup goroutine to stop (close cleanupStop channel)
-//  2. Wait for cleanup goroutine to finish (with 5-second timeout)
-//
-// Background goroutine uses channel-based cancellation via cleanupStop/cleanupDone channels.
+//  1. Stop debounced view refresh timer and cancel in-flight refresh
+//  2. Signal cleanup goroutine to stop (close cleanupStop channel)
+//  3. Wait for cleanup goroutine to finish (with 5-second timeout)
 func (s *LineageStore) Close() error {
 	s.closeOnce.Do(func() {
+		// Stop debounced view refresh: signal stop, cancel timer, wait for in-flight
+		close(s.refreshStop)
+
+		s.refreshMu.Lock()
+
+		if s.refreshTimer != nil && s.refreshTimer.Stop() {
+			// Timer was pending (goroutine hasn't started) — balance the Add(1)
+			// that was registered when the timer was scheduled.
+			s.refreshWg.Done()
+		}
+
+		s.refreshTimer = nil
+		s.refreshMu.Unlock()
+
+		// Wait for in-flight refresh goroutine to finish
+		s.refreshWg.Wait()
+
 		// Signal cleanup goroutine to stop
 		close(s.cleanupStop)
 
@@ -312,6 +364,10 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 		slog.Time("event_time", event.EventTime),
 	)
 
+	// Notify that data has changed (triggers debounced view refresh).
+	// Background refresh intentionally uses its own context, not the request context.
+	s.notifyDataChanged() //nolint:contextcheck
+
 	return true, false, nil
 }
 
@@ -365,6 +421,62 @@ func (s *LineageStore) StoreEvents(
 	}
 
 	return results, nil
+}
+
+// notifyDataChanged resets the debounce timer for materialized view refresh.
+// Called after each successful StoreEvent commit. The timer fires in its own goroutine
+// using a background context (not the request context).
+//
+// Properties:
+//   - Mutex only protects timer management (nanosecond-cheap), never blocks ingestion
+//   - Each call resets the timer — burst of 50 events produces 1 refresh
+//   - No-op when view refresh is disabled (refreshDelay <= 0)
+func (s *LineageStore) notifyDataChanged() {
+	if s.refreshDelay <= 0 {
+		return
+	}
+
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	// Stop existing timer. If Stop returns true, the goroutine hasn't started,
+	// so we balance the Add(1) that was registered when the timer was scheduled.
+	if s.refreshTimer != nil && s.refreshTimer.Stop() {
+		s.refreshWg.Done()
+	}
+
+	s.logger.Debug("View refresh timer reset", slog.Duration("delay", s.refreshDelay))
+
+	// Register intent before scheduling goroutine — ensures Close().Wait()
+	// always sees the pending work, closing the Add/Wait race window.
+	s.refreshWg.Add(1)
+
+	s.refreshTimer = time.AfterFunc(s.refreshDelay, func() {
+		defer s.refreshWg.Done()
+
+		// Check if store is shutting down
+		select {
+		case <-s.refreshStop:
+			return
+		default:
+		}
+
+		s.logger.Info("Debounced view refresh triggered")
+
+		ctx, cancel := context.WithTimeout(context.Background(), viewRefreshTimeout)
+		defer cancel()
+
+		// Refresh resolved_datasets BEFORE views (views depend on this table)
+		if err := s.refreshResolvedDatasets(ctx); err != nil {
+			s.logger.Error("Background resolved_datasets refresh failed", slog.Any("error", err))
+
+			return // Don't refresh views if lookup table failed
+		}
+
+		if err := s.refreshViews(ctx); err != nil {
+			s.logger.Error("Background view refresh failed", slog.Any("error", err))
+		}
+	})
 }
 
 // validateRunEvent performs defensive validation of a RunEvent before storage.
