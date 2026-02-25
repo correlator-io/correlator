@@ -26,10 +26,10 @@ var (
 
 const statusFailed = "failed"
 
-// RefreshViews implements correlation.Store.
-// Refreshes all correlation materialized views in dependency order.
+// refreshViews refreshes all correlation materialized views in dependency order.
 //
-// This method calls the PostgreSQL function refresh_correlation_views() which:
+// This is an internal method called by the debounced post-ingestion hook (notifyDataChanged).
+// It calls the PostgreSQL function refresh_correlation_views() which:
 //   - Refreshes incident_correlation_view (failed/error tests correlated to job runs)
 //   - Refreshes lineage_impact_analysis (recursive downstream impact analysis)
 //   - Refreshes recent_incidents_summary (7-day rolling window aggregation)
@@ -39,12 +39,7 @@ const statusFailed = "failed"
 //   - Typical duration: 650ms-2s (depends on data volume)
 //   - No table locks (CONCURRENTLY refresh)
 //   - Safe to call frequently (e.g., every 5 minutes)
-//
-// Returns error if:
-//   - Context is cancelled
-//   - Database connection fails
-//   - Any view refresh fails
-func (s *LineageStore) RefreshViews(ctx context.Context) error {
+func (s *LineageStore) refreshViews(ctx context.Context) error {
 	start := time.Now()
 
 	s.logger.Debug("Starting correlation views refresh")
@@ -95,7 +90,7 @@ func (s *LineageStore) RefreshViews(ctx context.Context) error {
 // Performance:
 //   - View-based query (no patterns): typically 10-50ms
 //   - Pattern-resolved query: typically 50-200ms (additional lookups)
-//   - Call RefreshViews() to update data
+//   - Views are auto-refreshed via debounced post-ingestion hook
 func (s *LineageStore) QueryIncidents(
 	ctx context.Context,
 	filter *correlation.IncidentFilter,

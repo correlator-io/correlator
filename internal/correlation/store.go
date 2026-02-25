@@ -20,22 +20,6 @@ import "context"
 //
 // Implemented by: storage.LineageStore.
 type Store interface {
-	// RefreshViews refreshes all correlation materialized views in dependency order.
-	//
-	// This method calls the PostgreSQL function refresh_correlation_views() which:
-	//   - Refreshes incident_correlation_view (failed/error tests correlated to job runs)
-	//   - Refreshes lineage_impact_analysis (recursive downstream impact)
-	//   - Refreshes recent_incidents_summary (7-day rolling window aggregation)
-	//   - Uses CONCURRENTLY for zero-downtime updates (~650ms-2s, no locks)
-	//
-	// Should be called:
-	//   - After bulk data ingestion
-	//   - On schedule (e.g., every 5 minutes)
-	//   - Before serving correlation queries (if data freshness critical)
-	//
-	// Returns error if refresh fails or context is cancelled.
-	RefreshViews(ctx context.Context) error //TODO: do we need this method on the interface?
-
 	// QueryIncidents queries the incident_correlation_view with optional filters and pagination.
 	//
 	// This view correlates test failures to the job runs that produced the failing datasets enabling 2-click navigation
@@ -53,7 +37,7 @@ type Store interface {
 	//   - View is pre-materialized (fast queries, ~10-50ms typical)
 	//   - Uses COUNT(*) OVER() window function for efficient pagination
 	//   - Uses indexes: incident_correlation_view_pk, idx_incident_correlation_view_job_run_id
-	//   - Refresh latency: Call RefreshViews() to update data.
+	//   - Views are auto-refreshed via debounced post-ingestion hook on LineageStore.
 	QueryIncidents(ctx context.Context, filter *IncidentFilter, pagination *Pagination) (*IncidentQueryResult, error)
 
 	// QueryIncidentByID queries a single incident by test_result_id.

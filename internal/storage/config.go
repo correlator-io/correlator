@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	defaultMaxOpenConns    = 25
-	defaultMaxIdleConns    = 5
-	defaultConnMaxLifetime = 30 * time.Minute
-	defaultConnMaxIdleTime = 10 * time.Minute
-	defaultCleanupInterval = 1 * time.Hour // Default cleanup interval for idempotency table
+	defaultMaxOpenConns     = 25
+	defaultMaxIdleConns     = 5
+	defaultConnMaxLifetime  = 30 * time.Minute
+	defaultConnMaxIdleTime  = 10 * time.Minute
+	defaultCleanupInterval  = 1 * time.Hour   // Default cleanup interval for idempotency table
+	defaultViewRefreshDelay = 2 * time.Second // Default debounce delay for post-ingestion view refresh
 )
 
 var (
@@ -23,23 +24,25 @@ var (
 
 // Config holds PostgreSQL connection configuration with production-ready defaults.
 type Config struct {
-	databaseURL     string
-	MaxOpenConns    int           // Maximum number of open connections
-	MaxIdleConns    int           // Maximum number of idle connections
-	ConnMaxLifetime time.Duration // Maximum lifetime of connections
-	ConnMaxIdleTime time.Duration // Maximum idle time for connections
-	CleanupInterval time.Duration // Cleanup interval for idempotency table (TTL cleanup)
+	databaseURL      string
+	MaxOpenConns     int           // Maximum number of open connections
+	MaxIdleConns     int           // Maximum number of idle connections
+	ConnMaxLifetime  time.Duration // Maximum lifetime of connections
+	ConnMaxIdleTime  time.Duration // Maximum idle time for connections
+	CleanupInterval  time.Duration // Cleanup interval for idempotency table (TTL cleanup)
+	ViewRefreshDelay time.Duration // Debounce delay for post-ingestion materialized view refresh
 }
 
 // LoadConfig loads PostgreSQL configuration from environment variables with fallback to defaults.
 func LoadConfig() *Config {
 	return &Config{
-		databaseURL:     config.GetEnvStr("DATABASE_URL", ""), // DatabaseURL is private for obvious reasons.
-		MaxOpenConns:    config.GetEnvInt("DATABASE_MAX_OPEN_CONNS", defaultMaxOpenConns),
-		MaxIdleConns:    config.GetEnvInt("DATABASE_MAX_IDLE_CONNS", defaultMaxIdleConns),
-		ConnMaxLifetime: config.GetEnvDuration("DATABASE_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
-		ConnMaxIdleTime: config.GetEnvDuration("DATABASE_CONN_MAX_IDLE_TIME", defaultConnMaxIdleTime),
-		CleanupInterval: config.GetEnvDuration("IDEMPOTENCY_CLEANUP_INTERVAL", defaultCleanupInterval),
+		databaseURL:      config.GetEnvStr("DATABASE_URL", ""), // DatabaseURL is private for obvious reasons.
+		MaxOpenConns:     config.GetEnvInt("DATABASE_MAX_OPEN_CONNS", defaultMaxOpenConns),
+		MaxIdleConns:     config.GetEnvInt("DATABASE_MAX_IDLE_CONNS", defaultMaxIdleConns),
+		ConnMaxLifetime:  config.GetEnvDuration("DATABASE_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
+		ConnMaxIdleTime:  config.GetEnvDuration("DATABASE_CONN_MAX_IDLE_TIME", defaultConnMaxIdleTime),
+		CleanupInterval:  config.GetEnvDuration("IDEMPOTENCY_CLEANUP_INTERVAL", defaultCleanupInterval),
+		ViewRefreshDelay: config.GetEnvDuration("CORRELATOR_VIEW_REFRESH_DELAY", defaultViewRefreshDelay),
 	}
 }
 

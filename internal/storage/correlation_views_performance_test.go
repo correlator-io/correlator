@@ -60,7 +60,7 @@ func TestViewRefreshPerformance(t *testing.T) {
 	// Measure refresh time
 	start := time.Now()
 
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 
 	duration := time.Since(start)
 
@@ -115,7 +115,7 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test unfiltered query (no pagination)
@@ -212,7 +212,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		_ = store.Close()
 	}()
 
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test 1: Incident Correlation View - Unfiltered Query
@@ -287,7 +287,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		jobRunID := createLineageChain(ctx, t, testDB.Connection, 3)
 
 		// Refresh views to include new data
-		err := store.RefreshViews(ctx)
+		err := store.refreshViews(ctx)
 		require.NoError(t, err)
 
 		explainQuery := fmt.Sprintf(`

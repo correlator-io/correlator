@@ -146,6 +146,7 @@ func main() {
 	lineageStore, err := storage.NewLineageStore(
 		dbConn, storageConfig.CleanupInterval,
 		storage.WithAliasResolver(resolver),
+		storage.WithViewRefreshDelay(storageConfig.ViewRefreshDelay),
 	)
 	if err != nil {
 		logger.Error("Failed to connect to lineage store", slog.String("error", err.Error()))
@@ -158,6 +159,7 @@ func main() {
 	logger.Info("Lineage store initialized",
 		slog.String("database_url", storageConfig.MaskDatabaseURL()),
 		slog.Duration("cleanup_interval", storageConfig.CleanupInterval),
+		slog.Duration("view_refresh_delay", storageConfig.ViewRefreshDelay),
 		slog.Int("database_max_open_conns", storageConfig.MaxOpenConns),
 		slog.Int("database_max_idle_conns", storageConfig.MaxIdleConns),
 		slog.Duration("database_conn_max_lifetime", storageConfig.ConnMaxLifetime),

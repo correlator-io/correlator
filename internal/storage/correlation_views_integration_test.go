@@ -42,7 +42,7 @@ func TestRefreshCorrelationViews(t *testing.T) {
 	}()
 
 	// Test: Refresh should succeed even with no data
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err, "Refresh should succeed with empty tables")
 }
 
@@ -117,7 +117,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test 1: Query all incidents (no filter, no pagination)
@@ -429,7 +429,7 @@ func TestQueryCorrelationHealth_FullyCorrelated(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: 100% correlation rate
@@ -509,7 +509,7 @@ func TestQueryCorrelationHealth_ZeroCorrelated(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: 0% correlation rate (all incidents in orphan namespace)
@@ -597,7 +597,7 @@ func TestQueryCorrelationHealth_MixedState(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: 50% correlation rate (1 correlated, 1 orphan)
@@ -697,7 +697,7 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Detect orphan datasets
@@ -787,7 +787,7 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Detect orphan datasets
@@ -878,7 +878,7 @@ func TestDetectOrphanDatasets_MultipleOrphans(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Detect orphan datasets
@@ -996,7 +996,7 @@ func TestDetectOrphanDatasets_HealthyState(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: No orphans when dataset has output edge
@@ -1112,7 +1112,7 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views (needed for incident_correlation_view)
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Query incidents with pattern resolution
@@ -1226,7 +1226,7 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Query incidents
@@ -1322,7 +1322,7 @@ func TestQueryIncidents_NoPatternResolver(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Without pattern resolver, GE incident should NOT be correlated
@@ -1414,7 +1414,7 @@ func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Correlation health should show 100% with pattern resolution
@@ -1514,7 +1514,7 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test pagination with pattern resolution
@@ -1652,7 +1652,7 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 	}()
 
 	// Refresh views (needed for incident_correlation_view)
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Query incident by ID with pattern resolution
@@ -1757,7 +1757,7 @@ func TestQueryIncidentByID_WithPatternResolution_NotFound(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Query incident by ID - should return nil (no producer found)
@@ -1850,7 +1850,7 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 	}()
 
 	// Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Test: Query incident by ID - should return nil (passed test is not an incident)
@@ -1999,7 +1999,7 @@ func TestParentRunFacetCorrelation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 4: Refresh materialized views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Step 5: Query incident and verify parent fields
@@ -2104,7 +2104,7 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 3: Refresh views
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Step 4: Query incident - parent fields should be empty (parent not ingested)
@@ -2145,7 +2145,7 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.True(t, stored)
 
 	// Step 6: Refresh views again
-	err = store.RefreshViews(ctx)
+	err = store.refreshViews(ctx)
 	require.NoError(t, err)
 
 	// Step 7: Query incident again - parent fields should now be populated
