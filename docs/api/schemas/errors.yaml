@@ -40,7 +40,7 @@ components:
           type: string
           format: uri
           description: URI reference identifying the specific occurrence (RFC 7807)
-          example: "/api/v1/lineage/events"
+          example: "/api/v1/lineage/batch"
         correlation_id:
           type: string
           format: uuid
@@ -256,7 +256,7 @@ components:
           title: "Validation Error"
           status: 422
           detail: "The RunEvent is missing required fields and has invalid data types"
-          instance: "/api/v1/lineage/events"
+          instance: "/api/v1/lineage/batch"
           timestamp: "2024-01-01T12:05:30Z"
           correlation_id: "123e4567-e89b-12d3-a456-426614174000"
           details:

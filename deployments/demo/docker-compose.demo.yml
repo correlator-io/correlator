@@ -95,7 +95,7 @@ services:
     container_name: demo-correlator
     environment:
       - DATABASE_URL=postgres://correlator:correlator_dev_password@demo-postgres:5432/demo?sslmode=disable&search_path=correlator
-      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - CORRELATOR_SERVER_LOG_LEVEL=debug
       - CORRELATOR_AUTH_ENABLED=false
       - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
     ports:

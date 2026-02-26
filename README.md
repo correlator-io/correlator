@@ -29,19 +29,24 @@ docker-compose -f deployments/docker/docker-compose.yml up -d
 make build
 ./build/correlator
 
-# Ingest OpenLineage events
-curl -X POST http://localhost:8080/api/v1/lineage/events \
+# Ingest OpenLineage events (single event - standard OL API)
+curl -X POST http://localhost:8080/api/v1/lineage \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d @event.json
+
+# Ingest batch events
+curl -X POST http://localhost:8080/api/v1/lineage/batch \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d @events.json
 ```
 
-For dbt projects, use [dbt-correlator](https://github.com/correlator-io/correlator-dbt):
+Standard OpenLineage integrations (dbt, Airflow, GE) work out of the box:
 
 ```bash
-pip install correlator-dbt
-export CORRELATOR_ENDPOINT=http://localhost:8080/api/v1/lineage/events
-dbt-correlator test
+export OPENLINEAGE_URL=http://localhost:8080
+export OPENLINEAGE_API_KEY=your-api-key
 ```
 
 ---

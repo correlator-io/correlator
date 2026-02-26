@@ -22,7 +22,10 @@
 #   CORRELATOR_AUTH_ENABLED=true API_KEY=my-key ./scripts/smoketest.sh
 #
 # Test Sections:
-#   Section 1: OpenLineage Ingestion (Tests 1-6)
+#   Section 0: Single-Event Endpoint (Test 0)
+#     - POST /api/v1/lineage (standard OL API, single JSON object, 200 OK empty body)
+#   Section 1: Batch Ingestion (Tests 1-6)
+#     - POST /api/v1/lineage/batch (batch events, JSON array)
 #     - Single events (dbt, Airflow, Spark) with canonical job_run_id generation
 #     - Duplicate detection (idempotency)
 #     - Invalid input validation (missing field)
@@ -41,7 +44,7 @@
 # - ⚠️  DO NOT use 'correlator-smoke-test' in production namespaces (data will be deleted)
 # - Pattern matching: Cleanup deletes WHERE namespace LIKE '%correlator-smoke-test%'
 #
-# Note: API expects array format even for single events: [event]
+# Note: Batch endpoint expects array format: [event]. Single endpoint expects object: event
 #
 # Out of Scope (covered by integration tests):
 # - Batch events (207 Multi-Status) - See internal/api/*_handler_integration_test.go
@@ -55,7 +58,8 @@ set -e
 # Configuration
 SERVER_URL="${SERVER_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-test-api-key}"
-ENDPOINT="${SERVER_URL}/api/v1/lineage/events"
+BATCH_ENDPOINT="${SERVER_URL}/api/v1/lineage/batch"
+SINGLE_ENDPOINT="${SERVER_URL}/api/v1/lineage"
 AUTH_ENABLED="${CORRELATOR_AUTH_ENABLED:-false}"
 DATABASE_URL="${DATABASE_URL:-}"  # Optional - for cleanup
 
@@ -165,29 +169,44 @@ SQL
     fi
 }
 
-# Helper function to make API request
+# Helper function to make batch API request (POST /api/v1/lineage/batch)
 make_request() {
     local data="$1"
 
-    # Use echo to pipe data to curl (ensures proper Content-Length)
-    # This avoids shell quoting issues with -d "$data"
     if [ "$AUTH_ENABLED" = "true" ] || [ "$AUTH_ENABLED" = "1" ]; then
-        local response=$(echo "$data" | curl -s -w "\n%{http_code}" -X POST "$ENDPOINT" \
+        local response=$(echo "$data" | curl -s -w "\n%{http_code}" -X POST "$BATCH_ENDPOINT" \
             -H "Content-Type: application/json" \
             -H "X-API-Key: $API_KEY" \
             -d @-)
     else
-        local response=$(echo "$data" | curl -s -w "\n%{http_code}" -X POST "$ENDPOINT" \
+        local response=$(echo "$data" | curl -s -w "\n%{http_code}" -X POST "$BATCH_ENDPOINT" \
             -H "Content-Type: application/json" \
             -d @-)
     fi
 
-    # Extract status code (last line) and body (everything else)
     local http_code=$(echo "$response" | tail -n 1)
     local body=$(echo "$response" | sed '$d')
 
-    # Return both as JSON for easy parsing
     echo "{\"status\": $http_code, \"body\": $body}"
+}
+
+# Helper function to make single-event API request (POST /api/v1/lineage)
+# Returns status code and body (body is empty on success per OL spec)
+make_single_request() {
+    local data="$1"
+
+    if [ "$AUTH_ENABLED" = "true" ] || [ "$AUTH_ENABLED" = "1" ]; then
+        local http_code=$(echo "$data" | curl -s -o /dev/null -w "%{http_code}" -X POST "$SINGLE_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $API_KEY" \
+            -d @-)
+    else
+        local http_code=$(echo "$data" | curl -s -o /dev/null -w "%{http_code}" -X POST "$SINGLE_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            -d @-)
+    fi
+
+    echo "$http_code"
 }
 
 # Helper function to validate OpenLineage response format
@@ -283,16 +302,60 @@ echo "Testing: Lineage ingestion → Test results → Correlation"
 echo ""
 
 #===============================================================================
-# SECTION 1: OpenLineage Ingestion (Tests 1-6)
+# SECTION 0: Single-Event Endpoint (Standard OL API)
 #===============================================================================
-echo "📦 Section 1: OpenLineage Ingestion"
-echo "-----------------------------------"
+echo "📡 Section 0: Single-Event Endpoint (POST /api/v1/lineage)"
+echo "-----------------------------------------------------------"
 echo ""
 
 #===============================================================================
-# Test 1: Single dbt COMPLETE event
+# Test 0: Single event via standard OL endpoint
 #===============================================================================
-echo "Test 1: Single dbt COMPLETE event (200 OK)"
+echo "Test 0: Single event via POST /api/v1/lineage (200 OK, empty body)"
+SINGLE_EVENT='{
+  "eventTime": "2025-10-21T09:55:00Z",
+  "eventType": "COMPLETE",
+  "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/dbt",
+  "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+  "run": {
+    "runId": "550e8400-e29b-41d4-a716-446655440099",
+    "facets": {}
+  },
+  "job": {
+    "namespace": "dbt://correlator-smoke-test-analytics",
+    "name": "transform_single_test",
+    "facets": {}
+  },
+  "inputs": [
+    {
+      "namespace": "postgres://correlator-smoke-test-db:5432",
+      "name": "raw.public.single_test",
+      "facets": {}
+    }
+  ],
+  "outputs": []
+}'
+
+STATUS=$(make_single_request "$SINGLE_EVENT")
+
+if [ "$STATUS" = "200" ]; then
+    print_test_result "Test 0" "PASS" "Standard OL endpoint returned 200 OK"
+else
+    print_test_result "Test 0" "FAIL" "Expected HTTP 200, got $STATUS"
+fi
+echo ""
+
+#===============================================================================
+# SECTION 1: Batch Endpoint (Tests 1-6)
+#===============================================================================
+echo "📦 Section 1: Batch Ingestion (POST /api/v1/lineage/batch)"
+echo "-----------------------------------------------------------"
+echo ""
+
+#===============================================================================
+# Test 1: Single dbt COMPLETE event (batch)
+#===============================================================================
+echo "Test 1: Single dbt COMPLETE event via batch (200 OK)"
 DBT_EVENT='{
   "eventTime": "2025-10-21T10:05:00Z",
   "eventType": "COMPLETE",

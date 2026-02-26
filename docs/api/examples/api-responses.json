@@ -6,7 +6,7 @@
     "_description": "Responses from OpenLineage and test result ingestion endpoints",
 
     "lineage_event_success": {
-      "_endpoint": "POST /api/v1/lineage/events",
+      "_endpoint": "POST /api/v1/lineage/batch",
       "_status": 200,
       "response": {
         "message": "OpenLineage event processed successfully",
@@ -19,7 +19,7 @@
     },
 
     "bulk_lineage_events_success": {
-      "_endpoint": "POST /api/v1/lineage/events (NDJSON)",
+      "_endpoint": "POST /api/v1/lineage/batch (NDJSON)",
       "_status": 202,
       "response": {
         "message": "Bulk events accepted for processing",
@@ -32,7 +32,7 @@
     },
 
     "lineage_validation_error": {
-      "_endpoint": "POST /api/v1/lineage/events",
+      "_endpoint": "POST /api/v1/lineage/batch",
       "_status": 422,
       "response": {
         "error": {
@@ -42,7 +42,7 @@
           "title": "Validation Error",
           "status": 422,
           "detail": "The RunEvent is missing required fields",
-          "instance": "/api/v1/lineage/events",
+          "instance": "/api/v1/lineage/batch",
           "timestamp": "2024-01-01T12:05:30Z",
           "correlation_id": "567e89ab-e89b-12d3-a456-426614174004",
           "details": {

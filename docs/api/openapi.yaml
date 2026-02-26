@@ -107,12 +107,74 @@ paths:
                 uptime: 2h30m15s
 
   # Protected API Endpoints (/api/v1/*)
-  /api/v1/lineage/events:
+  /api/v1/lineage:
     post:
-      summary: Ingest OpenLineage events
+      summary: Ingest single OpenLineage event
       description: |
-        Primary plugin integration endpoint. Accepts OpenLineage v1.0 compliant RunEvents
-        from Correlator plugins (dbt-correlator, correlator-airflow, correlator-ge).
+        Standard OpenLineage single-event ingestion endpoint. Accepts a single
+        OpenLineage RunEvent JSON object.
+
+        This endpoint is compatible with standard OpenLineage clients configured with:
+        ```
+        OPENLINEAGE_URL=http://correlator:8080
+        ```
+
+        Events are processed with idempotency - duplicate events return 200 OK.
+
+        **Request Limits:**
+        - Max request body: 1 MB
+      operationId: ingestLineageEvent
+      tags:
+        - OpenLineage Ingestion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineageEvent'
+            example:
+              eventTime: "2024-01-01T12:00:00Z"
+              producer: "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/dbt"
+              schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json"
+              eventType: "COMPLETE"
+              run:
+                runId: "550e8400-e29b-41d4-a716-446655440000"
+              job:
+                namespace: "dbt_prod"
+                name: "models.users"
+              inputs:
+                - namespace: "postgresql://prod-db/public"
+                  name: "raw_users"
+              outputs:
+                - namespace: "postgresql://prod-db/public"
+                  name: "clean_users"
+      responses:
+        '200':
+          description: Event processed successfully (empty body per OL spec)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          description: Event failed validation
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/lineage/batch:
+    post:
+      summary: Ingest batch OpenLineage events
+      description: |
+        Batch event ingestion endpoint. Accepts a JSON array of OpenLineage RunEvents.
 
         Events are processed with idempotency - duplicate events are detected and counted
         as successful (OpenLineage specification behavior).
@@ -120,7 +182,7 @@ paths:
         **Request Limits:**
         - Max batch size: 1000 events
         - Max request body: 1 MB
-      operationId: ingestLineageEvents
+      operationId: ingestLineageEventBatch
       tags:
         - OpenLineage Ingestion
       requestBody:
@@ -135,11 +197,11 @@ paths:
               maxItems: 1000
             example:
               - eventTime: "2024-01-01T12:00:00Z"
-                producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
-                schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
+                producer: "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/dbt"
+                schemaURL: "https://openlineage.io/spec/2-0-2/OpenLineage.json"
                 eventType: "COMPLETE"
                 run:
-                  runId: "dbt:abc123-def456"
+                  runId: "550e8400-e29b-41d4-a716-446655440000"
                 job:
                   namespace: "dbt_prod"
                   name: "models.users"
@@ -321,7 +383,10 @@ components:
       type: apiKey
       in: header
       name: X-Api-Key
-      description: API key for plugin authentication
+      description: |
+        API key authentication. Supports two header formats:
+        - `X-Api-Key: <key>` (primary)
+        - `Authorization: Bearer <key>` (fallback, compatible with standard OL clients)
 
   schemas:
     # Health Check Schemas

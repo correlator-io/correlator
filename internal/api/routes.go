@@ -53,7 +53,8 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	)
 
 	// Lineage endpoints
-	mux.HandleFunc("POST /api/v1/lineage/events", s.handleLineageEvents)
+	mux.HandleFunc("POST /api/v1/lineage", s.handleLineageEvent)        // Single event (standard OL API)
+	mux.HandleFunc("POST /api/v1/lineage/batch", s.handleLineageEvents) // Batch events
 
 	// Correlation endpoints (UI)
 	if s.correlationStore != nil {
