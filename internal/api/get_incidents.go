@@ -77,7 +77,7 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	downstreamCounts, err := s.correlationStore.QueryDownstreamCounts(ctx, extractJobRunIDs(result.Incidents))
+	downstreamCounts, err := s.correlationStore.QueryDownstreamCounts(ctx, extractRunIDs(result.Incidents))
 	if err != nil {
 		s.logger.ErrorContext(ctx, "Failed to query downstream counts",
 			"correlation_id", correlationID,
@@ -189,12 +189,12 @@ func buildIncidentFilter(params *incidentListParams) *correlation.IncidentFilter
 	}
 }
 
-// extractJobRunIDs returns unique job run IDs from a slice of incidents.
-func extractJobRunIDs(incidents []correlation.Incident) []string {
+// extractRunIDs returns unique run IDs from a slice of incidents.
+func extractRunIDs(incidents []correlation.Incident) []string {
 	seen := make(map[string]struct{})
 
 	for _, inc := range incidents {
-		seen[inc.JobRunID] = struct{}{}
+		seen[inc.RunID] = struct{}{}
 	}
 
 	ids := make([]string, 0, len(seen))
@@ -221,8 +221,8 @@ func mapIncidentToSummary(
 		DatasetName:         inc.DatasetName,
 		Producer:            inc.ProducerName,
 		JobName:             inc.JobName,
-		JobRunID:            inc.JobRunID,
-		DownstreamCount:     downstreamCounts[inc.JobRunID],
+		JobRunID:            inc.RunID,
+		DownstreamCount:     downstreamCounts[inc.RunID],
 		HasCorrelationIssue: orphanDatasetSet[inc.DatasetURN],
 		ExecutedAt:          inc.TestExecutedAt,
 	}

@@ -138,23 +138,22 @@ components:
         correlation_method:
           type: string
           description: Correlation method that failed
-          example: "job_run_id_canonicalization"
-        job_run_id:
+          example: "run_id_match"
+        run_id:
           type: string
-          description: Job run ID that couldn't be correlated
-          example: "unknown-format-12345"
-        canonicalization_attempts:
+          format: uuid
+          description: Run ID (UUID) that couldn't be correlated
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        resolution_attempts:
           type: array
           items:
             type: object
             properties:
               rule:
                 type: string
-              pattern:
-                type: string
               matched:
                 type: boolean
-          description: Canonicalization rules that were attempted
+          description: Resolution rules that were attempted
         correlation_confidence:
           type: number
           format: float
@@ -293,10 +292,10 @@ components:
           correlation_id: "234e5678-e89b-12d3-a456-426614174001"
           details:
             field_errors:
-              - field: "job_run_id"
+              - field: "run.runId"
                 issue: "Required field missing"
                 received_value: null
-                expected_type: "string"
+                expected_type: "string (UUID)"
               - field: "status"
                 issue: "Invalid enum value"
                 received_value: "unknown"
@@ -374,17 +373,12 @@ components:
           timestamp: "2024-01-01T12:05:30Z"
           correlation_id: "567e89ab-e89b-12d3-a456-426614174004"
           details:
-            correlation_method: "job_run_id_canonicalization"
-            job_run_id: "unknown-format-12345"
-            canonicalization_attempts:
-              - rule: "dbt_pattern"
-                pattern: "dbt:*"
+            correlation_method: "run_id_match"
+            run_id: "550e8400-e29b-41d4-a716-446655440000"
+            resolution_attempts:
+              - rule: "dataset_lineage"
                 matched: false
-              - rule: "airflow_pattern"
-                pattern: "airflow:*"
-                matched: false
-              - rule: "spark_pattern"
-                pattern: "spark:*"
+              - rule: "temporal_correlation"
                 matched: false
             correlation_confidence: 23.5
             related_events:

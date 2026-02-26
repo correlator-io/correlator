@@ -231,7 +231,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
 				test_result_id, test_name, test_status,
-				dataset_urn, job_run_id,
+				dataset_urn, run_id,
 				test_executed_at
 			FROM incident_correlation_view
 			ORDER BY test_executed_at DESC
@@ -256,29 +256,29 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			"Unfiltered query should complete in <10ms")
 	})
 
-	// Test 2: Incident Correlation View - Filtered by job_run_id
-	t.Run("IncidentCorrelationView_FilteredByJobRunID", func(t *testing.T) {
-		// Get a real job_run_id from test data
-		var jobRunID string
+	// Test 2: Incident Correlation View - Filtered by run_id
+	t.Run("IncidentCorrelationView_FilteredByRunID", func(t *testing.T) {
+		// Get a real run_id from test data
+		var runID string
 
 		err := testDB.Connection.QueryRowContext(ctx,
-			"SELECT job_run_id FROM job_runs LIMIT 1").Scan(&jobRunID)
+			"SELECT run_id FROM job_runs LIMIT 1").Scan(&runID)
 		require.NoError(t, err)
 
 		explainQuery := fmt.Sprintf(`
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
 				test_result_id, test_name, test_status,
-				dataset_urn, job_run_id,
+				dataset_urn, run_id,
 				test_executed_at
 			FROM incident_correlation_view
-			WHERE job_run_id = '%s'
+			WHERE run_id = '%s'
 			ORDER BY test_executed_at DESC
-		`, jobRunID)
+		`, runID)
 
 		plan := executeExplainAnalyze(ctx, t, testDB.Connection, explainQuery)
 
-		t.Logf("✅ Filtered by job_run_id query plan:\n%s", formatPlan(plan))
+		t.Logf("✅ Filtered by run_id query plan:\n%s", formatPlan(plan))
 
 		// Note: With small datasets, PostgreSQL correctly chooses Seq Scan over Index Scan
 		// Index overhead (loading B-tree pages) > sequential scan for <1000 rows
@@ -294,7 +294,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 	// Test 3: Lineage Impact Analysis - Recursive CTE
 	t.Run("LineageImpactAnalysis_RecursiveCTE", func(t *testing.T) {
 		// Create a lineage chain first
-		jobRunID := createLineageChain(ctx, t, testDB.Connection, 3)
+		runID := createLineageChain(ctx, t, testDB.Connection, 3)
 
 		// Refresh resolved_datasets and views to include new data
 		require.NoError(t, store.InitResolvedDatasets(ctx))
@@ -304,11 +304,11 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 
 		explainQuery := fmt.Sprintf(`
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
-			SELECT job_run_id, dataset_urn, dataset_name, depth
+			SELECT run_id, dataset_urn, dataset_name, depth
 			FROM lineage_impact_analysis
-			WHERE job_run_id = '%s'
+			WHERE run_id = '%s'
 			ORDER BY depth, dataset_urn
-		`, jobRunID)
+		`, runID)
 
 		plan := executeExplainAnalyze(ctx, t, testDB.Connection, explainQuery)
 
@@ -330,7 +330,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		explainQuery := `
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
-				job_run_id, job_name, producer_name,
+				run_id, job_name, producer_name,
 				failed_test_count, affected_dataset_count,
 				last_test_failure_at
 			FROM recent_incidents_summary
@@ -429,7 +429,7 @@ func TestMaterializedViewIndexes(t *testing.T) {
 	// These indexes enable:
 	// 1. CONCURRENTLY refresh (unique indexes)
 	// 2. Fast queries (covering indexes)
-	// 3. Efficient filtering (job_run_id, dataset_urn)
+	// 3. Efficient filtering (run_id, dataset_urn)
 	expectedIndexes := map[string]struct {
 		indexName string
 		isUnique  bool
@@ -443,12 +443,12 @@ func TestMaterializedViewIndexes(t *testing.T) {
 		"lineage_impact_analysis": {
 			indexName: "idx_lineage_impact_analysis_pk",
 			isUnique:  true,
-			reason:    "Required for CONCURRENTLY refresh (composite key: job_run_id, dataset_urn)",
+			reason:    "Required for CONCURRENTLY refresh (composite key: run_id, dataset_urn)",
 		},
 		"recent_incidents_summary": {
 			indexName: "idx_recent_incidents_summary_pk",
 			isUnique:  true,
-			reason:    "Required for CONCURRENTLY refresh (unique on job_run_id)",
+			reason:    "Required for CONCURRENTLY refresh (unique on run_id)",
 		},
 	}
 
@@ -513,9 +513,9 @@ func TestMaterializedViewIndexes(t *testing.T) {
 			reason    string
 		}{
 			{
-				indexName: "idx_incident_correlation_view_job_run_id",
+				indexName: "idx_incident_correlation_view_run_id",
 				viewName:  "incident_correlation_view",
-				reason:    "Fast lookups by job_run_id (common filter in correlation queries)",
+				reason:    "Fast lookups by run_id (common filter in correlation queries)",
 			},
 		}
 
@@ -635,7 +635,6 @@ func load100JobRuns(ctx context.Context, t *testing.T, db *sql.DB) {
 	count := 100
 
 	for i := 0; i < count; i++ {
-		jobRunID := uuid.New().String()
 		runID := uuid.New().String()
 
 		producer := "dbt"
@@ -653,10 +652,10 @@ func load100JobRuns(ctx context.Context, t *testing.T, db *sql.DB) {
 
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO job_runs (
-			  job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at,
+			  run_id, job_name, job_namespace, current_state, event_type, event_time, started_at,
 			  producer_name)
-			VALUES ($1, $2, $3, $4, 'COMPLETE', 'COMPLETE', $5, $6, $7)
-		`, jobRunID, runID, jobName, namespace, eventTime, startedAt, producer)
+			VALUES ($1, $2, $3, 'COMPLETE', 'COMPLETE', $4, $5, $6)
+		`, runID, jobName, namespace, eventTime, startedAt, producer)
 		require.NoError(t, err)
 
 		// Insert corresponding dataset
@@ -670,9 +669,9 @@ func load100JobRuns(ctx context.Context, t *testing.T, db *sql.DB) {
 
 		// Insert lineage edge
 		_, err = db.ExecContext(ctx, `
-			INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+			INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 			VALUES ($1, $2, 'output')
-		`, jobRunID, datasetURN)
+		`, runID, datasetURN)
 		require.NoError(t, err)
 	}
 }
@@ -681,27 +680,27 @@ func load50TestResults(ctx context.Context, t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	count := 50
-	// Get job run IDs from the database
-	rows, err := db.QueryContext(ctx, "SELECT job_run_id FROM job_runs ORDER BY event_time DESC LIMIT $1", count)
+	// Get run IDs from the database
+	rows, err := db.QueryContext(ctx, "SELECT run_id FROM job_runs ORDER BY event_time DESC LIMIT $1", count)
 	require.NoError(t, err)
 
 	defer func() {
 		_ = rows.Close()
 	}()
 
-	var jobRunIDs []string
+	var runIDs []string
 	for rows.Next() {
-		var jobRunID string
+		var runID string
 
-		err := rows.Scan(&jobRunID)
+		err := rows.Scan(&runID)
 		require.NoError(t, err)
 
-		jobRunIDs = append(jobRunIDs, jobRunID)
+		runIDs = append(runIDs, runID)
 	}
 
 	require.NoError(t, rows.Err())
 
-	if len(jobRunIDs) == 0 {
+	if len(runIDs) == 0 {
 		t.Skip("No job runs found, skipping test result loading")
 
 		return
@@ -715,8 +714,8 @@ func load50TestResults(ctx context.Context, t *testing.T, db *sql.DB) {
 		testType := []string{"not_null", "unique", "freshness", "custom"}[i%4]
 		datasetURN := fmt.Sprintf("urn:postgres:warehouse:public.table_%d", i%20)
 
-		// Use existing job run IDs
-		jobRunID := jobRunIDs[i%len(jobRunIDs)]
+		// Use existing run IDs
+		runID := runIDs[i%len(runIDs)]
 
 		status := statusFailed
 		message := fmt.Sprintf("Test failed: found %d issues", i%10)
@@ -725,10 +724,10 @@ func load50TestResults(ctx context.Context, t *testing.T, db *sql.DB) {
 
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO test_results (
-			  id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms)
+			  id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (id) DO NOTHING
-		`, testID, testName, testType, datasetURN, jobRunID, status, message, executedAt, durationMs)
+		`, testID, testName, testType, datasetURN, runID, status, message, executedAt, durationMs)
 		require.NoError(t, err)
 	}
 }
@@ -737,26 +736,25 @@ func createLineageChain(ctx context.Context, t *testing.T, db *sql.DB, levels in
 	t.Helper()
 
 	now := time.Now()
-	rootJobRunID := uuid.New().String()
+	rootRunID := uuid.New().String()
 
 	var prevDatasetURN string
 
 	for level := 0; level < levels; level++ {
-		jobRunID := rootJobRunID
+		runID := rootRunID
 		if level > 0 {
-			jobRunID = uuid.New().String()
+			runID = uuid.New().String()
 		}
 
-		runID := uuid.New().String()
 		jobName := fmt.Sprintf("job_level_%d", level)
 
 		// Insert job run
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO job_runs (
-			  job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at,
+			  run_id, job_name, job_namespace, current_state, event_type, event_time, started_at,
 			  producer_name)
-			VALUES ($1, $2, $3, 'lineage_test', 'COMPLETE', 'COMPLETE', $4, $5, 'airflow')
-		`, jobRunID, runID, jobName, now, now.Add(-10*time.Minute))
+			VALUES ($1, $2, 'lineage_test', 'COMPLETE', 'COMPLETE', $3, $4, 'airflow')
+		`, runID, jobName, now, now.Add(-10*time.Minute))
 		require.NoError(t, err)
 
 		// Insert dataset
@@ -770,22 +768,22 @@ func createLineageChain(ctx context.Context, t *testing.T, db *sql.DB, levels in
 
 		// Insert output edge
 		_, err = db.ExecContext(ctx, `
-			INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+			INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 			VALUES ($1, $2, 'output')
-		`, jobRunID, datasetURN)
+		`, runID, datasetURN)
 		require.NoError(t, err)
 
 		// Insert input edge from previous level
 		if level > 0 && prevDatasetURN != "" {
 			_, err = db.ExecContext(ctx, `
-				INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+				INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 				VALUES ($1, $2, 'input')
-			`, jobRunID, prevDatasetURN)
+			`, runID, prevDatasetURN)
 			require.NoError(t, err)
 		}
 
 		prevDatasetURN = datasetURN
 	}
 
-	return rootJobRunID
+	return rootRunID
 }

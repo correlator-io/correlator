@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 
-	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/storage"
 )
@@ -269,16 +268,16 @@ func validateRFC7807Response(t *testing.T, rr *httptest.ResponseRecorder, expect
 // Database Verification Helpers - End-to-end data integrity
 // ============================================================================
 
-// countStoredEvents counts lineage events in the database by job_run_id.
+// countStoredEvents counts lineage events in the database by run_id UUID.
 // Used for idempotency tests where count matters (expect 1 after duplicate).
-func (ts *testServer) countStoredEvents(ctx context.Context, t *testing.T, jobRunID string) int {
+func (ts *testServer) countStoredEvents(ctx context.Context, t *testing.T, runID string) int {
 	t.Helper()
 
 	var count int
 
-	query := "SELECT COUNT(*) FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM job_runs WHERE run_id = $1"
 
-	err := ts.db.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := ts.db.QueryRowContext(ctx, query, runID).Scan(&count)
 	require.NoError(t, err, "Failed to count job_runs")
 
 	return count
@@ -286,33 +285,33 @@ func (ts *testServer) countStoredEvents(ctx context.Context, t *testing.T, jobRu
 
 // assertEventNotStored verifies an invalid event was NOT persisted to the database.
 // Used in negative tests where validation should prevent storage.
-func (ts *testServer) assertEventNotStored(ctx context.Context, t *testing.T, jobRunID string) {
+func (ts *testServer) assertEventNotStored(ctx context.Context, t *testing.T, runID string) {
 	t.Helper()
 
 	var count int
 
-	query := "SELECT COUNT(*) FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM job_runs WHERE run_id = $1"
 
-	err := ts.db.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := ts.db.QueryRowContext(ctx, query, runID).Scan(&count)
 	require.NoError(t, err, "Failed to query job_runs")
 
-	assert.Equal(t, 0, count, "Invalid event should not be stored: job_run_id=%s", jobRunID)
+	assert.Equal(t, 0, count, "Invalid event should not be stored: run_id=%s", runID)
 }
 
 // verifyEventStored verifies a lineage event was persisted to the database.
 // Checks critical fields to ensure end-to-end data integrity (API → Domain → Storage).
-// Expects 2 edges per job_run_id (1 input + 1 output, deduplicated by UPSERT).
+// Expects 2 edges per run_id UUID (1 input + 1 output, deduplicated by UPSERT).
 //
 // This catches bugs where:
 //   - Storage layer silently fails but returns success
 //   - Transaction commits but data not written
-//   - Canonical ID format is incorrect
+//   - run_id UUID format is incorrect
 //   - Field mapping between layers is broken
 //   - upsertDatasetsAndEdges() fails silently (lineage_edges not created)
 func (ts *testServer) verifyEventStored(
 	ctx context.Context,
 	t *testing.T,
-	jobRunID string,
+	runID string,
 	expectedEventType string,
 ) {
 	t.Helper()
@@ -327,26 +326,26 @@ func (ts *testServer) verifyEventStored(
 	query := `
 		SELECT event_type, job_name, job_namespace
 		FROM job_runs
-		WHERE job_run_id = $1
+		WHERE run_id = $1
 	`
 
-	err := ts.db.QueryRowContext(ctx, query, jobRunID).Scan(
+	err := ts.db.QueryRowContext(ctx, query, runID).Scan(
 		&eventType,
 		&jobName,
 		&jobNamespace,
 	)
 
-	require.NoError(t, err, "Event should be stored in database: job_run_id=%s", jobRunID)
+	require.NoError(t, err, "Event should be stored in database: run_id=%s", runID)
 	assert.Equal(t, expectedEventType, eventType, "Event type should match")
 	assert.NotEmpty(t, jobName, "Job name should be persisted")
 	assert.NotEmpty(t, jobNamespace, "Job namespace should be persisted")
 
 	// 2. Verify lineage_edges table (tests upsertDatasetsAndEdges)
-	// Expect 2 edges: 1 input + 1 output (deduplicated by UPSERT for same job_run_id)
+	// Expect 2 edges: 1 input + 1 output (deduplicated by UPSERT for same run_id)
 	var edgeCount int
 
-	edgeQuery := "SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1"
-	err = ts.db.QueryRowContext(ctx, edgeQuery, jobRunID).Scan(&edgeCount)
+	edgeQuery := "SELECT COUNT(*) FROM lineage_edges WHERE run_id = $1"
+	err = ts.db.QueryRowContext(ctx, edgeQuery, runID).Scan(&edgeCount)
 	require.NoError(t, err, "Failed to query lineage_edges")
 
 	assert.Equal(t, 2, edgeCount, "Expected 2 lineage edges (1 input + 1 output)")
@@ -358,10 +357,10 @@ func (ts *testServer) verifyEventStored(
 		SELECT COUNT(DISTINCT d.dataset_urn)
 		FROM datasets d
 		WHERE d.dataset_urn IN (
-			SELECT dataset_urn FROM lineage_edges WHERE job_run_id = $1
+			SELECT dataset_urn FROM lineage_edges WHERE run_id = $1
 		)
 	`
-	err = ts.db.QueryRowContext(ctx, datasetQuery, jobRunID).Scan(&datasetCount)
+	err = ts.db.QueryRowContext(ctx, datasetQuery, runID).Scan(&datasetCount)
 	require.NoError(t, err, "Failed to query datasets")
 
 	// Test events have 2 distinct datasets (1 input + 1 output)
@@ -382,8 +381,8 @@ func TestLineageHandler_SingleEventSuccess(t *testing.T) {
 	event := createValidLineageEvent("test-run-1", "START", time.Now())
 	events := []LineageEvent{event}
 
-	// Generate expected job_run_id (format: "tool:runID")
-	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+	// Use run_id UUID directly (no tool prefix needed)
+	runID := event.Run.ID
 
 	rr := ts.postLineageEvents(t, events)
 
@@ -397,7 +396,7 @@ func TestLineageHandler_SingleEventSuccess(t *testing.T) {
 	assert.Empty(t, response.FailedEvents, "Expected no failed events")
 
 	// Verify database state (end-to-end verification)
-	ts.verifyEventStored(ctx, t, jobRunID, "START")
+	ts.verifyEventStored(ctx, t, runID, "START")
 }
 
 // TestLineageHandler_BatchAllSuccess tests successful ingestion of multiple events.
@@ -418,10 +417,10 @@ func TestLineageHandler_BatchAllSuccess(t *testing.T) {
 
 	events := []LineageEvent{event1, event2, event3}
 
-	// Generate expected job_run_ids
-	jobRunID1 := canonicalization.GenerateJobRunID(event1.Job.Namespace, event1.Run.ID)
-	jobRunID2 := canonicalization.GenerateJobRunID(event2.Job.Namespace, event2.Run.ID)
-	jobRunID3 := canonicalization.GenerateJobRunID(event3.Job.Namespace, event3.Run.ID)
+	// Use run_id UUIDs directly
+	runID1 := event1.Run.ID
+	runID2 := event2.Run.ID
+	runID3 := event3.Run.ID
 
 	rr := ts.postLineageEvents(t, events)
 
@@ -435,9 +434,9 @@ func TestLineageHandler_BatchAllSuccess(t *testing.T) {
 	assert.Empty(t, response.FailedEvents, "Expected no failed events")
 
 	// Verify database state (end-to-end verification for all 3 events)
-	ts.verifyEventStored(ctx, t, jobRunID1, "START")
-	ts.verifyEventStored(ctx, t, jobRunID2, "START")
-	ts.verifyEventStored(ctx, t, jobRunID3, "START")
+	ts.verifyEventStored(ctx, t, runID1, "START")
+	ts.verifyEventStored(ctx, t, runID2, "START")
+	ts.verifyEventStored(ctx, t, runID3, "START")
 }
 
 // TestLineageHandler_BatchPartialSuccess tests batch with mixed success/failure.
@@ -459,9 +458,9 @@ func TestLineageHandler_BatchPartialSuccess(t *testing.T) {
 
 	events := []LineageEvent{validEvent1, invalidEvent, validEvent2}
 
-	// Generate expected job_run_ids for valid events only
-	jobRunID1 := canonicalization.GenerateJobRunID(validEvent1.Job.Namespace, validEvent1.Run.ID)
-	jobRunID3 := canonicalization.GenerateJobRunID(validEvent2.Job.Namespace, validEvent2.Run.ID)
+	// Use run_id UUIDs directly for valid events only
+	runID1 := validEvent1.Run.ID
+	runID3 := validEvent2.Run.ID
 
 	rr := ts.postLineageEvents(t, events)
 
@@ -482,13 +481,11 @@ func TestLineageHandler_BatchPartialSuccess(t *testing.T) {
 	assert.False(t, failedEvent.Retriable, "Validation errors are non-retriable")
 
 	// Verify database state (end-to-end verification - only 2 events stored, not 3!)
-	ts.verifyEventStored(ctx, t, jobRunID1, "START")
-	ts.verifyEventStored(ctx, t, jobRunID3, "START")
+	ts.verifyEventStored(ctx, t, runID1, "START")
+	ts.verifyEventStored(ctx, t, runID3, "START")
 
 	// Invalid event should NOT be in database
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(invalidEvent.Job.Namespace, invalidEvent.Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, invalidEvent.Run.ID)
 }
 
 // TestLineageHandler_BatchAllRejected tests batch where all events fail validation.
@@ -541,9 +538,7 @@ func TestLineageHandler_BatchAllRejected(t *testing.T) {
 	// Invalid event should NOT be in database
 	invalidEvents := []LineageEvent{event1, event2, event3}
 	for _, invalidEvent := range invalidEvents {
-		ts.assertEventNotStored(
-			ctx, t, canonicalization.GenerateJobRunID(invalidEvent.Job.Namespace, invalidEvent.Run.ID),
-		)
+		ts.assertEventNotStored(ctx, t, invalidEvent.Run.ID)
 	}
 }
 
@@ -562,8 +557,8 @@ func TestLineageHandler_DuplicateEvent(t *testing.T) {
 	event := createValidLineageEvent("duplicate-run", "START", eventTime)
 	events := []LineageEvent{event}
 
-	// Generate expected job_run_id
-	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+	// Use run_id UUID directly
+	runID := event.Run.ID
 
 	// First request
 	rr1 := ts.postLineageEvents(t, events)
@@ -575,7 +570,7 @@ func TestLineageHandler_DuplicateEvent(t *testing.T) {
 	assert.Equal(t, 0, response1.Summary.Failed, "First request: Expected 0 failed")
 
 	// Verify database state after first request
-	count1 := ts.countStoredEvents(ctx, t, jobRunID)
+	count1 := ts.countStoredEvents(ctx, t, runID)
 	assert.Equal(t, 1, count1, "First request: Should store 1 event")
 
 	// Second request (duplicate - OpenLineage considers duplicates as success)
@@ -588,11 +583,11 @@ func TestLineageHandler_DuplicateEvent(t *testing.T) {
 	assert.Equal(t, 0, response2.Summary.Failed, "Second request: Expected 0 failed")
 
 	// Verify database state after second request (should still be 1, not 2)
-	count2 := ts.countStoredEvents(ctx, t, jobRunID)
+	count2 := ts.countStoredEvents(ctx, t, runID)
 	assert.Equal(t, 1, count2, "Second request: Count should stay at 1 (idempotency)")
 
 	// Verify database state (end-to-end verification - only 1 event stored, not 2!)
-	ts.verifyEventStored(ctx, t, jobRunID, "START")
+	ts.verifyEventStored(ctx, t, runID, "START")
 }
 
 // TestLineageHandler_RequestTooLarge tests request size limit enforcement.
@@ -645,9 +640,7 @@ func TestLineageHandler_MissingAuth(t *testing.T) {
 	// Validate RFC 7807 error response structure
 	validateRFC7807Response(t, rr, http.StatusUnauthorized)
 
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, events[0].Run.ID)
 }
 
 // TestLineageHandler_InvalidJSON tests malformed JSON handling.
@@ -800,9 +793,7 @@ func TestLineageHandler_RealDBTEvent(t *testing.T) {
 	assert.Equal(t, 0, response.Summary.Failed, "Expected real dbt event to pass validation")
 
 	// expect only one stored event
-	count := ts.countStoredEvents(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	count := ts.countStoredEvents(ctx, t, events[0].Run.ID)
 	assert.Equal(t, 1, count, "expected 1 event to be stored in database")
 }
 
@@ -841,15 +832,10 @@ func TestLineageHandler_BatchOutOfOrderSorting(t *testing.T) {
 
 	// Verify database state (end-to-end verification - only 1 event stored, not 3! + terminal state only)
 	// 3 events sent for same run = 2 edges (1 input + 1 output, deduplicated by UPSERT)
-	ts.verifyEventStored(
-		ctx, t,
-		canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID), "COMPLETE",
-	)
+	ts.verifyEventStored(ctx, t, events[0].Run.ID, "COMPLETE")
 
 	// expect only one stored event
-	count := ts.countStoredEvents(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	count := ts.countStoredEvents(ctx, t, events[0].Run.ID)
 	assert.Equal(t, 1, count, "expected 1 event to be stored in database")
 }
 
@@ -887,9 +873,7 @@ func TestLineageHandler_InvalidStateSequence(t *testing.T) {
 	assert.Contains(t, bodyStr, "duplicate", "Error should mention duplicate event")
 
 	// Invalid batch of events should NOT be in database
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, events[0].Run.ID)
 }
 
 // TestLineageHandler_BackwardTransition tests that backward state transitions are rejected.
@@ -925,9 +909,7 @@ func TestLineageHandler_BackwardTransition(t *testing.T) {
 	bodyStr := rr.Body.String()
 	assert.Contains(t, bodyStr, "transition", "Error should mention invalid transition")
 
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, events[0].Run.ID)
 }
 
 // TestLineageHandler_TerminalStateMutation tests that terminal states cannot be mutated.
@@ -969,9 +951,7 @@ func TestLineageHandler_TerminalStateMutation(t *testing.T) {
 	assert.True(t, hasTerminalError, "Expected error about terminal state mutation")
 
 	// Verify database state: NO events should be stored (invalid batch)
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, events[0].Run.ID)
 }
 
 // ============================================================================
@@ -990,7 +970,7 @@ func TestSingleEvent_Success(t *testing.T) {
 	ts := setupTestServer(ctx, t)
 
 	event := createValidLineageEvent("single-run-1", "START", time.Now())
-	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+	runID := event.Run.ID
 
 	rr := ts.postLineageEvent(t, event)
 
@@ -999,7 +979,7 @@ func TestSingleEvent_Success(t *testing.T) {
 	assert.Empty(t, rr.Body.String(), "Single-event endpoint should return empty body per OL spec")
 
 	// Verify database state (end-to-end)
-	ts.verifyEventStored(ctx, t, jobRunID, "START")
+	ts.verifyEventStored(ctx, t, runID, "START")
 }
 
 // TestSingleEvent_DuplicateIdempotency tests idempotency on the single-event endpoint.
@@ -1013,20 +993,20 @@ func TestSingleEvent_DuplicateIdempotency(t *testing.T) {
 	ts := setupTestServer(ctx, t)
 
 	event := createValidLineageEvent("single-dup-run", "START", time.Now())
-	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+	runID := event.Run.ID
 
 	// First request
 	rr1 := ts.postLineageEvent(t, event)
 	assert.Equal(t, http.StatusOK, rr1.Code)
 
-	count1 := ts.countStoredEvents(ctx, t, jobRunID)
+	count1 := ts.countStoredEvents(ctx, t, runID)
 	assert.Equal(t, 1, count1, "First request should store 1 event")
 
 	// Second request (duplicate)
 	rr2 := ts.postLineageEvent(t, event)
 	assert.Equal(t, http.StatusOK, rr2.Code, "Duplicate should return 200 OK")
 
-	count2 := ts.countStoredEvents(ctx, t, jobRunID)
+	count2 := ts.countStoredEvents(ctx, t, runID)
 	assert.Equal(t, 1, count2, "Duplicate should not create second row")
 }
 
@@ -1047,9 +1027,7 @@ func TestSingleEvent_ValidationError(t *testing.T) {
 
 	validateRFC7807Response(t, rr, http.StatusUnprocessableEntity)
 
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, event.Run.ID)
 }
 
 // TestSingleEvent_MalformedJSON tests malformed JSON on single-event endpoint.
@@ -1152,7 +1130,7 @@ func TestSingleEvent_BearerAuth(t *testing.T) {
 	ts := setupTestServer(ctx, t)
 
 	event := createValidLineageEvent("bearer-run", "START", time.Now())
-	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+	runID := event.Run.ID
 
 	// Use Bearer auth (not X-Api-Key) — proves OL client compat
 	rr := ts.postLineageEventWithBearer(t, event)
@@ -1160,7 +1138,7 @@ func TestSingleEvent_BearerAuth(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "Bearer auth should work: %s", rr.Body.String())
 	assert.Empty(t, rr.Body.String(), "Should return empty body")
 
-	ts.verifyEventStored(ctx, t, jobRunID, "START")
+	ts.verifyEventStored(ctx, t, runID, "START")
 }
 
 // TestSingleEvent_MissingAuth tests that single-event endpoint requires authentication.
@@ -1186,9 +1164,7 @@ func TestSingleEvent_MissingAuth(t *testing.T) {
 
 	validateRFC7807Response(t, rr, http.StatusUnauthorized)
 
-	ts.assertEventNotStored(
-		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
-	)
+	ts.assertEventNotStored(ctx, t, event.Run.ID)
 }
 
 // TestSingleEvent_RealDBTEvent tests ingestion of a real dbt OpenLineage event via single-event endpoint.
@@ -1215,8 +1191,6 @@ func TestSingleEvent_RealDBTEvent(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "Real dbt event should succeed: %s", rr.Body.String())
 	assert.Empty(t, rr.Body.String(), "Should return empty body")
 
-	count := ts.countStoredEvents(
-		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
-	)
+	count := ts.countStoredEvents(ctx, t, event.Run.ID)
 	assert.Equal(t, 1, count, "Expected 1 event stored")
 }

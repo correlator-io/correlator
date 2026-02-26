@@ -129,12 +129,11 @@ components:
           description: |
             **CRITICAL FOR CORRELATION**: The globally unique ID of the run.
 
-            Correlator extracts canonical jobRunId from this field using
-            tool-specific canonicalization rules:
-            - dbt: Uses invocation_id → "dbt:{invocation_id}"
-            - airflow: Uses run_id → "airflow:{run_id}"
-            - spark: Uses application_id → "spark:{application_id}"
-          example: "dbt:abc123-def456"
+            Correlator stores this UUID as-is as the primary key (`run_id UUID`)
+            in the `job_runs` table. The client is responsible for generating a
+            globally unique UUID (UUIDv7 recommended) and maintaining it across
+            all run state updates (START → COMPLETE).
+          example: "550e8400-e29b-41d4-a716-446655440000"
         facets:
           type: object
           description: Run facets for additional metadata
@@ -371,7 +370,7 @@ components:
               description: |
                 Pre-canonicalized job run ID. If provided, Correlator will use this
                 instead of applying canonicalization rules to run.runId.
-              example: "dbt:abc123-def456"
+              example: "550e8400-e29b-41d4-a716-446655440000"
             toolMetadata:
               type: object
               description: Tool-specific metadata for correlation enhancement
@@ -425,7 +424,7 @@ components:
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "START"
         run:
-          runId: "dbt:abc123-def456"
+          runId: "550e8400-e29b-41d4-a716-446655440000"
           facets:
             nominalTime:
               _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
@@ -485,7 +484,7 @@ components:
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "COMPLETE"
         run:
-          runId: "dbt:abc123-def456"
+          runId: "550e8400-e29b-41d4-a716-446655440000"
           facets:
             processing_engine:
               _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"

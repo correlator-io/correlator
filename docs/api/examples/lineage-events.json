@@ -11,7 +11,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
-        "runId": "dbt:abc123-def456-789ghi",
+        "runId": "550e8400-e29b-41d4-a716-446655440000",
         "facets": {
           "nominalTime": {
             "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
@@ -28,7 +28,6 @@
           "correlator": {
             "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
             "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
-            "canonicalJobRunId": "dbt:abc123-def456-789ghi",
             "toolMetadata": {
               "dbt_version": "1.6.0",
               "project_name": "analytics",
@@ -125,7 +124,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "COMPLETE",
       "run": {
-        "runId": "dbt:abc123-def456-789ghi",
+        "runId": "550e8400-e29b-41d4-a716-446655440000",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
@@ -166,7 +165,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
-        "runId": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+        "runId": "770e8400-e29b-41d4-a716-446655440002",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
@@ -256,7 +255,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "COMPLETE",
       "run": {
-        "runId": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+        "runId": "770e8400-e29b-41d4-a716-446655440002",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
@@ -296,7 +295,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
-        "runId": "ge:user_validation_suite.validation_run_abc123",
+        "runId": "660e8400-e29b-41d4-a716-446655440001",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
@@ -390,7 +389,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "FAIL",
       "run": {
-        "runId": "ge:user_validation_suite.validation_run_abc123",
+        "runId": "660e8400-e29b-41d4-a716-446655440001",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
@@ -472,7 +471,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "COMPLETE",
       "run": {
-        "runId": "spark:application_1704110400123_0042",
+        "runId": "880e8400-e29b-41d4-a716-446655440003",
         "facets": {
           "processing_engine": {
             "_producer": "https://github.com/OpenLineage/OpenLineage/tree/main/integration/spark",
@@ -542,10 +541,10 @@
     "_description": "Example of bulk event ingestion using newline-delimited JSON",
     "_format": "application/x-ndjson",
     "_events": [
-      "{\"eventTime\":\"2024-01-01T14:00:00Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"dbt:batch_001_model_1\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"}}",
-      "{\"eventTime\":\"2024-01-01T14:02:15Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"dbt:batch_001_model_1\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_orders\"}]}",
-      "{\"eventTime\":\"2024-01-01T14:02:30Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"dbt:batch_001_model_2\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"}}",
-      "{\"eventTime\":\"2024-01-01T14:04:45Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"dbt:batch_001_model_2\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_products\"}]}"
+      "{\"eventTime\":\"2024-01-01T14:00:00Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"}}",
+      "{\"eventTime\":\"2024-01-01T14:02:15Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_orders\"}]}",
+      "{\"eventTime\":\"2024-01-01T14:02:30Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"}}",
+      "{\"eventTime\":\"2024-01-01T14:04:45Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_products\"}]}"
     ]
   },
 
@@ -559,7 +558,7 @@
       "schemaURL": "https://openlineage.io/spec/0-5-0/OpenLineage.json",
       "eventType": "START",
       "run": {
-        "runId": "dbt:invalid-schema-example"
+        "runId": "bb0e8400-e29b-41d4-a716-446655440006"
       },
       "job": {
         "namespace": "dbt",
@@ -587,7 +586,7 @@
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "INVALID_TYPE",
       "run": {
-        "runId": "dbt:invalid-event-type"
+        "runId": "cc0e8400-e29b-41d4-a716-446655440007"
       },
       "job": {
         "namespace": "dbt",
@@ -603,7 +602,7 @@
       {
         "test_name": "not_null_user_id",
         "dataset_urn": "postgres://prod.db/marts.users",
-        "job_run_id": "dbt:abc123-def456-789ghi",
+        "run_id": "550e8400-e29b-41d4-a716-446655440000",
         "status": "passed",
         "message": "All 15,743 rows have non-null user_id values",
         "executed_at": "2024-01-01T12:05:25Z",
@@ -617,7 +616,7 @@
       {
         "test_name": "unique_email",
         "dataset_urn": "postgres://prod.db/marts.users",
-        "job_run_id": "dbt:abc123-def456-789ghi",
+        "run_id": "550e8400-e29b-41d4-a716-446655440000",
         "status": "failed",
         "message": "Found 2 duplicate email addresses",
         "executed_at": "2024-01-01T12:05:26Z",
@@ -632,7 +631,7 @@
       {
         "test_name": "order_count_range",
         "dataset_urn": "postgres://prod.db/marts.users",
-        "job_run_id": "dbt:abc123-def456-789ghi",
+        "run_id": "550e8400-e29b-41d4-a716-446655440000",
         "status": "passed",
         "message": "All order_count values are within expected range [0, 100]",
         "executed_at": "2024-01-01T12:05:27Z",
@@ -651,7 +650,7 @@
       {
         "test_name": "expect_column_values_to_be_unique_email",
         "dataset_urn": "postgres://prod.db/marts.users",
-        "job_run_id": "ge:user_validation_suite.validation_run_abc123",
+        "run_id": "660e8400-e29b-41d4-a716-446655440001",
         "status": "failed",
         "message": "Found 2 non-unique values in email column",
         "executed_at": "2024-01-01T12:06:15Z",

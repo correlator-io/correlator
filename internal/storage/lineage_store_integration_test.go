@@ -33,7 +33,7 @@ type (
 		testName   string
 		status     string
 		datasetURN string
-		jobRunID   string
+		runID      string
 		durationMs int    // Extended field
 		message    string // Extended field
 	}
@@ -115,10 +115,10 @@ func testStoreEventSingleSuccess(ctx context.Context, store *LineageStore, conn 
 		verifyJobRunExists(ctx, t, conn, event)
 
 		// Verify datasets table (1 input + 1 output = 2 datasets)
-		verifyDatasetCountForJobRun(ctx, t, conn, event.JobRunID(), 2)
+		verifyDatasetCountForJobRun(ctx, t, conn, event.Run.ID, 2)
 
 		// Verify lineage_edges table (1 input edge + 1 output edge = 2 edges)
-		verifyLineageEdgeCount(ctx, t, conn, event.JobRunID(), 2)
+		verifyLineageEdgeCount(ctx, t, conn, event.Run.ID, 2)
 
 		// Verify idempotency key recorded
 		verifyIdempotencyKeyExists(ctx, t, conn, event.IdempotencyKey())
@@ -165,7 +165,7 @@ func testStoreEventDuplicate(ctx context.Context, store *LineageStore, conn *Con
 		}
 
 		// Verify only one job_run entry exists (not two)
-		count := countJobRuns(ctx, t, conn, event.JobRunID())
+		count := countJobRuns(ctx, t, conn, event.Run.ID)
 		if count != 1 {
 			t.Errorf("Expected 1 job_run, got %d (duplicate should not create new row)", count)
 		}
@@ -213,13 +213,13 @@ func testStoreEventOutOfOrder(ctx context.Context, store *LineageStore, conn *Co
 		}
 
 		// 1. Verify final state is COMPLETE (not overwritten by older START event)
-		finalState := getJobRunState(ctx, t, conn, completeEvent.JobRunID())
+		finalState := getJobRunState(ctx, t, conn, completeEvent.Run.ID)
 		if finalState != string(ingestion.EventTypeComplete) {
 			t.Errorf("Final state = %s, want COMPLETE (newer event should win)", finalState)
 		}
 
 		// 2. Verify event_time is GREATEST (COMPLETE event time, not START)
-		eventTime := getJobRunEventTime(ctx, t, conn, completeEvent.JobRunID())
+		eventTime := getJobRunEventTime(ctx, t, conn, completeEvent.Run.ID)
 		expectedTime := baseTime.Add(10 * time.Minute) // COMPLETE event time
 		// Use time comparison with tolerance (database may have microsecond differences)
 		timeDiff := eventTime.Sub(expectedTime)
@@ -232,7 +232,7 @@ func testStoreEventOutOfOrder(ctx context.Context, store *LineageStore, conn *Co
 		}
 
 		// 3. Verify metadata was updated to COMPLETE event's metadata (newer wins)
-		metadata := getJobRunMetadata(ctx, t, conn, completeEvent.JobRunID())
+		metadata := getJobRunMetadata(ctx, t, conn, completeEvent.Run.ID)
 		if schemaURL, ok := metadata["schema_url"].(string); !ok || schemaURL != completeEvent.SchemaURL {
 			t.Errorf("metadata.schema_url = %v, want %s (COMPLETE event metadata should win)",
 				metadata["schema_url"], completeEvent.SchemaURL)
@@ -298,7 +298,7 @@ func testStoreEventTerminalStateProtection(
 		// The important thing is terminal state is NOT changed
 
 		// Verify state remains COMPLETE
-		finalState := getJobRunState(ctx, t, conn, completeEvent.JobRunID())
+		finalState := getJobRunState(ctx, t, conn, completeEvent.Run.ID)
 		if finalState != string(ingestion.EventTypeComplete) {
 			t.Errorf("State changed from COMPLETE to %s (terminal state should be immutable)", finalState)
 		}
@@ -326,14 +326,14 @@ func testStoreEventMultipleInputsOutputs(ctx context.Context, store *LineageStor
 		}
 
 		// Verify 5 datasets created (3 inputs + 2 outputs)
-		verifyDatasetCountForJobRun(ctx, t, conn, event.JobRunID(), 5)
+		verifyDatasetCountForJobRun(ctx, t, conn, event.Run.ID, 5)
 
 		// Verify 5 lineage edges (3 input edges + 2 output edges)
-		verifyLineageEdgeCount(ctx, t, conn, event.JobRunID(), 5)
+		verifyLineageEdgeCount(ctx, t, conn, event.Run.ID, 5)
 
 		// Verify edge types
-		inputCount := countLineageEdgesByType(ctx, t, conn, event.JobRunID(), "input")
-		outputCount := countLineageEdgesByType(ctx, t, conn, event.JobRunID(), "output")
+		inputCount := countLineageEdgesByType(ctx, t, conn, event.Run.ID, "input")
+		outputCount := countLineageEdgesByType(ctx, t, conn, event.Run.ID, "output")
 
 		if inputCount != 3 {
 			t.Errorf("Input edge count = %d, want 3", inputCount)
@@ -535,7 +535,7 @@ func testStoreEventsAllDuplicates(ctx context.Context, store *LineageStore) func
 // Expected: Can insert lineage_edge before dataset exists, FK constraint checked at COMMIT.
 func testDeferredFKConstraintsAtTableLevel(ctx context.Context, conn *Connection) func(*testing.T) {
 	return func(t *testing.T) {
-		jobRunID := "test-deferred-fk-" + uuid.NewString()
+		runID := uuid.NewString()
 		datasetURN := "urn:postgresql://prod-db:5432/analytics.public.test_deferred_table"
 
 		tx, err := conn.BeginTx(ctx, nil)
@@ -547,19 +547,18 @@ func testDeferredFKConstraintsAtTableLevel(ctx context.Context, conn *Connection
 			_ = tx.Rollback()
 		}()
 
-		// Step 1: Create job_run (required by job_run_id FK in lineage_edges)
-		//nolint:dupword
+		// Step 1: Create job_run (required by run_id FK in lineage_edges)
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO job_runs (
-				job_run_id, run_id, job_name, job_namespace,
+				run_id, job_name, job_namespace,
 				current_state, event_type, event_time, state_history,
 				metadata, producer_name, started_at, created_at, updated_at
 			) VALUES (
-				$1, $2, 'test_job', 'test://namespace',
+				$1, 'test_job', 'test://namespace',
 				'START', 'START', NOW(), '{"transitions": []}',
-				'{}', 'test-producer', NOW(), NOW(), NOW()
+				'{}', 'test-producer', NOW(), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 			)
-		`, jobRunID, uuid.NewString())
+		`, runID)
 		if err != nil {
 			t.Fatalf("Failed to insert job_run: %v", err)
 		}
@@ -570,9 +569,9 @@ func testDeferredFKConstraintsAtTableLevel(ctx context.Context, conn *Connection
 		// WITH deferred FK: Allowed, constraint checked at COMMIT time
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO lineage_edges (
-				job_run_id, dataset_urn, edge_type, created_at
+				run_id, dataset_urn, edge_type, created_at
 			) VALUES ($1, $2, 'input', NOW())
-		`, jobRunID, datasetURN)
+		`, runID, datasetURN)
 		if err != nil {
 			t.Fatalf("Inserting edge before dataset should succeed with deferred FK, got: %v", err)
 		}
@@ -600,8 +599,8 @@ func testDeferredFKConstraintsAtTableLevel(ctx context.Context, conn *Connection
 		var edgeCount int
 
 		err = conn.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1
-		`, jobRunID).Scan(&edgeCount)
+			SELECT COUNT(*) FROM lineage_edges WHERE run_id = $1
+		`, runID).Scan(&edgeCount)
 		if err != nil {
 			t.Fatalf("Failed to query lineage_edges: %v", err)
 		}
@@ -647,13 +646,13 @@ func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, 
 		}
 
 		// Verify initial state is START with initial transition recorded
-		currentState := getJobRunState(ctx, t, conn, startEvent.JobRunID())
+		currentState := getJobRunState(ctx, t, conn, startEvent.Run.ID)
 		if currentState != string(ingestion.EventTypeStart) {
 			t.Errorf("After START: current_state = %s, want START", currentState)
 		}
 
 		// Verify initial transition (null → START) is recorded
-		initialHistory := getStateHistory(ctx, t, conn, startEvent.JobRunID())
+		initialHistory := getStateHistory(ctx, t, conn, startEvent.Run.ID)
 		if len(initialHistory) != 1 {
 			t.Errorf("After START: state_history length = %d, want 1", len(initialHistory))
 		} else {
@@ -682,7 +681,7 @@ func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, 
 		}
 
 		// Verify state transitioned to RUNNING
-		currentState = getJobRunState(ctx, t, conn, runningEvent.JobRunID())
+		currentState = getJobRunState(ctx, t, conn, runningEvent.Run.ID)
 		if currentState != string(ingestion.EventTypeRunning) {
 			t.Errorf("After RUNNING: current_state = %s, want RUNNING", currentState)
 		}
@@ -702,13 +701,13 @@ func testStoreEventStateHistoryUpdate(ctx context.Context, store *LineageStore, 
 		}
 
 		// Verify final state is COMPLETE
-		currentState = getJobRunState(ctx, t, conn, completeEvent.JobRunID())
+		currentState = getJobRunState(ctx, t, conn, completeEvent.Run.ID)
 		if currentState != string(ingestion.EventTypeComplete) {
 			t.Errorf("After COMPLETE: current_state = %s, want COMPLETE", currentState)
 		}
 
 		// Verify state_history contains all 3 transitions
-		stateHistory := getStateHistory(ctx, t, conn, completeEvent.JobRunID())
+		stateHistory := getStateHistory(ctx, t, conn, completeEvent.Run.ID)
 
 		// Debug: Print actual transitions if count is wrong
 		if len(stateHistory) != 3 {
@@ -838,7 +837,7 @@ func testStoreEventSameStateNoRedundantTransitions(
 		// 1. null → START (initial state)
 		// 2. START → COMPLETE
 		// NOT: COMPLETE → COMPLETE (redundant)
-		stateHistory := getStateHistory(ctx, t, conn, startEvent.JobRunID())
+		stateHistory := getStateHistory(ctx, t, conn, startEvent.Run.ID)
 
 		if len(stateHistory) != 2 {
 			t.Logf("Got %d transitions instead of 2:", len(stateHistory))
@@ -869,7 +868,7 @@ func testStoreEventSameStateNoRedundantTransitions(
 		}
 
 		// Verify final state is still COMPLETE
-		finalState := getJobRunState(ctx, t, conn, startEvent.JobRunID())
+		finalState := getJobRunState(ctx, t, conn, startEvent.Run.ID)
 		if finalState != string(ingestion.EventTypeComplete) {
 			t.Errorf("Final state = %s, want COMPLETE", finalState)
 		}
@@ -897,7 +896,7 @@ func testStoreEventProducerExtraction(ctx context.Context, store *LineageStore, 
 		}
 
 		// Verify producer_name extracted correctly
-		producerName := getProducerName(ctx, t, conn, event.JobRunID())
+		producerName := getProducerName(ctx, t, conn, event.Run.ID)
 		if producerName != "dbt-core" {
 			t.Errorf("producer_name = %q, want %q", producerName, "dbt-core")
 		}
@@ -1157,11 +1156,11 @@ func createTestEventWithTime(
 func verifyJobRunExists(ctx context.Context, t *testing.T, conn *Connection, event *ingestion.RunEvent) {
 	t.Helper()
 
-	query := "SELECT COUNT(*) FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM job_runs WHERE run_id = $1"
 
 	var count int
 
-	err := conn.QueryRowContext(ctx, query, event.JobRunID()).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, event.Run.ID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to query job_runs: %v", err)
 	}
@@ -1171,14 +1170,14 @@ func verifyJobRunExists(ctx context.Context, t *testing.T, conn *Connection, eve
 	}
 }
 
-func verifyLineageEdgeCount(ctx context.Context, t *testing.T, conn *Connection, jobRunID string, expectedCount int) {
+func verifyLineageEdgeCount(ctx context.Context, t *testing.T, conn *Connection, runID string, expectedCount int) {
 	t.Helper()
 
-	query := "SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM lineage_edges WHERE run_id = $1"
 
 	var count int
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to query lineage_edges: %v", err)
 	}
@@ -1205,14 +1204,14 @@ func verifyIdempotencyKeyExists(ctx context.Context, t *testing.T, conn *Connect
 	}
 }
 
-func countJobRuns(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) int {
+func countJobRuns(ctx context.Context, t *testing.T, conn *Connection, runID string) int {
 	t.Helper()
 
-	query := "SELECT COUNT(*) FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM job_runs WHERE run_id = $1"
 
 	var count int
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count job_runs: %v", err)
 	}
@@ -1224,16 +1223,16 @@ func countLineageEdgesByType(
 	ctx context.Context,
 	t *testing.T,
 	conn *Connection,
-	jobRunID string,
+	runID string,
 	edgeType string,
 ) int {
 	t.Helper()
 
-	query := "SELECT COUNT(*) FROM lineage_edges WHERE job_run_id = $1 AND edge_type = $2"
+	query := "SELECT COUNT(*) FROM lineage_edges WHERE run_id = $1 AND edge_type = $2"
 
 	var count int
 
-	err := conn.QueryRowContext(ctx, query, jobRunID, edgeType).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID, edgeType).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count lineage edges by type: %v", err)
 	}
@@ -1241,14 +1240,14 @@ func countLineageEdgesByType(
 	return count
 }
 
-func getJobRunState(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) string {
+func getJobRunState(ctx context.Context, t *testing.T, conn *Connection, runID string) string {
 	t.Helper()
 
-	query := "SELECT current_state FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT current_state FROM job_runs WHERE run_id = $1"
 
 	var state string
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&state)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&state)
 	if err != nil {
 		t.Fatalf("Failed to get job run state: %v", err)
 	}
@@ -1256,14 +1255,14 @@ func getJobRunState(ctx context.Context, t *testing.T, conn *Connection, jobRunI
 	return state
 }
 
-func getProducerName(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) string {
+func getProducerName(ctx context.Context, t *testing.T, conn *Connection, runID string) string {
 	t.Helper()
 
-	query := "SELECT producer_name FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT producer_name FROM job_runs WHERE run_id = $1"
 
 	var producerName string
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&producerName)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&producerName)
 	if err != nil {
 		t.Fatalf("Failed to get producer name: %v", err)
 	}
@@ -1271,14 +1270,14 @@ func getProducerName(ctx context.Context, t *testing.T, conn *Connection, jobRun
 	return producerName
 }
 
-func getStateHistory(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) []map[string]interface{} {
+func getStateHistory(ctx context.Context, t *testing.T, conn *Connection, runID string) []map[string]interface{} {
 	t.Helper()
 
-	query := "SELECT state_history FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT state_history FROM job_runs WHERE run_id = $1"
 
 	var stateHistoryJSON []byte
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&stateHistoryJSON)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&stateHistoryJSON)
 	if err != nil {
 		t.Fatalf("Failed to get state history: %v", err)
 	}
@@ -1298,7 +1297,7 @@ func verifyDatasetCountForJobRun(
 	ctx context.Context,
 	t *testing.T,
 	conn *Connection,
-	jobRunID string,
+	runID string,
 	expectedCount int,
 ) {
 	t.Helper()
@@ -1307,12 +1306,12 @@ func verifyDatasetCountForJobRun(
 	query := `
 		SELECT COUNT(DISTINCT dataset_urn)
 		FROM lineage_edges
-		WHERE job_run_id = $1
+		WHERE run_id = $1
 	`
 
 	var count int
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to query datasets for job run: %v", err)
 	}
@@ -1336,14 +1335,14 @@ func expireIdempotencyKey(ctx context.Context, t *testing.T, conn *Connection, i
 	}
 }
 
-func getJobRunEventTime(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) time.Time {
+func getJobRunEventTime(ctx context.Context, t *testing.T, conn *Connection, runID string) time.Time {
 	t.Helper()
 
-	query := "SELECT event_time FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT event_time FROM job_runs WHERE run_id = $1"
 
 	var eventTime time.Time
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&eventTime)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&eventTime)
 	if err != nil {
 		t.Fatalf("Failed to get event_time: %v", err)
 	}
@@ -1351,14 +1350,14 @@ func getJobRunEventTime(ctx context.Context, t *testing.T, conn *Connection, job
 	return eventTime
 }
 
-func getJobRunMetadata(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) map[string]interface{} {
+func getJobRunMetadata(ctx context.Context, t *testing.T, conn *Connection, runID string) map[string]interface{} {
 	t.Helper()
 
-	query := "SELECT metadata FROM job_runs WHERE job_run_id = $1"
+	query := "SELECT metadata FROM job_runs WHERE run_id = $1"
 
 	var metadataJSON []byte
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&metadataJSON)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&metadataJSON)
 	if err != nil {
 		t.Fatalf("Failed to get metadata: %v", err)
 	}
@@ -1697,13 +1696,13 @@ func testExtractSingleAssertion(ctx context.Context, t *testing.T, store *Lineag
 	assert.False(t, duplicate, "Event should not be duplicate")
 
 	// Verify test_results table
-	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 1, count, "Should have 1 test result extracted from facet")
 
 	// Verify test result details
 	testResult := getTestResultByTestName(ctx, t, conn, "not_null_orders_order_id")
 	assert.Equal(t, "passed", testResult.status, "Assertion success=true should map to 'passed'")
-	assert.Equal(t, event.JobRunID(), testResult.jobRunID, "Job run ID should match")
+	assert.Equal(t, event.Run.ID, testResult.runID, "Run ID should match")
 
 	// Issue 6 fix: Use exact URN match instead of Contains
 	// Note: URN() method normalizes by removing default PostgreSQL port (5432)
@@ -1734,12 +1733,12 @@ func testExtractMultipleAssertions(ctx context.Context, t *testing.T, store *Lin
 	assert.True(t, stored)
 
 	// Verify all 5 assertions extracted
-	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 5, count, "Should have 5 test results extracted")
 
 	// Verify status mapping
-	passedCount := countTestResultsByStatus(ctx, t, conn, event.JobRunID(), "passed")
-	failedCount := countTestResultsByStatus(ctx, t, conn, event.JobRunID(), "failed")
+	passedCount := countTestResultsByStatus(ctx, t, conn, event.Run.ID, "passed")
+	failedCount := countTestResultsByStatus(ctx, t, conn, event.Run.ID, "failed")
 	assert.Equal(t, 3, passedCount, "Should have 3 passed tests")
 	assert.Equal(t, 2, failedCount, "Should have 2 failed tests")
 }
@@ -1758,7 +1757,7 @@ func testExtractNoFacet(ctx context.Context, t *testing.T, store *LineageStore, 
 	assert.True(t, stored, "Event should be stored even without facet")
 
 	// Verify no test_results created
-	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 0, count, "Should have 0 test results (no facet)")
 }
 
@@ -1782,7 +1781,7 @@ func testExtractMalformedFacet(ctx context.Context, t *testing.T, store *Lineage
 	assert.True(t, stored, "Event should be stored")
 
 	// Verify no test_results created (graceful failure)
-	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 0, count, "Should have 0 test results (malformed facet)")
 }
 
@@ -1820,7 +1819,7 @@ func testExtractExtendedFields(ctx context.Context, t *testing.T, store *Lineage
 	assert.False(t, duplicate, "Event should not be duplicate")
 
 	// Verify test_results table
-	count := countTestResultsForJobRun(ctx, t, conn, event.JobRunID())
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 2, count, "Should have 2 test results extracted from facet")
 
 	// Verify extended fields for failed test
@@ -1878,15 +1877,15 @@ func createEventWithAssertions(runID string, assertions []assertionData) *ingest
 	return event
 }
 
-// countTestResultsForJobRun counts test_results rows for a job_run_id.
-func countTestResultsForJobRun(ctx context.Context, t *testing.T, conn *Connection, jobRunID string) int {
+// countTestResultsForJobRun counts test_results rows for a run_id.
+func countTestResultsForJobRun(ctx context.Context, t *testing.T, conn *Connection, runID string) int {
 	t.Helper()
 
 	var count int
 
-	query := "SELECT COUNT(*) FROM test_results WHERE job_run_id = $1"
+	query := "SELECT COUNT(*) FROM test_results WHERE run_id = $1"
 
-	err := conn.QueryRowContext(ctx, query, jobRunID).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count test_results: %v", err)
 	}
@@ -1894,15 +1893,15 @@ func countTestResultsForJobRun(ctx context.Context, t *testing.T, conn *Connecti
 	return count
 }
 
-// countTestResultsByStatus counts test_results by status for a job_run_id.
-func countTestResultsByStatus(ctx context.Context, t *testing.T, conn *Connection, jobRunID, status string) int {
+// countTestResultsByStatus counts test_results by status for a run_id.
+func countTestResultsByStatus(ctx context.Context, t *testing.T, conn *Connection, runID, status string) int {
 	t.Helper()
 
 	var count int
 
-	query := "SELECT COUNT(*) FROM test_results WHERE job_run_id = $1 AND status = $2"
+	query := "SELECT COUNT(*) FROM test_results WHERE run_id = $1 AND status = $2"
 
-	err := conn.QueryRowContext(ctx, query, jobRunID, status).Scan(&count)
+	err := conn.QueryRowContext(ctx, query, runID, status).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count test_results by status: %v", err)
 	}
@@ -1919,11 +1918,11 @@ func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection
 		message sql.NullString
 	)
 
-	query := `SELECT test_name, status, dataset_urn, job_run_id, duration_ms, message
+	query := `SELECT test_name, status, dataset_urn, run_id, duration_ms, message
               FROM test_results WHERE test_name = $1`
 
 	err := conn.QueryRowContext(ctx, query, testName).Scan(
-		&result.testName, &result.status, &result.datasetURN, &result.jobRunID,
+		&result.testName, &result.status, &result.datasetURN, &result.runID,
 		&result.durationMs, &message,
 	)
 	if err != nil {
@@ -1936,7 +1935,7 @@ func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection
 }
 
 // testStoreEventParentRunFacet verifies that ParentRunFacet is correctly extracted and stored.
-// Expected: parent_job_run_id column is populated with canonical ID from ParentRunFacet.
+// Expected: parent_run_id column is populated with raw UUID from ParentRunFacet.
 func testStoreEventParentRunFacet(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
 	return func(t *testing.T) {
 		parentRunUUID := uuid.New().String()
@@ -1995,23 +1994,22 @@ func testStoreEventParentRunFacet(ctx context.Context, store *LineageStore, conn
 			t.Error("StoreEvent() duplicate = true, want false")
 		}
 
-		// Verify parent_job_run_id is stored correctly
-		var storedParentJobRunID *string
+		// Verify parent_run_id is stored correctly (raw UUID, no tool prefix)
+		var storedParentRunID *string
 
 		err = conn.QueryRowContext(ctx, `
-			SELECT parent_job_run_id FROM job_runs WHERE run_id = $1
-		`, childRunUUID).Scan(&storedParentJobRunID)
+			SELECT parent_run_id FROM job_runs WHERE run_id = $1
+		`, childRunUUID).Scan(&storedParentRunID)
 		if err != nil {
-			t.Fatalf("Failed to query parent_job_run_id: %v", err)
+			t.Fatalf("Failed to query parent_run_id: %v", err)
 		}
 
-		if storedParentJobRunID == nil {
-			t.Fatal("parent_job_run_id should not be NULL")
+		if storedParentRunID == nil {
+			t.Fatal("parent_run_id should not be NULL")
 		}
 
-		expectedParentJobRunID := "dbt:" + parentRunUUID
-		if *storedParentJobRunID != expectedParentJobRunID {
-			t.Errorf("parent_job_run_id = %q, want %q", *storedParentJobRunID, expectedParentJobRunID)
+		if *storedParentRunID != parentRunUUID {
+			t.Errorf("parent_run_id = %q, want %q", *storedParentRunID, parentRunUUID)
 		}
 	}
 }

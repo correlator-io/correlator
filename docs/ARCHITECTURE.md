@@ -31,7 +31,7 @@ OpenLineage events and correlates test failures with job runs to reduce incident
 │                      │     │ Read interface       │     │                      │
 │ CorrelationID        │     │ Incident queries     │     │ URN generation       │
 │ Recovery             │     │ Impact analysis      │     │ Idempotency keys     │
-│ Auth (API keys)      │     │ Recent incidents     │     │ Job run IDs          │
+│ Auth (API keys)      │     │ Recent incidents     │     │                      │
 │ RateLimit            │     │                      │     │                      │
 │ RequestLogger        │     │                      │     │                      │
 │ CORS                 │     │                      │     │                      │
@@ -59,7 +59,7 @@ OpenLineage events and correlates test failures with job runs to reduce incident
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                        HTTP Request Flow (POST /api/v1/lineage/events)              │
+│                       HTTP Request Flow (POST /api/v1/lineage/batch)                │
 ├─────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                     │
 │ 1. Middleware Chain      ──►    2. Handler               ──►   3. Storage           │
@@ -97,7 +97,7 @@ OpenLineage events and correlates test failures with job runs to reduce incident
 │ Test Failure          Materialized View                Root Cause                   │
 │ ────────────          ─────────────────                ──────────                   │
 │                                                                                     │
-│ "test_not_null        incident_correlation_view        job_run_id: dbt:abc-123      │
+│ "test_not_null        incident_correlation_view        run_id: 550e8400-...         │
 │  failed on            ┌─────────────────────┐          job_name: transform_orders   │
 │  orders.amount"   ──► │ test_results        │    ──►   producer: dbt-core           │
 │                       │     JOIN            │          started_at: 2025-01-07 10:00 │
@@ -158,7 +158,8 @@ The HTTP server implementation with routes, handlers, and response types.
 | `GET /ping`                   | No   | Kubernetes liveness probe              |
 | `GET /ready`                  | No   | Kubernetes readiness probe (checks DB) |
 | `GET /health`                 | No   | Service health status with uptime      |
-| `POST /api/v1/lineage/events` | Yes  | OpenLineage event batch ingestion      |
+| `POST /api/v1/lineage`        | Yes  | OpenLineage single-event ingestion     |
+| `POST /api/v1/lineage/batch`  | Yes  | OpenLineage event batch ingestion      |
 
 **Response Types:**
 
@@ -233,7 +234,6 @@ HealthCheck(ctx context.Context) error
 
 | Method                         | Purpose                                  |
 |--------------------------------|------------------------------------------|
-| `RunEvent.JobRunID()`          | Canonical job run ID (`tool:runId`)      |
 | `RunEvent.IdempotencyKey()`    | SHA256 deduplication key                 |
 | `Dataset.URN()`                | Canonical dataset URN (`namespace/name`) |
 | `Validator.ValidateRunEvent()` | OpenLineage spec compliance              |
@@ -267,7 +267,7 @@ Production-ready PostgreSQL implementation with idempotency, out-of-order handli
 func (s *LineageStore) StoreEvent(ctx, event) (stored, duplicate, error)
 
 // State management
-func fetchJobRunState(ctx, tx, jobRunID) (jobRunState, error)
+func fetchJobRunState(ctx, tx, runID) (jobRunState, error)
 func validateStateTransition(oldState, newState) error
 func buildUpdatedStateHistory(history, old, new, time, changed) ([]byte, error)
 
@@ -287,7 +287,7 @@ Read-only interface for correlation queries (Interface Segregation Principle).
 type Store interface {
 RefreshViews(ctx context.Context) error
 QueryIncidents(ctx context.Context, filter *IncidentFilter) ([]Incident, error)
-QueryLineageImpact(ctx context.Context, jobRunID string, maxDepth int) ([]ImpactResult, error)
+QueryLineageImpact(ctx context.Context, runID string, maxDepth int) ([]ImpactResult, error)
 QueryRecentIncidents(ctx context.Context, limit int) ([]RecentIncidentSummary, error)
 }
 ```
@@ -304,15 +304,17 @@ QueryRecentIncidents(ctx context.Context, limit int) ([]RecentIncidentSummary, e
 
 ### `internal/canonicalization/` - URN Generation
 
-Canonical identifier generation for correlation keys.
+Canonical identifier generation for deduplication and dataset correlation.
 
 **Key Functions:**
 
 | Function                              | Purpose                  | Example Output                    |
 |---------------------------------------|--------------------------|-----------------------------------|
-| `GenerateJobRunID(namespace, runId)`  | Canonical job run ID     | `dbt:abc-123`                     |
 | `GenerateDatasetURN(namespace, name)` | Canonical dataset URN    | `postgres://db:5432/schema.table` |
 | `GenerateIdempotencyKey(...)`         | SHA256 deduplication key | `a1b2c3d4...` (64 chars)          |
+
+**Note:** `GenerateJobRunID()` was removed in B.2 -- the OpenLineage `run.runId` UUID is used
+directly as the primary key, eliminating the `tool:runId` canonical prefix format.
 
 ---
 
@@ -324,9 +326,9 @@ Canonical identifier generation for correlation keys.
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   job_runs      │    │    datasets     │    │  lineage_edges  │
 ├─────────────────┤    ├─────────────────┤    ├─────────────────┤
-│ job_run_id (PK) │◀───│ dataset_urn (PK)│◀───│ id (PK)         │
-│ run_id          │    │ name            │    │ job_run_id (FK) │
-│ job_name        │    │ namespace       │    │ dataset_urn (FK)│
+│ run_id (PK,UUID)│◀───│ dataset_urn (PK)│◀───│ id (PK)         │
+│ job_name        │    │ name            │    │ run_id (FK,UUID)│
+│                 │    │ namespace       │    │ dataset_urn (FK)│
 │ job_namespace   │    │ facets (JSONB)  │    │ edge_type       │
 │ current_state   │    │ created_at      │    │ input_facets    │
 │ state_history   │    │ updated_at      │    │ output_facets   │
@@ -339,7 +341,7 @@ Canonical identifier generation for correlation keys.
                        │ id (PK)         │    │ id (PK)         │
                        │ test_name       │    │ plugin_id       │
                        │ dataset_urn (FK)│    │ key_hash        │
-                       │ job_run_id (FK) │    │ key_prefix      │
+                       │ run_id (FK,UUID)│    │ key_prefix      │
                        │ status          │    │ permissions     │
                        │ metadata (JSONB)│    │ active          │
                        │ executed_at     │    │ expires_at      │
@@ -360,7 +362,7 @@ Canonical identifier generation for correlation keys.
 
 ```sql
 -- Find which job produced the failing dataset
-SELECT job_run_id, job_name, producer_name, job_started_at
+SELECT run_id, job_name, producer_name, job_started_at
 FROM incident_correlation_view
 WHERE test_status IN ('failed', 'error')
   AND dataset_urn = 'postgres://db:5432/marts.orders';
@@ -420,7 +422,7 @@ WHERE test_status IN ('failed', 'error')
   "test_name": "unique_orders_order_id",
   "test_status": "failed",
   "dataset_urn": "postgres://analytics_db/marts.orders",
-  "job_run_id": "dbt:550e8400-e29b-41d4-a716-446655440000",
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
   "job_name": "jaffle_shop.test",
   "producer_name": "dbt-correlator",
   "job_started_at": "2025-01-07T10:29:55Z",

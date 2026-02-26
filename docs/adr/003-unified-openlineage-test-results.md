@@ -1,12 +1,17 @@
 # ADR 003: Unified OpenLineage Ingestion for Test Results
 
-**Status:** Accepted (Updated January 2026)  
-**Date:** December 1, 2025  
-**Updated:** January 7, 2026 - Week 2 E2E Testing Findings  
-**Author:** Correlator Engineering Team  
-**Deciders:** Product Owner, Engineering, Architecture  
-**Supersedes:** None  
+**Status:** Accepted (Updated January 2026)
+**Date:** December 1, 2025
+**Updated:** January 7, 2026 - Week 2 E2E Testing Findings
+**Author:** Correlator Engineering Team
+**Deciders:** Product Owner, Engineering, Architecture
+**Supersedes:** None
 **Related ADRs:** ADR-001 (Database Schema), ADR-002 (Migration Squashing)
+
+> **Note (February 2026):** This ADR references `job_run_id` (the old `"tool:uuid"` canonical format).
+> As (Week 4), `job_run_id` has been removed. The `run_id UUID` from OpenLineage is now stored
+> as-is and used as the primary key. The architectural decision in this ADR (unified ingestion via
+> OpenLineage facets) remains valid — only the ID format has changed.
 
 ---
 

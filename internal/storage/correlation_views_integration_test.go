@@ -65,22 +65,21 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	// Setup test data
 	now := time.Now()
-	// Use canonical job_run_id format: "tool:runID"
-	jobRunID1 := "dbt:" + uuid.New().String()
-	jobRunID2 := "airflow:" + uuid.New().String()
+	runID1 := uuid.New().String()
+	runID2 := uuid.New().String()
 	datasetURN1 := "urn:postgres:warehouse:public.customers"
 	datasetURN2 := "urn:postgres:warehouse:public.orders"
 
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-		  job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+		  run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt'),
-			($5, $6, 'extract_orders', 'airflow_prod', 'FAIL', 'FAIL', $7, $8, 'airflow')
-	`, jobRunID1, uuid.New().String(), now, now.Add(-5*time.Minute),
-		jobRunID2, uuid.New().String(), now.Add(-1*time.Hour), now.Add(-65*time.Minute))
+			($1, 'transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt'),
+			($4, 'extract_orders', 'airflow_prod', 'FAIL', 'FAIL', $5, $6, 'airflow')
+	`, runID1, now, now.Add(-5*time.Minute),
+		runID2, now.Add(-1*time.Hour), now.Add(-65*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -92,21 +91,21 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	// Insert lineage edges
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output'), ($3, $4, 'output')
-	`, jobRunID1, datasetURN1, jobRunID2, datasetURN2)
+	`, runID1, datasetURN1, runID2, datasetURN2)
 	require.NoError(t, err)
 
 	// Insert test results
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-		  id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+		  id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			(1, 'not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found 2 nulls', $3, 120),
 			(2, 'unique_orders_id', 'unique', $4, $5, 'passed', 'All unique', $6, 150)
-	`, datasetURN1, jobRunID1, now,
-		datasetURN2, jobRunID2, now.Add(-1*time.Hour))
+	`, datasetURN1, runID1, now,
+		datasetURN2, runID2, now.Add(-1*time.Hour))
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -146,44 +145,18 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, result.Incidents, 1, "Should return 1 dbt incident")
 	assert.Equal(t, "dbt", result.Incidents[0].ProducerName)
 
-	// Test 3: Filter by job_run_id
+	// Test 3: Filter by run_id
 	filter = &correlation.IncidentFilter{
-		JobRunID: &jobRunID1,
+		RunID: &runID1,
 	}
 
 	result, err = store.QueryIncidents(ctx, filter, nil)
 	require.NoError(t, err)
 
-	assert.Len(t, result.Incidents, 1, "Should return 1 incident for job_run_id")
-	assert.Equal(t, jobRunID1, result.Incidents[0].JobRunID)
+	assert.Len(t, result.Incidents, 1, "Should return 1 incident for run_id")
+	assert.Equal(t, runID1, result.Incidents[0].RunID)
 
-	// Test 4: Filter by tool (extracted from canonical job_run_id)
-	toolDBT := "dbt"
-	filter = &correlation.IncidentFilter{
-		Tool: &toolDBT,
-	}
-
-	result, err = store.QueryIncidents(ctx, filter, nil)
-	require.NoError(t, err)
-
-	assert.Len(t, result.Incidents, 1, "Should return 1 dbt incident")
-	assert.Equal(t, "dbt", result.Incidents[0].ProducerName)
-	// Verify job_run_id starts with "dbt:"
-	assert.Contains(t, result.Incidents[0].JobRunID, "dbt:", "Job run ID should contain 'dbt:' prefix")
-
-	// Test 4b: Filter by tool that doesn't exist
-	toolSpark := "spark"
-	filter = &correlation.IncidentFilter{
-		Tool: &toolSpark,
-	}
-
-	result, err = store.QueryIncidents(ctx, filter, nil)
-	require.NoError(t, err)
-
-	assert.Empty(t, result.Incidents, "Should return 0 spark incidents")
-	assert.Equal(t, 0, result.Total, "Total should be 0")
-
-	// Test 5: Filter by time range (recent tests only)
+	// Test 4: Filter by time range (recent tests only)
 	recentTime := now.Add(-30 * time.Minute)
 	filter = &correlation.IncidentFilter{
 		TestExecutedAfter: &recentTime,
@@ -194,7 +167,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 
 	assert.Len(t, result.Incidents, 1, "Should return 1 recent test")
 
-	// Test 6: Pagination
+	// Test 5: Pagination
 	pagination := &correlation.Pagination{Limit: 10, Offset: 0}
 	result, err = store.QueryIncidents(ctx, nil, pagination)
 	require.NoError(t, err)
@@ -202,7 +175,7 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	assert.Len(t, result.Incidents, 1, "Should return 1 incident with pagination")
 	assert.Equal(t, 1, result.Total, "Total should reflect all matching incidents")
 
-	// Test 7: Pagination with offset beyond results
+	// Test 6: Pagination with offset beyond results
 	// Note: When offset exceeds total rows, COUNT(*) OVER() returns 0 because there are no rows to scan.
 	// This is a known limitation of the window function approach. For MVP, this is acceptable.
 	pagination = &correlation.Pagination{Limit: 10, Offset: 100}
@@ -232,9 +205,9 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 	// job1 -> datasetA -> job2 -> datasetB -> job3 -> datasetC
 	// Upstream from job3/datasetC: datasetB (depth 1), datasetA (depth 2)
 	now := time.Now()
-	jobRunID1 := "airflow:" + uuid.New().String()
-	jobRunID2 := "airflow:" + uuid.New().String()
-	jobRunID3 := "dbt:" + uuid.New().String()
+	runID1 := uuid.New().String()
+	runID2 := uuid.New().String()
+	runID3 := uuid.New().String()
 	datasetA := "urn:postgres:warehouse:public.raw_orders"
 	datasetB := "urn:postgres:warehouse:public.staged_orders"
 	datasetC := "urn:postgres:warehouse:public.fact_orders"
@@ -242,15 +215,15 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 	// Insert job runs (with producer info)
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-		  job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+		  run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'extract_orders', 'etl', 'COMPLETE', 'COMPLETE', $3, $4, 'airflow'),
-			($5, $6, 'stage_orders', 'etl', 'COMPLETE', 'COMPLETE', $7, $8, 'airflow'),
-			($9, $10, 'transform_orders', 'dbt', 'COMPLETE', 'COMPLETE', $11, $12, 'dbt')
-	`, jobRunID1, uuid.New().String(), now, now.Add(-10*time.Minute),
-		jobRunID2, uuid.New().String(), now, now.Add(-8*time.Minute),
-		jobRunID3, uuid.New().String(), now, now.Add(-5*time.Minute))
+			($1, 'extract_orders', 'etl', 'COMPLETE', 'COMPLETE', $2, $3, 'airflow'),
+			($4, 'stage_orders', 'etl', 'COMPLETE', 'COMPLETE', $5, $6, 'airflow'),
+			($7, 'transform_orders', 'dbt', 'COMPLETE', 'COMPLETE', $8, $9, 'dbt')
+	`, runID1, now, now.Add(-10*time.Minute),
+		runID2, now, now.Add(-8*time.Minute),
+		runID3, now, now.Add(-5*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -265,16 +238,16 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 
 	// Create lineage chain: job1 -> datasetA -> job2 -> datasetB -> job3 -> datasetC
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES
 			($1, $2, 'output'),  -- job1 produces datasetA
 			($3, $2, 'input'),   -- job2 consumes datasetA
 			($3, $4, 'output'),  -- job2 produces datasetB
 			($5, $4, 'input'),   -- job3 consumes datasetB
 			($5, $6, 'output')   -- job3 produces datasetC
-	`, jobRunID1, datasetA,
-		jobRunID2, datasetB,
-		jobRunID3, datasetC)
+	`, runID1, datasetA,
+		runID2, datasetB,
+		runID3, datasetC)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -287,7 +260,7 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 	}()
 
 	// Test 1: Query upstream from job3/datasetC (should get datasetB at depth 1, datasetA at depth 2)
-	upstream, err := store.QueryUpstreamWithChildren(ctx, datasetC, jobRunID3, 10)
+	upstream, err := store.QueryUpstreamWithChildren(ctx, datasetC, runID3, 10)
 	require.NoError(t, err)
 
 	assert.Len(t, upstream, 2, "Should have 2 upstream datasets")
@@ -321,7 +294,7 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 	assert.Equal(t, "airflow", depth2Results[0].Producer, "Producer should be airflow (job1)")
 
 	// Test 2: Query with maxDepth = 1 (should only get datasetB)
-	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetC, jobRunID3, 1)
+	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetC, runID3, 1)
 	require.NoError(t, err)
 
 	assert.Len(t, upstream, 1, "Should have 1 upstream dataset with maxDepth=1")
@@ -329,13 +302,13 @@ func TestQueryUpstreamWithChildren(t *testing.T) {
 	assert.Equal(t, 1, upstream[0].Depth)
 
 	// Test 3: Query from job1 (no inputs - should return empty)
-	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetA, jobRunID1, 10)
+	upstream, err = store.QueryUpstreamWithChildren(ctx, datasetA, runID1, 10)
 	require.NoError(t, err)
 
 	assert.Empty(t, upstream, "Job1 has no inputs, upstream should be empty")
 
 	// Test 4: Non-existent job run should return empty slice
-	upstream, err = store.QueryUpstreamWithChildren(ctx, "non-existent-urn", "non-existent-id", 10)
+	upstream, err = store.QueryUpstreamWithChildren(ctx, "non-existent-urn", "00000000-0000-0000-0000-000000000000", 10)
 	require.NoError(t, err)
 
 	assert.Empty(t, upstream, "Should return empty slice for non-existent job")
@@ -389,17 +362,17 @@ func TestQueryCorrelationHealth_FullyCorrelated(t *testing.T) {
 
 	// Setup: All incidents have matching producer output edges
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
 	namespace := "postgresql://prod/public"
 	datasetURN := namespace + ".customers"
 
 	// Insert job run
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
-		VALUES ($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, dbtJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		VALUES ($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, dbtRunID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err)
 
 	// Insert dataset
@@ -411,18 +384,18 @@ func TestQueryCorrelationHealth_FullyCorrelated(t *testing.T) {
 
 	// Insert output edge (producer)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, datasetURN)
+	`, dbtRunID, datasetURN)
 	require.NoError(t, err)
 
 	// Insert failed test result
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, datasetURN, dbtJobRunID, now)
+	`, datasetURN, dbtRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -466,8 +439,8 @@ func TestQueryCorrelationHealth_ZeroCorrelated(t *testing.T) {
 
 	// Setup: All incidents are in orphan namespaces (no producer output edges)
 	now := time.Now()
-	geJobRunID := "great_expectations:" + uuid.New().String()
-	dbtJobRunID := "dbt:" + uuid.New().String() // Producer job, but for DIFFERENT namespace
+	geRunID := uuid.New().String()
+	dbtRunID := uuid.New().String() // Producer job, but for DIFFERENT namespace
 	orphanNamespace := "postgres_prod"
 	orphanDatasetURN := orphanNamespace + "/public.orders"
 	producerNamespace := "postgresql://other/db"
@@ -476,13 +449,13 @@ func TestQueryCorrelationHealth_ZeroCorrelated(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, 'great_expectations'),
-			($5, $6, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $7, $8, 'dbt')
-	`, geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute),
-		dbtJobRunID, uuid.New().String(), now, now.Add(-10*time.Minute))
+			($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, 'great_expectations'),
+			($4, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $5, $6, 'dbt')
+	`, geRunID, now, now.Add(-5*time.Minute),
+		dbtRunID, now, now.Add(-10*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets (different namespaces)
@@ -494,18 +467,18 @@ func TestQueryCorrelationHealth_ZeroCorrelated(t *testing.T) {
 
 	// Insert output edge for producer namespace ONLY (not for orphan namespace)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, producerDatasetURN)
+	`, dbtRunID, producerDatasetURN)
 	require.NoError(t, err)
 
 	// Insert failed test result in ORPHAN namespace
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_orders_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, orphanDatasetURN, geJobRunID, now)
+	`, orphanDatasetURN, geRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -550,8 +523,8 @@ func TestQueryCorrelationHealth_MixedState(t *testing.T) {
 
 	// Setup: 2 incidents - 1 correlated, 1 orphan (50% rate)
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// Correlated namespace (has output edges)
 	correlatedNS := "postgresql://prod/public"
@@ -564,13 +537,13 @@ func TestQueryCorrelationHealth_MixedState(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt'),
-			($5, $6, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $7, $8, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-10*time.Minute))
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt'),
+			($4, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $5, $6, 'great_expectations')
+	`, dbtRunID, now, now.Add(-5*time.Minute),
+		geRunID, now, now.Add(-10*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -582,21 +555,21 @@ func TestQueryCorrelationHealth_MixedState(t *testing.T) {
 
 	// Insert output edge ONLY for correlated namespace
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, correlatedDataset)
+	`, dbtRunID, correlatedDataset)
 	require.NoError(t, err)
 
 	// Insert failed test results for BOTH namespaces
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
 			('not_null_orders_id', 'not_null', $4, $5, 'failed', 'Found nulls', $6, 100)
-	`, correlatedDataset, dbtJobRunID, now,
-		orphanDataset, geJobRunID, now)
+	`, correlatedDataset, dbtRunID, now,
+		orphanDataset, geRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -654,8 +627,8 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	now := time.Now()
 
 	// Job runs
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// dbt producer dataset (canonical format)
 	dbtNamespace := "postgresql://demo/marts"
@@ -668,13 +641,13 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt'),
-			($5, $6, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $7, $8, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now, now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt'),
+			($4, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $5, $6, 'great_expectations')
+	`, dbtRunID, now, now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -686,20 +659,20 @@ func TestDetectOrphanDatasets(t *testing.T) {
 
 	// dbt produces output (has lineage edge)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE has test results but NO output edge (orphan)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
 			('unique_customers_email', 'unique', $1, $2, 'failed', 'Duplicates', $4, 120)
-	`, geDatasetURN, geJobRunID, now, now.Add(1*time.Minute))
+	`, geDatasetURN, geRunID, now, now.Add(1*time.Minute))
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -753,8 +726,8 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 
 	// Setup: Orphan dataset with no matching producer (different table names)
 	now := time.Now()
-	geJobRunID := "great_expectations:" + uuid.New().String()
-	dbtJobRunID := "dbt:" + uuid.New().String()
+	geRunID := uuid.New().String()
+	dbtRunID := uuid.New().String()
 
 	// GE tests "orders" but dbt only produces "customers" (no match)
 	geDatasetURN := "demo_postgres/orders"
@@ -763,13 +736,13 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, 'great_expectations'),
-			($5, $6, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $7, $8, 'dbt')
-	`, geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute),
-		dbtJobRunID, uuid.New().String(), now, now.Add(-10*time.Minute))
+			($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, 'great_expectations'),
+			($4, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $5, $6, 'dbt')
+	`, geRunID, now, now.Add(-5*time.Minute),
+		dbtRunID, now, now.Add(-10*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -781,18 +754,18 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 
 	// dbt produces customers (not orders)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE tests orders (no producer for this table)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_orders_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, geDatasetURN, geJobRunID, now)
+	`, geDatasetURN, geRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -837,8 +810,8 @@ func TestDetectOrphanDatasets_MultipleOrphans(t *testing.T) {
 
 	// Setup: 2 orphan datasets, both with matching producers
 	now := time.Now()
-	geJobRunID := "great_expectations:" + uuid.New().String()
-	dbtJobRunID := "dbt:" + uuid.New().String()
+	geRunID := uuid.New().String()
+	dbtRunID := uuid.New().String()
 
 	// GE orphans
 	geCustomersURN := "demo_postgres/customers"
@@ -851,13 +824,13 @@ func TestDetectOrphanDatasets_MultipleOrphans(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
 		VALUES
-			($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, 'great_expectations'),
-			($5, $6, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $7, $8, 'dbt')
-	`, geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute),
-		dbtJobRunID, uuid.New().String(), now, now.Add(-10*time.Minute))
+			($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, 'great_expectations'),
+			($4, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $5, $6, 'dbt')
+	`, geRunID, now, now.Add(-5*time.Minute),
+		dbtRunID, now, now.Add(-10*time.Minute))
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -873,20 +846,20 @@ func TestDetectOrphanDatasets_MultipleOrphans(t *testing.T) {
 
 	// dbt produces both tables
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output'), ($1, $3, 'output')
-	`, dbtJobRunID, dbtCustomersURN, dbtOrdersURN)
+	`, dbtRunID, dbtCustomersURN, dbtOrdersURN)
 	require.NoError(t, err)
 
 	// GE tests both tables (orphans - no output edges for GE URN format)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
 			('not_null_orders_id', 'not_null', $4, $2, 'failed', 'Found nulls', $5, 100)
-	`, geCustomersURN, geJobRunID, now, geOrdersURN, now.Add(1*time.Minute))
+	`, geCustomersURN, geRunID, now, geOrdersURN, now.Add(1*time.Minute))
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -976,16 +949,16 @@ func TestDetectOrphanDatasets_HealthyState(t *testing.T) {
 
 	// Setup: Same URN format for both producer and validator (fully correlated)
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
 	datasetURN := "postgresql://demo/marts.customers"
 
 	// Insert job run
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
+			run_id, job_name, job_namespace, current_state, event_type, event_time, started_at, producer_name
 		)
-		VALUES ($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, dbtJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		VALUES ($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, dbtRunID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err)
 
 	// Insert dataset
@@ -997,17 +970,17 @@ func TestDetectOrphanDatasets_HealthyState(t *testing.T) {
 
 	// dbt produces AND tests the same URN (not orphan)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, datasetURN)
+	`, dbtRunID, datasetURN)
 	require.NoError(t, err)
 
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, datasetURN, dbtJobRunID, now)
+	`, datasetURN, dbtRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore
@@ -1064,8 +1037,8 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 	now := time.Now()
 
 	// Job runs
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// dbt produces in canonical format
 	dbtNamespace := "postgresql://demo/marts"
@@ -1078,14 +1051,14 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1097,20 +1070,20 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 
 	// dbt produces output (has lineage edge)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE has test results on the GE-format URN (which is orphan without pattern resolution)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found 3 nulls', $3, 100),
 			('unique_customers_email', 'unique', $1, $2, 'failed', 'Found 2 duplicates', $4, 150)
-	`, geDatasetURN, geJobRunID, now, now.Add(1*time.Minute))
+	`, geDatasetURN, geRunID, now, now.Add(1*time.Minute))
 	require.NoError(t, err)
 
 	// Create pattern resolver: demo_postgres/{name} → postgresql://demo/marts.{name}
@@ -1156,7 +1129,7 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 	for _, incident := range result.Incidents {
 		assert.Equal(t, dbtDatasetURN, incident.DatasetURN,
 			"Incident should show canonical dataset URN (dbt format)")
-		assert.Equal(t, dbtJobRunID, incident.JobRunID,
+		assert.Equal(t, dbtRunID, incident.RunID,
 			"Incident should correlate to dbt job run (producer)")
 		assert.Equal(t, "dbt", incident.ProducerName,
 			"Producer should be dbt")
@@ -1182,8 +1155,8 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 
 	// Setup: Multiple datasets resolved by same pattern
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// dbt produces two tables
 	dbtCustomersURN := "postgresql://demo/marts.customers"
@@ -1196,14 +1169,14 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1219,20 +1192,20 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 
 	// dbt produces both tables
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output'), ($1, $3, 'output')
-	`, dbtJobRunID, dbtCustomersURN, dbtOrdersURN)
+	`, dbtRunID, dbtCustomersURN, dbtOrdersURN)
 	require.NoError(t, err)
 
 	// GE tests both tables (fails on customers, passes on orders)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES
 			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
 			('not_null_orders_id', 'not_null', $4, $2, 'failed', 'Found nulls', $5, 100)
-	`, geCustomersURN, geJobRunID, now, geOrdersURN, now.Add(1*time.Minute))
+	`, geCustomersURN, geRunID, now, geOrdersURN, now.Add(1*time.Minute))
 	require.NoError(t, err)
 
 	// Create pattern resolver
@@ -1278,12 +1251,12 @@ func TestQueryIncidents_WithPatternResolution_MultipleDatasets(t *testing.T) {
 	// Verify customers incident
 	customersIncident, ok := incidentsByDataset[dbtCustomersURN]
 	require.True(t, ok, "Should have customers incident with canonical URN")
-	assert.Equal(t, dbtJobRunID, customersIncident.JobRunID)
+	assert.Equal(t, dbtRunID, customersIncident.RunID)
 
 	// Verify orders incident
 	ordersIncident, ok := incidentsByDataset[dbtOrdersURN]
 	require.True(t, ok, "Should have orders incident with canonical URN")
-	assert.Equal(t, dbtJobRunID, ordersIncident.JobRunID)
+	assert.Equal(t, dbtRunID, ordersIncident.RunID)
 }
 
 // TestQueryIncidents_NoPatternResolver tests that without resolver, uncorrelated
@@ -1303,8 +1276,8 @@ func TestQueryIncidents_NoPatternResolver(t *testing.T) {
 
 	// Setup: Same data as TC-002 but WITHOUT pattern resolver
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	dbtDatasetURN := "postgresql://demo/marts.customers"
 	geDatasetURN := "demo_postgres/customers"
@@ -1312,14 +1285,14 @@ func TestQueryIncidents_NoPatternResolver(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1331,18 +1304,18 @@ func TestQueryIncidents_NoPatternResolver(t *testing.T) {
 
 	// dbt produces output
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE tests with different URN format
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, geDatasetURN, geJobRunID, now)
+	`, geDatasetURN, geRunID, now)
 	require.NoError(t, err)
 
 	// Create LineageStore WITHOUT pattern resolver
@@ -1387,8 +1360,8 @@ func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
 
 	// Setup TC-002 scenario
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	dbtDatasetURN := "postgresql://demo/marts.customers"
 	geDatasetURN := "demo_postgres/customers"
@@ -1396,14 +1369,14 @@ func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1415,18 +1388,18 @@ func TestCorrelationHealth_WithPatternResolution(t *testing.T) {
 
 	// dbt produces output
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE tests with different URN format
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
-	`, geDatasetURN, geJobRunID, now)
+	`, geDatasetURN, geRunID, now)
 	require.NoError(t, err)
 
 	// Create pattern resolver
@@ -1484,20 +1457,20 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 	})
 
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert 100 datasets and test results (simulating larger dataset)
@@ -1517,18 +1490,18 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 
 		// dbt produces output
 		_, err = testDB.Connection.ExecContext(ctx, `
-			INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+			INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 			VALUES ($1, $2, 'output')
-		`, dbtJobRunID, dbtURN)
+		`, dbtRunID, dbtURN)
 		require.NoError(t, err)
 
 		// GE tests in different format
 		_, err = testDB.Connection.ExecContext(ctx, `
 			INSERT INTO test_results (
-				test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+				test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 			)
 			VALUES ($1, 'not_null', $2, $3, 'failed', 'Found nulls', $4, 100)
-		`, fmt.Sprintf("not_null_%s_id", tableName), geURN, geJobRunID, now.Add(time.Duration(i)*time.Second))
+		`, fmt.Sprintf("not_null_%s_id", tableName), geURN, geRunID, now.Add(time.Duration(i)*time.Second))
 		require.NoError(t, err)
 	}
 
@@ -1572,7 +1545,7 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 
 	// Verify all incidents correlate to dbt job
 	for _, incident := range result.Incidents {
-		assert.Equal(t, dbtJobRunID, incident.JobRunID, "Should correlate to dbt job")
+		assert.Equal(t, dbtRunID, incident.RunID, "Should correlate to dbt job")
 		assert.Equal(t, "dbt", incident.ProducerName)
 		assert.Contains(t, incident.DatasetURN, "postgresql://demo/marts.",
 			"Should use canonical URN")
@@ -1621,8 +1594,8 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 	now := time.Now()
 
 	// Job runs
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// dbt produces in canonical format
 	dbtNamespace := "postgresql://demo/marts"
@@ -1635,14 +1608,14 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1654,9 +1627,9 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 
 	// dbt produces output (has lineage edge)
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// GE has test results on the GE-format URN
@@ -1665,11 +1638,11 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 
 	err = testDB.Connection.QueryRowContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found 3 nulls', $3, 100)
 		RETURNING id
-	`, geDatasetURN, geJobRunID, now).Scan(&testResultID)
+	`, geDatasetURN, geRunID, now).Scan(&testResultID)
 	require.NoError(t, err)
 
 	// Create pattern resolver: demo_postgres/{name} → postgresql://demo/marts.{name}
@@ -1722,7 +1695,7 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 		"Incident should show canonical dataset URN (dbt format)")
 
 	// Job should be dbt (producer), not GE (test runner)
-	assert.Equal(t, dbtJobRunID, incident.JobRunID,
+	assert.Equal(t, dbtRunID, incident.RunID,
 		"Incident should correlate to dbt job run (producer)")
 	assert.Equal(t, "dbt", incident.ProducerName,
 		"Producer should be dbt")
@@ -1746,7 +1719,7 @@ func TestQueryIncidentByID_WithPatternResolution_NotFound(t *testing.T) {
 	})
 
 	now := time.Now()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	geRunID := uuid.New().String()
 
 	// GE tests on a dataset with NO producer
 	geNamespace := "orphan_namespace"
@@ -1755,11 +1728,11 @@ func TestQueryIncidentByID_WithPatternResolution_NotFound(t *testing.T) {
 	// Insert job run
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
-		VALUES ($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'great_expectations')
-	`, geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+		VALUES ($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'great_expectations')
+	`, geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert dataset (no lineage edge - orphan)
@@ -1774,11 +1747,11 @@ func TestQueryIncidentByID_WithPatternResolution_NotFound(t *testing.T) {
 
 	err = testDB.Connection.QueryRowContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_orphan_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
 		RETURNING id
-	`, geDatasetURN, geJobRunID, now).Scan(&testResultID)
+	`, geDatasetURN, geRunID, now).Scan(&testResultID)
 	require.NoError(t, err)
 
 	// Create pattern resolver with a pattern that doesn't match the orphan
@@ -1830,8 +1803,8 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 	})
 
 	now := time.Now()
-	dbtJobRunID := "dbt:" + uuid.New().String()
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	dbtRunID := uuid.New().String()
+	geRunID := uuid.New().String()
 
 	dbtNamespace := "postgresql://demo/marts"
 	dbtDatasetURN := dbtNamespace + ".customers"
@@ -1841,14 +1814,14 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 	// Insert job runs
 	_, err := testDB.Connection.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, completed_at, producer_name
 		)
 		VALUES
-			($1, $2, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, $5, 'dbt'),
-			($6, $7, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $8, $9, $10, 'great_expectations')
-	`, dbtJobRunID, uuid.New().String(), now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
-		geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute), now)
+			($1, 'dbt_transform_customers', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, $4, 'dbt'),
+			($5, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $6, $7, $8, 'great_expectations')
+	`, dbtRunID, now.Add(-10*time.Minute), now.Add(-15*time.Minute), now.Add(-10*time.Minute),
+		geRunID, now, now.Add(-5*time.Minute), now)
 	require.NoError(t, err)
 
 	// Insert datasets
@@ -1860,9 +1833,9 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 
 	// dbt produces output
 	_, err = testDB.Connection.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, dbtJobRunID, dbtDatasetURN)
+	`, dbtRunID, dbtDatasetURN)
 	require.NoError(t, err)
 
 	// Insert PASSED test result (not an incident)
@@ -1870,11 +1843,11 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 
 	err = testDB.Connection.QueryRowContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
 		)
 		VALUES ('not_null_customers_id', 'not_null', $1, $2, 'passed', 'All values non-null', $3, 100)
 		RETURNING id
-	`, geDatasetURN, geJobRunID, now).Scan(&testResultID)
+	`, geDatasetURN, geRunID, now).Scan(&testResultID)
 	require.NoError(t, err)
 
 	// Create pattern resolver
@@ -1914,7 +1887,7 @@ func TestQueryIncidentByID_WithPatternResolution_PassedTest(t *testing.T) {
 // correlated through the materialized view and returned in incident queries.
 //
 // This test verifies:
-//  1. Materialized view correctly JOINs parent job data via parent_job_run_id.
+//  1. Materialized view correctly JOINs parent job data via parent_run_id.
 //  2. QueryIncidentByID returns parent job fields (name, status, completed_at).
 //
 // Note: ParentRunFacet extraction and storage is tested in lineage_store_integration_test.go.
@@ -2036,17 +2009,17 @@ func TestParentRunFacetCorrelation(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, stored, "Child event with ParentRunFacet should be stored")
 
-	expectedParentJobRunID := "dbt:" + parentRunUUID
-	childJobRunID := childEvent.JobRunID()
+	expectedParentRunID := parentRunUUID
+	childRunID := childEvent.Run.ID
 
 	// Step 3: Insert a failed test result for the child's output dataset
 	var testResultID int64 = 1
 
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms, producer_name
+			id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms, producer_name
 		) VALUES ($1, 'not_null_orders_id', 'not_null', $2, $3, 'failed', 'Found 3 null values', $4, 150, 'correlator-ge')
-	`, testResultID, datasetURN, childJobRunID, now)
+	`, testResultID, datasetURN, childRunID, now)
 	require.NoError(t, err)
 
 	// Step 4: Refresh materialized views
@@ -2066,7 +2039,7 @@ func TestParentRunFacetCorrelation(t *testing.T) {
 	assert.Equal(t, "RUNNING", incident.JobStatus, "Child job should be RUNNING")
 
 	// Verify parent job fields are populated
-	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID, "ParentJobRunID should match")
+	assert.Equal(t, expectedParentRunID, incident.ParentRunID, "ParentRunID should match")
 	assert.Equal(t, parentJobName, incident.ParentJobName, "ParentJobName should match")
 	assert.Equal(t, "COMPLETE", incident.ParentJobStatus, "ParentJobStatus should be COMPLETE")
 	assert.NotNil(t, incident.ParentJobCompletedAt, "ParentJobCompletedAt should be populated")
@@ -2145,16 +2118,16 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, stored)
 
-	childJobRunID := childEvent.JobRunID()
+	childRunID := childEvent.Run.ID
 
 	// Step 2: Insert test result
 	var testResultID int64 = 1
 
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			id, test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms, producer_name
+			id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms, producer_name
 		) VALUES ($1, 'not_null_orders_id', 'not_null', $2, $3, 'failed', 'Found 3 null values', $4, 150, 'correlator-ge')
-	`, testResultID, datasetURN, childJobRunID, now)
+	`, testResultID, datasetURN, childRunID, now)
 	require.NoError(t, err)
 
 	// Step 3: Refresh views
@@ -2169,9 +2142,9 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, incident)
 
-	// Parent job run ID is stored (reference exists)
-	expectedParentJobRunID := "dbt:" + parentRunUUID
-	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID, "ParentJobRunID should be stored")
+	// Parent run ID is stored (reference exists)
+	expectedParentRunID := parentRunUUID
+	assert.Equal(t, expectedParentRunID, incident.ParentRunID, "ParentRunID should be stored")
 
 	// But parent fields are empty because parent job_run doesn't exist yet
 	assert.Empty(t, incident.ParentJobName, "ParentJobName should be empty")
@@ -2213,7 +2186,7 @@ func TestParentRunFacetOutOfOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, incident)
 
-	assert.Equal(t, expectedParentJobRunID, incident.ParentJobRunID)
+	assert.Equal(t, expectedParentRunID, incident.ParentRunID)
 	assert.Equal(t, parentJobName, incident.ParentJobName, "ParentJobName should now be populated")
 	assert.Equal(t, "COMPLETE", incident.ParentJobStatus, "ParentJobStatus should be COMPLETE")
 	assert.NotNil(t, incident.ParentJobCompletedAt, "ParentJobCompletedAt should be populated")

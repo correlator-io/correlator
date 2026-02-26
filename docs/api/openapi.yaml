@@ -609,7 +609,7 @@ components:
         - dataset_name
         - producer
         - job_name
-        - job_run_id
+        - run_id
         - downstream_count
         - has_correlation_issue
         - executed_at
@@ -638,9 +638,10 @@ components:
         job_name:
           type: string
           description: Job name
-        job_run_id:
+        run_id:
           type: string
-          description: Job run ID
+          format: uuid
+          description: Run ID (UUID from OpenLineage run.runId)
         downstream_count:
           type: integer
           description: Number of downstream datasets affected
@@ -750,6 +751,8 @@ components:
           type: string
         run_id:
           type: string
+          format: uuid
+          description: Run ID (UUID from OpenLineage run.runId)
         producer:
           type: string
         status:
@@ -782,8 +785,9 @@ components:
           example: "jaffle_shop.build"
         run_id:
           type: string
-          description: Parent job run ID (canonical format)
-          example: "dbt:019c628f-d07e-7000-8000-000000000000"
+          format: uuid
+          description: Parent job run ID (UUID from OpenLineage run.runId)
+          example: "019c628f-d07e-7000-8000-000000000000"
         status:
           type: string
           description: Parent job status

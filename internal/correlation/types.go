@@ -20,7 +20,7 @@ type (
 	//   - DatasetURN: URN of the dataset that was tested
 	//   - DatasetName: Human-readable dataset name
 	//   - DatasetNamespace: Dataset namespace (schema/database)
-	//   - JobRunID: Canonical ID of the job run that produced this dataset
+	//   - RunID: OpenLineage run UUID of the job that produced this dataset
 	//   - JobName: Name of the job (e.g., "transform_customers")
 	//   - JobNamespace: Job namespace (e.g., "dbt_prod")
 	//   - JobStatus: Job execution status (e.g., "COMPLETE", "FAIL")
@@ -30,10 +30,9 @@ type (
 	//   - ProducerVersion: Version of the producer tool (nullable)
 	//   - LineageEdgeID: Primary key of the lineage edge
 	//   - LineageEdgeType: Type of lineage relationship ("input" or "output")
-	//   - OpenLineageRunID: OpenLineage client-generated UUID for the run
 	//   - JobEventType: OpenLineage event type (e.g., "COMPLETE", "FAIL")
 	//   - LineageCreatedAt: When the lineage edge was created
-	//   - ParentJobRunID: Canonical parent job run ID (empty if no parent)
+	//   - ParentRunID: Parent run UUID (empty if no parent)
 	//   - ParentJobName: Parent job name (e.g., "jaffle_shop.build")
 	//   - ParentJobStatus: Parent job status (e.g., "COMPLETE", "FAIL")
 	//   - ParentJobCompletedAt: Parent job completion timestamp (nil if no parent or still running)
@@ -53,7 +52,7 @@ type (
 		DatasetURN       string
 		DatasetName      string
 		DatasetNS        string
-		JobRunID         string
+		RunID            string
 		JobName          string
 		JobNamespace     string
 		JobStatus        string
@@ -63,18 +62,17 @@ type (
 		ProducerVersion  *string
 		LineageEdgeID    int64
 		LineageEdgeType  string
-		OpenLineageRunID string
 		JobEventType     string
 		LineageCreatedAt time.Time
 		// Parent job fields (from OpenLineage ParentRunFacet)
-		ParentJobRunID       string     // Canonical parent job run ID (empty if no parent)
+		ParentRunID          string     // Parent run UUID (empty if no parent)
 		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
 		ParentJobNamespace   string     // Parent job namespace (e.g., "dbt://demo")
 		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
 		ParentJobCompletedAt *time.Time // Parent job completion timestamp
 		ParentProducerName   string     // Parent producer name (e.g., "correlator-dbt")
 		// Root parent job fields (from OpenLineage ParentRunFacet root)
-		RootParentJobRunID       string     // Canonical root parent job run ID (empty if no root)
+		RootParentRunID          string     // Root parent run UUID (empty if no root)
 		RootParentJobName        string     // Root parent job name (e.g., "demo_pipeline")
 		RootParentJobNamespace   string     // Root parent job namespace (e.g., "airflow://demo")
 		RootParentJobStatus      string     // Root parent job status
@@ -85,7 +83,7 @@ type (
 	// OrchestrationNode represents one level in the orchestration chain.
 	// Used to build the full hierarchy from root orchestrator to producing job.
 	OrchestrationNode struct {
-		JobRunID     string
+		RunID        string
 		JobName      string
 		JobNamespace string
 		ProducerName string
@@ -104,20 +102,15 @@ type (
 	//   - JobStatus: Filter by job status (e.g., "COMPLETE", "FAIL")
 	//   - ProducerName: Filter by producer (e.g., "dbt", "airflow")
 	//   - DatasetURN: Filter by specific dataset URN
-	//   - JobRunID: Filter by specific job run ID
-	//   - Tool: Filter by tool extracted from canonical job_run_id (e.g., "dbt", "airflow", "spark")
+	//   - RunID: Filter by specific run UUID
 	//   - TestExecutedAfter: Filter tests executed after this timestamp
 	//   - TestExecutedBefore: Filter tests executed before this timestamp
-	//
-	// Tool vs ProducerName:
-	//   - Tool: Filters by tool type from canonical ID format "tool:runID" (more reliable, uses LIKE pattern)
-	//   - ProducerName: Filters by producer name extracted from producer URL (may vary by version)
 	//
 	// Example:
 	//
 	//	// Find all incidents from dbt jobs in the last 24 hours
 	//	filter := &correlation.IncidentFilter{
-	//	    Tool: strPtr("dbt"),  // Uses job_run_id LIKE 'dbt:%'
+	//	    ProducerName: strPtr("dbt"),
 	//	    TestExecutedAfter: timePtr(time.Now().Add(-24 * time.Hour)),
 	//	}
 	//	result, err := store.QueryIncidents(ctx, filter, nil)
@@ -125,8 +118,7 @@ type (
 		JobStatus          *string
 		ProducerName       *string
 		DatasetURN         *string
-		JobRunID           *string
-		Tool               *string
+		RunID              *string
 		TestExecutedAfter  *time.Time
 		TestExecutedBefore *time.Time
 	}

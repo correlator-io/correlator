@@ -36,7 +36,7 @@ type Store interface {
 	// Performance:
 	//   - View is pre-materialized (fast queries, ~10-50ms typical)
 	//   - Uses COUNT(*) OVER() window function for efficient pagination
-	//   - Uses indexes: incident_correlation_view_pk, idx_incident_correlation_view_job_run_id
+	//   - Uses indexes: incident_correlation_view_pk, idx_incident_correlation_view_run_id
 	//   - Views are auto-refreshed via debounced post-ingestion hook on LineageStore.
 	QueryIncidents(ctx context.Context, filter *IncidentFilter, pagination *Pagination) (*IncidentQueryResult, error)
 
@@ -59,12 +59,12 @@ type Store interface {
 	// and counts distinct downstream datasets (depth > 0) per job run.
 	//
 	// Parameters:
-	//   - jobRunIDs: Slice of job run IDs to query counts for
+	//   - runIDs: Slice of job run IDs to query counts for
 	//
 	// Returns:
-	//   - Map of job_run_id -> downstream_count (missing keys have 0 downstream)
+	//   - Map of run_id -> downstream_count (missing keys have 0 downstream)
 	//   - Error if query fails or context is cancelled
-	QueryDownstreamCounts(ctx context.Context, jobRunIDs []string) (map[string]int, error)
+	QueryDownstreamCounts(ctx context.Context, runIDs []string) (map[string]int, error)
 
 	// QueryDownstreamWithParents queries downstream datasets with parent URN relationships.
 	// This enables the frontend to build a lineage tree visualization.
@@ -73,7 +73,7 @@ type Store interface {
 	// following input→output relationships through consuming jobs.
 	//
 	// Parameters:
-	//   - jobRunID: Job run ID to query downstream impact for
+	//   - runID: Job run ID to query downstream impact for
 	//   - maxDepth: Maximum recursion depth (typically 10)
 	//
 	// Returns:
@@ -82,7 +82,7 @@ type Store interface {
 	//   - Error if query fails or context is cancelled
 	//
 	// Note: Results exclude depth=0 (direct outputs) since those are the starting point, not downstream.
-	QueryDownstreamWithParents(ctx context.Context, jobRunID string, maxDepth int) ([]DownstreamResult, error)
+	QueryDownstreamWithParents(ctx context.Context, runID string, maxDepth int) ([]DownstreamResult, error)
 
 	// QueryUpstreamWithChildren queries upstream datasets with child URN relationships.
 	// This enables the frontend to build a lineage tree visualization showing data provenance.
@@ -97,7 +97,7 @@ type Store interface {
 	// Parameters:
 	//   - datasetURN: The root dataset URN (typically the tested dataset from the incident).
 	//     This becomes the childURN for depth=1 results, anchoring the tree.
-	//   - jobRunID: Job run ID that produced the root dataset
+	//   - runID: Job run ID that produced the root dataset
 	//   - maxDepth: Maximum recursion depth (typically 3-10)
 	//
 	// Returns:
@@ -121,7 +121,7 @@ type Store interface {
 	//   - Typical query time: 5-30ms depending on graph size
 	//   - maxDepth prevents runaway recursion
 	QueryUpstreamWithChildren(
-		ctx context.Context, datasetURN string, jobRunID string, maxDepth int,
+		ctx context.Context, datasetURN string, runID string, maxDepth int,
 	) ([]UpstreamResult, error)
 
 	// QueryOrphanDatasets returns datasets that have test results but no corresponding
@@ -181,17 +181,17 @@ type Store interface {
 	//   - GET /api/v1/health/correlation endpoint
 	QueryCorrelationHealth(ctx context.Context) (*Health, error)
 
-	// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+	// QueryOrchestrationChain walks the parent_run_id chain from a given job run
 	// up to the root orchestrator. Returns the ancestor chain ordered from root to
 	// the immediate parent (excludes the starting job itself).
 	//
 	// Parameters:
-	//   - jobRunID: The job run ID to walk up from
+	//   - runID: The job run ID to walk up from
 	//   - maxDepth: Safety limit to prevent infinite loops (typically 10)
 	//
 	// Returns:
 	//   - Slice of OrchestrationNode from root (index 0) to immediate parent (last)
 	//   - Empty slice if job has no parent
 	//   - Error if query fails or context is cancelled
-	QueryOrchestrationChain(ctx context.Context, jobRunID string, maxDepth int) ([]OrchestrationNode, error)
+	QueryOrchestrationChain(ctx context.Context, runID string, maxDepth int) ([]OrchestrationNode, error)
 }

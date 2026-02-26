@@ -167,8 +167,8 @@ func TestExtractProducerVersion(t *testing.T) {
 	}
 }
 
-// TestExtractParentJobRunID verifies parent job run ID extraction from OpenLineage ParentRunFacet.
-func TestExtractParentJobRunID(t *testing.T) {
+// TestExtractParentRunID verifies parent run UUID extraction from OpenLineage ParentRunFacet.
+func TestExtractParentRunID(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -179,7 +179,7 @@ func TestExtractParentJobRunID(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "valid parent facet with dbt namespace",
+			name: "valid parent facet",
 			facets: map[string]interface{}{
 				"parent": map[string]interface{}{
 					"job": map[string]interface{}{
@@ -191,7 +191,7 @@ func TestExtractParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "dbt:019c628f-d07e-7000-8000-000000000000",
+			expected: "019c628f-d07e-7000-8000-000000000000",
 		},
 		{
 			name: "valid parent facet with airflow namespace",
@@ -206,7 +206,7 @@ func TestExtractParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "airflow:manual__2026-02-15T12:00:00",
+			expected: "manual__2026-02-15T12:00:00",
 		},
 		{
 			name:     "no parent facet",
@@ -219,7 +219,7 @@ func TestExtractParentJobRunID(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "malformed parent - missing job",
+			name: "parent with run only (no job)",
 			facets: map[string]interface{}{
 				"parent": map[string]interface{}{
 					"run": map[string]interface{}{
@@ -227,7 +227,7 @@ func TestExtractParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "",
+			expected: "abc",
 		},
 		{
 			name: "malformed parent - missing run",
@@ -241,28 +241,9 @@ func TestExtractParentJobRunID(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "malformed parent - empty namespace",
+			name: "parent with empty runId",
 			facets: map[string]interface{}{
 				"parent": map[string]interface{}{
-					"job": map[string]interface{}{
-						"namespace": "",
-						"name":      "jaffle_shop.build",
-					},
-					"run": map[string]interface{}{
-						"runId": "019c628f-d07e-7000-8000-000000000000",
-					},
-				},
-			},
-			expected: "",
-		},
-		{
-			name: "malformed parent - empty runId",
-			facets: map[string]interface{}{
-				"parent": map[string]interface{}{
-					"job": map[string]interface{}{
-						"namespace": "dbt://demo",
-						"name":      "jaffle_shop.build",
-					},
 					"run": map[string]interface{}{
 						"runId": "",
 					},
@@ -286,20 +267,20 @@ func TestExtractParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "dbt:019c628f-d07e-7000-8000-000000000000",
+			expected: "019c628f-d07e-7000-8000-000000000000",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractParentJobRunID(tt.facets)
+			result := extractParentRunID(tt.facets)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-// TestExtractRootParentJobRunID verifies root parent extraction from OpenLineage ParentRunFacet.
-func TestExtractRootParentJobRunID(t *testing.T) {
+// TestExtractRootParentRunID verifies root parent run UUID extraction from OpenLineage ParentRunFacet.
+func TestExtractRootParentRunID(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -331,7 +312,7 @@ func TestExtractRootParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "airflow:019c628f-0000-0000-0000-000000000000",
+			expected: "019c628f-0000-0000-0000-000000000000",
 		},
 		{
 			name: "parent without root field",
@@ -359,30 +340,6 @@ func TestExtractRootParentJobRunID(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "root with empty namespace",
-			facets: map[string]interface{}{
-				"parent": map[string]interface{}{
-					"job": map[string]interface{}{
-						"namespace": "airflow://demo",
-						"name":      "demo_pipeline.dbt_run",
-					},
-					"run": map[string]interface{}{
-						"runId": "task-run-id",
-					},
-					"root": map[string]interface{}{
-						"job": map[string]interface{}{
-							"namespace": "",
-							"name":      "demo_pipeline",
-						},
-						"run": map[string]interface{}{
-							"runId": "abc",
-						},
-					},
-				},
-			},
-			expected: "",
-		},
-		{
 			name: "root with empty runId",
 			facets: map[string]interface{}{
 				"parent": map[string]interface{}{
@@ -394,10 +351,6 @@ func TestExtractRootParentJobRunID(t *testing.T) {
 						"runId": "task-run-id",
 					},
 					"root": map[string]interface{}{
-						"job": map[string]interface{}{
-							"namespace": "airflow://demo",
-							"name":      "demo_pipeline",
-						},
 						"run": map[string]interface{}{
 							"runId": "",
 						},
@@ -407,7 +360,7 @@ func TestExtractRootParentJobRunID(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "malformed root - missing job",
+			name: "root with run only (no job)",
 			facets: map[string]interface{}{
 				"parent": map[string]interface{}{
 					"job": map[string]interface{}{
@@ -424,13 +377,13 @@ func TestExtractRootParentJobRunID(t *testing.T) {
 					},
 				},
 			},
-			expected: "",
+			expected: "abc",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractRootParentJobRunID(tt.facets)
+			result := extractRootParentRunID(tt.facets)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
