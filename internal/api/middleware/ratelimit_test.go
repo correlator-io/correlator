@@ -457,7 +457,7 @@ func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
 	handler.ServeHTTP(rec1, req1)
 
 	// Make rate-limited request
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/events", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/batch", nil)
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
 
@@ -486,8 +486,8 @@ func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
 		t.Errorf("expected status 429, got %v", problem["status"])
 	}
 
-	if problem["instance"] != "/api/v1/lineage/events" {
-		t.Errorf("expected instance /api/v1/lineage/events, got %v", problem["instance"])
+	if problem["instance"] != "/api/v1/lineage/batch" {
+		t.Errorf("expected instance /api/v1/lineage/batch, got %v", problem["instance"])
 	}
 }
 

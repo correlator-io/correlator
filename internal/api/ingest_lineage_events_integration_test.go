@@ -98,7 +98,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	}
 }
 
-// postLineageEvents is a helper to POST OpenLineage events to the lineage endpoint.
+// postLineageEvents is a helper to POST OpenLineage events to the batch endpoint.
 // Accepts API contract types (LineageEvent), not domain types (ingestion.RunEvent).
 func (ts *testServer) postLineageEvents(t *testing.T, events []LineageEvent) *httptest.ResponseRecorder {
 	t.Helper()
@@ -106,9 +106,45 @@ func (ts *testServer) postLineageEvents(t *testing.T, events []LineageEvent) *ht
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal lineage events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	return rr
+}
+
+// postLineageEvent is a helper to POST a single OpenLineage event to the single-event endpoint.
+// This matches the standard OL API: POST /api/v1/lineage with a single RunEvent JSON object.
+func (ts *testServer) postLineageEvent(t *testing.T, event LineageEvent) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, err := json.Marshal(event)
+	require.NoError(t, err, "Failed to marshal lineage event")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	return rr
+}
+
+// postLineageEventWithBearer is a helper to POST using Authorization: Bearer header.
+// This proves standard OL client compatibility (OL clients use Bearer auth by default).
+func (ts *testServer) postLineageEventWithBearer(t *testing.T, event LineageEvent) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, err := json.Marshal(event)
+	require.NoError(t, err, "Failed to marshal lineage event")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -571,7 +607,7 @@ func TestLineageHandler_RequestTooLarge(t *testing.T) {
 
 	// Create request larger than MaxRequestSize
 	largeBody := make([]byte, defaultMaxRequestSize+1)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(largeBody))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(largeBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -599,7 +635,7 @@ func TestLineageHandler_MissingAuth(t *testing.T) {
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	// NO X-API-Key header
 
@@ -626,7 +662,7 @@ func TestLineageHandler_InvalidJSON(t *testing.T) {
 
 	// Malformed JSON
 	body := []byte(`{"invalid json syntax`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -648,7 +684,7 @@ func TestLineageHandler_EmptyBatch(t *testing.T) {
 	ts := setupTestServer(ctx, t)
 
 	body := []byte(`[]`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -676,7 +712,7 @@ func TestLineageHandler_WrongContentType(t *testing.T) {
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "text/plain") // Wrong Content-Type!
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -697,7 +733,7 @@ func TestLineageHandler_EmptyBody(t *testing.T) {
 	ctx := context.Background()
 	ts := setupTestServer(ctx, t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader([]byte{}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader([]byte{}))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -721,7 +757,7 @@ func TestLineageHandler_InvalidMethod(t *testing.T) {
 	ts := setupTestServer(ctx, t)
 
 	// Try GET (should not match route pattern)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/batch", nil)
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
 	rr := httptest.NewRecorder()
@@ -838,7 +874,7 @@ func TestLineageHandler_InvalidStateSequence(t *testing.T) {
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -877,7 +913,7 @@ func TestLineageHandler_BackwardTransition(t *testing.T) {
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -915,7 +951,7 @@ func TestLineageHandler_TerminalStateMutation(t *testing.T) {
 	body, err := json.Marshal(events)
 	require.NoError(t, err, "Failed to marshal events")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/events", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", ts.apiKey)
 
@@ -936,4 +972,251 @@ func TestLineageHandler_TerminalStateMutation(t *testing.T) {
 	ts.assertEventNotStored(
 		ctx, t, canonicalization.GenerateJobRunID(events[0].Job.Namespace, events[0].Run.ID),
 	)
+}
+
+// ============================================================================
+// Single-Event Endpoint Tests: POST /api/v1/lineage
+// These test the standard OpenLineage single-event ingestion endpoint.
+// ============================================================================
+
+// TestSingleEvent_Success tests the standard OL single-event endpoint.
+// Expected: 200 OK with empty body (per OL spec).
+func TestSingleEvent_Success(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("single-run-1", "START", time.Now())
+	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+
+	rr := ts.postLineageEvent(t, event)
+
+	// OL spec: 200 OK with empty body
+	assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
+	assert.Empty(t, rr.Body.String(), "Single-event endpoint should return empty body per OL spec")
+
+	// Verify database state (end-to-end)
+	ts.verifyEventStored(ctx, t, jobRunID, "START")
+}
+
+// TestSingleEvent_DuplicateIdempotency tests idempotency on the single-event endpoint.
+// Expected: First request stores, second returns 200 OK (duplicate = success).
+func TestSingleEvent_DuplicateIdempotency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("single-dup-run", "START", time.Now())
+	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+
+	// First request
+	rr1 := ts.postLineageEvent(t, event)
+	assert.Equal(t, http.StatusOK, rr1.Code)
+
+	count1 := ts.countStoredEvents(ctx, t, jobRunID)
+	assert.Equal(t, 1, count1, "First request should store 1 event")
+
+	// Second request (duplicate)
+	rr2 := ts.postLineageEvent(t, event)
+	assert.Equal(t, http.StatusOK, rr2.Code, "Duplicate should return 200 OK")
+
+	count2 := ts.countStoredEvents(ctx, t, jobRunID)
+	assert.Equal(t, 1, count2, "Duplicate should not create second row")
+}
+
+// TestSingleEvent_ValidationError tests validation failure on single-event endpoint.
+// Expected: 422 Unprocessable Entity with RFC 7807 error.
+func TestSingleEvent_ValidationError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("single-invalid", "START", time.Now())
+	event.Job.Name = "" // Missing required field
+
+	rr := ts.postLineageEvent(t, event)
+
+	validateRFC7807Response(t, rr, http.StatusUnprocessableEntity)
+
+	ts.assertEventNotStored(
+		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
+	)
+}
+
+// TestSingleEvent_MalformedJSON tests malformed JSON on single-event endpoint.
+// Expected: 400 Bad Request.
+func TestSingleEvent_MalformedJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	body := []byte(`{"invalid json`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	validateRFC7807Response(t, rr, http.StatusBadRequest)
+}
+
+// TestSingleEvent_WrongContentType tests Content-Type validation on single-event endpoint.
+// Expected: 415 Unsupported Media Type.
+func TestSingleEvent_WrongContentType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("single-ct", "START", time.Now())
+	body, err := json.Marshal(event)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	validateRFC7807Response(t, rr, http.StatusUnsupportedMediaType)
+}
+
+// TestSingleEvent_EmptyBody tests empty body on single-event endpoint.
+// Expected: 400 Bad Request.
+func TestSingleEvent_EmptyBody(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader([]byte{}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	validateRFC7807Response(t, rr, http.StatusBadRequest)
+}
+
+// TestSingleEvent_ArrayPayload tests sending a JSON array to the single-event endpoint.
+// Expected: 400 Bad Request (endpoint expects a single JSON object, not an array).
+func TestSingleEvent_ArrayPayload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	events := []LineageEvent{createValidLineageEvent("array-run", "START", time.Now())}
+	body, err := json.Marshal(events)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", ts.apiKey)
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	validateRFC7807Response(t, rr, http.StatusBadRequest)
+}
+
+// TestSingleEvent_BearerAuth tests that Authorization: Bearer header works.
+// This proves standard OL client compatibility — OL Python client uses Bearer auth by default.
+func TestSingleEvent_BearerAuth(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("bearer-run", "START", time.Now())
+	jobRunID := canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID)
+
+	// Use Bearer auth (not X-Api-Key) — proves OL client compat
+	rr := ts.postLineageEventWithBearer(t, event)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "Bearer auth should work: %s", rr.Body.String())
+	assert.Empty(t, rr.Body.String(), "Should return empty body")
+
+	ts.verifyEventStored(ctx, t, jobRunID, "START")
+}
+
+// TestSingleEvent_MissingAuth tests that single-event endpoint requires authentication.
+// Expected: 401 Unauthorized.
+func TestSingleEvent_MissingAuth(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	event := createValidLineageEvent("noauth-run", "START", time.Now())
+	body, err := json.Marshal(event)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// NO auth header
+
+	rr := httptest.NewRecorder()
+	ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	validateRFC7807Response(t, rr, http.StatusUnauthorized)
+
+	ts.assertEventNotStored(
+		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
+	)
+}
+
+// TestSingleEvent_RealDBTEvent tests ingestion of a real dbt OpenLineage event via single-event endpoint.
+// This catches real-world edge cases (complex facets, nested structures).
+func TestSingleEvent_RealDBTEvent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	// Load real dbt event from testdata
+	eventData, err := os.ReadFile("../../internal/ingestion/testdata/dbt_complete_event.json")
+	require.NoError(t, err, "Failed to read dbt_complete_event.json fixture")
+
+	var event LineageEvent
+
+	err = json.Unmarshal(eventData, &event)
+	require.NoError(t, err, "Failed to parse dbt event")
+
+	rr := ts.postLineageEvent(t, event)
+
+	assert.Equal(t, http.StatusOK, rr.Code, "Real dbt event should succeed: %s", rr.Body.String())
+	assert.Empty(t, rr.Body.String(), "Should return empty body")
+
+	count := ts.countStoredEvents(
+		ctx, t, canonicalization.GenerateJobRunID(event.Job.Namespace, event.Run.ID),
+	)
+	assert.Equal(t, 1, count, "Expected 1 event stored")
 }

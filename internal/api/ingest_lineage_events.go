@@ -15,8 +15,95 @@ import (
 	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
+// handleLineageEvent handles single OpenLineage event ingestion.
+// POST /api/v1/lineage - Standard OL API endpoint for single RunEvent ingestion.
+//
+// This endpoint matches the official OpenLineage API spec:
+// https://openlineage.io/apidocs/openapi/#tag/OpenLineage/operation/postEvent
+//
+// Request: Single RunEvent JSON object (not an array).
+// Success: 200 OK with empty body (per OL spec).
+// Errors: RFC 7807 Problem Details (400, 415, 422, 500).
+func (s *Server) handleLineageEvent(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	correlationID := middleware.GetCorrelationID(r.Context())
+
+	if !hasJSONContentType(r.Header.Get("Content-Type")) {
+		WriteErrorResponse(w, r, s.logger, UnsupportedMediaType("Content-Type must be application/json"))
+
+		return
+	}
+
+	if r.ContentLength == 0 {
+		WriteErrorResponse(w, r, s.logger, BadRequest("Request body cannot be empty"))
+
+		return
+	}
+
+	if r.ContentLength > 0 && r.ContentLength > s.config.MaxRequestSize {
+		WriteErrorResponse(w, r, s.logger, PayloadTooLarge(
+			fmt.Sprintf("Request body exceeds maximum size of %d bytes", s.config.MaxRequestSize),
+		))
+
+		return
+	}
+
+	var event LineageEvent
+
+	if err := json.NewDecoder(io.LimitReader(r.Body, s.config.MaxRequestSize)).Decode(&event); err != nil {
+		if err == io.EOF {
+			WriteErrorResponse(w, r, s.logger, BadRequest("Request body cannot be empty"))
+
+			return
+		}
+
+		WriteErrorResponse(w, r, s.logger, BadRequest("Invalid JSON: "+err.Error()))
+
+		return
+	}
+
+	runEvent := mapLineageRequest(&event)
+	s.logger.Debug("lineage event ingested", slog.Any("event", runEvent))
+
+	normalized := normalizeInputsAndOutputs([]*ingestion.RunEvent{runEvent})
+	runEvent = normalized[0]
+
+	if err := s.validator.ValidateRunEvent(runEvent); err != nil {
+		s.logger.ErrorContext(r.Context(), "failed to validate run_event",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+
+		WriteErrorResponse(w, r, s.logger, UnprocessableEntity(err.Error()))
+
+		return
+	}
+
+	stored, duplicate, err := s.ingestionStore.StoreEvent(r.Context(), runEvent)
+	if err != nil {
+		s.logger.Error("Failed to store event",
+			slog.String("correlation_id", correlationID),
+			slog.String("error", err.Error()),
+		)
+
+		WriteErrorResponse(w, r, s.logger, InternalServerError("Failed to store event"))
+
+		return
+	}
+
+	s.logger.Info("Lineage event processed",
+		slog.String("correlation_id", correlationID),
+		slog.Bool("stored", stored),
+		slog.Bool("duplicate", duplicate),
+		slog.Duration("duration", time.Since(startTime)),
+	)
+
+	// OL spec: 200 OK with empty body
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleLineageEvents handles OpenLineage event ingestion.
-// POST /api/v1/lineage/events - Ingest single or batch OpenLineage events
+// POST /api/v1/lineage/batch - Ingest batch OpenLineage events
 //
 // Request validation (returns 4xx):
 //   - 405 Method Not Allowed: Only POST is allowed (handled by route pattern)
@@ -32,44 +119,56 @@ func (s *Server) handleLineageEvents(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	correlationID := middleware.GetCorrelationID(r.Context())
 
-	// Content-Type validation
 	if !hasJSONContentType(r.Header.Get("Content-Type")) {
 		WriteErrorResponse(w, r, s.logger, UnsupportedMediaType("Content-Type must be application/json"))
 
 		return
 	}
 
-	// Parse and validate request
 	events, problem := s.parseLineageRequest(r)
 	if problem != nil {
+		s.logger.ErrorContext(r.Context(), "Failed to parse lineage events",
+			slog.String("correlation_id", correlationID),
+			slog.Any("problem", problem),
+		)
+
 		WriteErrorResponse(w, r, s.logger, problem)
 
 		return
 	}
 
-	// Validate and sort events
+	s.logger.Debug("lineage events ingested", slog.Any("events", events))
+
 	sortedEvents, validationErrors, problem := s.validateEvents(events)
 	if problem != nil {
+		s.logger.ErrorContext(r.Context(), "Failed to validate events",
+			slog.String("correlation_id", correlationID),
+			slog.Int("event_count", len(events)),
+			slog.Any("validation_errors", validationErrors),
+		)
+
 		WriteErrorResponse(w, r, s.logger, problem)
 
 		return
 	}
 
-	// Store only valid events (filter out invalid events)
 	storeResults, problem := s.storeValidEvents(r.Context(), sortedEvents, validationErrors)
 	if problem != nil {
+		s.logger.ErrorContext(r.Context(), "Failed to store events",
+			slog.String("correlation_id", correlationID),
+			slog.Int("event_count", len(events)),
+			slog.Any("problem", problem),
+		)
+
 		WriteErrorResponse(w, r, s.logger, problem)
 
 		return
 	}
 
-	// Build response
 	response := s.buildLineageResponse(correlationID, sortedEvents, validationErrors, storeResults)
 
-	// Send response (returns status code for logging)
 	statusCode := s.sendLineageResponse(w, r, response)
 
-	// Log success with duration
 	duration := time.Since(startTime)
 	s.logger.Info("Lineage events processed",
 		slog.String("correlation_id", response.CorrelationID),
@@ -119,7 +218,6 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		)
 	}
 
-	// Empty body check (better UX: specific error message)
 	if r.ContentLength == 0 {
 		return nil, BadRequest("Request body cannot be empty")
 	}
@@ -131,7 +229,6 @@ func (s *Server) parseLineageRequest(r *http.Request) ([]*ingestion.RunEvent, *P
 		return nil, BadRequest("Invalid JSON: " + err.Error())
 	}
 
-	// Empty request check
 	if len(events) == 0 {
 		return nil, BadRequest("Event array cannot be empty")
 	}

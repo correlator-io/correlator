@@ -98,7 +98,7 @@ web/
 ## Links
 
 - **Correlator**: https://github.com/correlator-io/correlator
-- **UI Specification**: [.idea/ui-specification-v2.md](../.idea/ui-specification-v2.md)
+- **UI Specification**: [.idea/ui-specification-v2.md](../.idea/achive/ui-specification-v2.md)
 - **shadcn/ui**: https://ui.shadcn.com/
 - **React Flow**: https://reactflow.dev/
 

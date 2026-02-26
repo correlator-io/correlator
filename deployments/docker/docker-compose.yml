@@ -91,7 +91,7 @@ services:
     container_name: correlator-api
     environment:
       - DATABASE_URL=postgres://correlator:${POSTGRES_PASSWORD}@postgres:5432/correlator?sslmode=disable
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CORRELATOR_SERVER_LOG_LEVEL=debug
       - CORRELATOR_AUTH_ENABLED=${CORRELATOR_AUTH_ENABLED:-false}
       - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
     ports:
