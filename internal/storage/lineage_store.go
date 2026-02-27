@@ -543,7 +543,6 @@ func isDatabaseConnectionError(err error) bool {
 //   - "https://github.com/apache/airflow/tree/2.7.0" → "airflow"
 //   - "https://github.com/great-expectations/great_expectations/tree/0.17.0" → "great_expectations"
 //   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "spark"
-//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "dbt-correlator"
 //
 // Falls back to the full URL if extraction fails (defensive programming).
 //
@@ -569,7 +568,14 @@ func extractProducerName(producerURL string) string {
 		// Look for "integration" directory (Spark, Flink, etc.)
 		for i, part := range parts {
 			if part == "integration" && i+1 < len(parts) {
-				return parts[i+1]
+				next := parts[i+1]
+				// GE-ol nests under integration/common/openlineage/provider/great_expectations
+				// — "common" is not a meaningful tool name, use the last path segment instead.
+				if next == "common" {
+					return parts[len(parts)-1]
+				}
+
+				return next
 			}
 		}
 
@@ -591,7 +597,6 @@ func extractProducerName(producerURL string) string {
 // OpenLineage producers typically include version information:
 //   - "https://github.com/dbt-labs/dbt-core/tree/1.5.0" → "1.5.0"
 //   - "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0" → "2.10.0"
-//   - "https://github.com/correlator-io/dbt-correlator/0.1.1.dev0" → "0.1.1.dev0"
 //   - "https://github.com/OpenLineage/OpenLineage/tree/1.0.0/integration/spark" → "1.0.0"
 //
 // Returns empty string if version cannot be extracted.
@@ -895,13 +900,11 @@ func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *inge
 	runID := event.Run.ID
 	newState := string(event.EventType)
 
-	// Build metadata
 	metadataJSON, err := buildJobRunMetadata(event)
 	if err != nil {
 		return fmt.Errorf("failed to build metadata: %w", err)
 	}
 
-	// Fetch existing state (with row lock)
 	existing, err := fetchJobRunState(ctx, tx, runID)
 	if err != nil {
 		return err
@@ -954,7 +957,6 @@ func (s *LineageStore) executeJobRunUpsert(
 		completedAt = event.EventTime // Set completed_at only for terminal states
 	}
 
-	// Extract parent run IDs from ParentRunFacet
 	parentRunID := extractParentRunID(event.Run.Facets)
 	rootParentRunID := extractRootParentRunID(event.Run.Facets)
 
@@ -1004,7 +1006,6 @@ func (s *LineageStore) executeJobRunUpsert(
 			updated_at = NOW()
 	`
 
-	// Convert parentRunID to sql.NullString for proper NULL handling
 	var parentRunIDParam sql.NullString
 	if parentRunID != "" {
 		parentRunIDParam = sql.NullString{String: parentRunID, Valid: true}
@@ -1047,12 +1048,10 @@ func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, e
 
 	// Upsert input datasets and create input edges
 	for _, dataset := range event.Inputs {
-		// Upsert dataset
 		if err := s.upsertDataset(ctx, tx, &dataset); err != nil {
 			return fmt.Errorf("failed to upsert input dataset: %w", err)
 		}
 
-		// Create input edge
 		if err := s.createLineageEdge(ctx, tx, runID, "input", dataset); err != nil {
 			return fmt.Errorf("failed to create input edge: %w", err)
 		}
@@ -1060,12 +1059,10 @@ func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, e
 
 	// Upsert output datasets and create output edges
 	for _, dataset := range event.Outputs {
-		// Upsert dataset
 		if err := s.upsertDataset(ctx, tx, &dataset); err != nil {
 			return fmt.Errorf("failed to upsert output dataset: %w", err)
 		}
 
-		// Create output edge
 		if err := s.createLineageEdge(ctx, tx, runID, "output", dataset); err != nil {
 			return fmt.Errorf("failed to create output edge: %w", err)
 		}
@@ -1138,7 +1135,6 @@ func (s *LineageStore) createLineageEdge(
 	edgeType string,
 	dataset ingestion.Dataset,
 ) error {
-	// Select appropriate facets based on edge type with validation
 	var facets ingestion.Facets
 
 	switch edgeType {
@@ -1401,161 +1397,166 @@ func (s *LineageStore) cleanupExpiredIdempotencyKeys(ctx context.Context) {
 	}
 }
 
-// extractDataQualityAssertions extracts test results from dataQualityAssertions facets
+// extractDataQualityAssertions extracts test results from assertion facets
 // in input datasets and stores them in the test_results table.
 //
-// This enables correlation between test failures and job runs via the OpenLineage
-// dataQualityAssertions facet (per OpenLineage specification).
-//
-// Facet location: inputs[].inputFacets.dataQualityAssertions
-//
-// Facet structure (OpenLineage spec):
-//
-//	{
-//	  "_producer": "https://github.com/...",
-//	  "_schemaURL": "https://openlineage.io/spec/facets/...",
-//	  "assertions": [
-//	    {"assertion": "test_name", "success": true/false, "column": "optional"}
-//	  ]
-//	}
+// Supports two facet formats:
+//   - Standard OL: inputs[].inputFacets.dataQualityAssertions (test name in "assertion" field)
+//   - GE-ol:       inputs[].inputFacets.greatExpectations_assertions (test name in "expectationType" field)
 //
 // Behavior:
 //   - Non-blocking: Errors are logged but don't fail the event storage
 //   - Same transaction: Test results are stored atomically with the event
 //   - Maps success=true to "passed", success=false to "failed"
 //   - Stores optional column in metadata.column
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - tx: Transaction to use (same as event storage for atomicity)
-//   - event: OpenLineage event containing input datasets with facets
-//
-//nolint:gocognit,funlen,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
 func (s *LineageStore) extractDataQualityAssertions(
 	ctx context.Context,
 	tx *sql.Tx,
 	event *ingestion.RunEvent,
 ) {
-	runID := event.Run.ID
-	eventTime := event.EventTime
-
 	for _, input := range event.Inputs {
-		// Check for dataQualityAssertions facet
-		facet, ok := input.InputFacets["dataQualityAssertions"]
-		if !ok {
-			continue
-		}
+		s.extractAssertionsFromFacet(ctx, tx, event, &input,
+			"dataQualityAssertions", "assertion", "dataQualityAssertion")
+		s.extractAssertionsFromFacet(ctx, tx, event, &input,
+			"greatExpectations_assertions", "expectationType", "greatExpectationsAssertion")
+	}
+}
 
-		// Type assert facet to map
-		facetMap, ok := facet.(map[string]interface{})
+// extractAssertionsFromFacet extracts test results from a single assertion facet on an input dataset.
+//
+// Parameters:
+//   - facetKey: The key in inputFacets (e.g. "dataQualityAssertions", "greatExpectations_assertions")
+//   - testNameField: The JSON field holding the test name (e.g. "assertion", "expectationType")
+//   - testType: The test_type value to store (e.g. "dataQualityAssertion", "greatExpectationsAssertion")
+//
+//nolint:gocognit,funlen,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
+func (s *LineageStore) extractAssertionsFromFacet(
+	ctx context.Context,
+	tx *sql.Tx,
+	event *ingestion.RunEvent,
+	input *ingestion.Dataset,
+	facetKey string,
+	testNameField string,
+	testType string,
+) {
+	runID := event.Run.ID
+
+	facet, ok := input.InputFacets[facetKey]
+	if !ok {
+		return
+	}
+
+	facetMap, ok := facet.(map[string]interface{})
+	if !ok {
+		s.logger.Warn("assertion facet is not a map",
+			slog.String("run_id", runID),
+			slog.String("facet_key", facetKey),
+			slog.String("dataset_urn", input.URN()),
+		)
+
+		return
+	}
+
+	assertionsRaw, ok := facetMap["assertions"]
+	if !ok {
+		s.logger.Warn("assertion facet missing assertions field",
+			slog.String("run_id", runID),
+			slog.String("facet_key", facetKey),
+			slog.String("dataset_urn", input.URN()),
+		)
+
+		return
+	}
+
+	assertions, ok := assertionsRaw.([]interface{})
+	if !ok {
+		s.logger.Warn("assertions is not an array",
+			slog.String("run_id", runID),
+			slog.String("facet_key", facetKey),
+			slog.String("dataset_urn", input.URN()),
+		)
+
+		return
+	}
+
+	for _, assertionRaw := range assertions {
+		assertion, ok := assertionRaw.(map[string]interface{})
 		if !ok {
-			s.logger.Warn("dataQualityAssertions facet is not a map",
+			s.logger.Warn("assertion is not a map",
 				slog.String("run_id", runID),
-				slog.String("dataset_urn", input.URN()),
+				slog.String("facet_key", facetKey),
 			)
 
 			continue
 		}
 
-		// Extract assertions array
-		assertionsRaw, ok := facetMap["assertions"]
-		if !ok {
-			s.logger.Warn("dataQualityAssertions facet missing assertions field",
+		testName, _ := assertion[testNameField].(string)
+		if testName == "" {
+			s.logger.Warn("assertion missing name",
 				slog.String("run_id", runID),
-				slog.String("dataset_urn", input.URN()),
+				slog.String("facet_key", facetKey),
+				slog.String("expected_field", testNameField),
 			)
 
 			continue
 		}
 
-		assertions, ok := assertionsRaw.([]interface{})
-		if !ok {
-			s.logger.Warn("dataQualityAssertions assertions is not an array",
-				slog.String("run_id", runID),
-				slog.String("dataset_urn", input.URN()),
-			)
+		// Map success boolean to status (default to failed if missing/malformed - safer for correlation)
+		status := ingestion.TestStatusFailed
 
-			continue
+		successVal, hasSuccess := assertion["success"]
+		if !hasSuccess {
+			s.logger.Warn("assertion missing success field, defaulting to failed",
+				slog.String("run_id", runID),
+				slog.String("test_name", testName),
+			)
+		} else if success, ok := successVal.(bool); ok && success {
+			status = ingestion.TestStatusPassed
+		} else if !ok {
+			s.logger.Warn("assertion success is not a boolean, defaulting to failed",
+				slog.String("run_id", runID),
+				slog.String("test_name", testName),
+			)
 		}
 
-		// Process each assertion
-		for _, assertionRaw := range assertions {
-			assertion, ok := assertionRaw.(map[string]interface{})
-			if !ok {
-				s.logger.Warn("assertion is not a map",
-					slog.String("run_id", runID),
-				)
+		// Extract optional column into metadata
+		var metadata map[string]interface{}
+		if column, ok := assertion["column"].(string); ok && column != "" {
+			metadata = map[string]interface{}{"column": column}
+		}
 
-				continue
-			}
+		// TODO: Remove durationMs and message fields. They are not relevant anymore since we pivoted to OL integrations
+		// Extract optional durationMs (milliseconds) - spec-compliant extended field
+		var durationMs int
+		if dur, ok := assertion["durationMs"].(float64); ok {
+			durationMs = int(dur)
+		}
 
-			// Extract required fields
-			testName, _ := assertion["assertion"].(string)
-			if testName == "" {
-				s.logger.Warn("assertion missing name",
-					slog.String("run_id", runID),
-				)
+		// Extract optional message - spec-compliant extended field
+		var message string
+		if msg, ok := assertion["message"].(string); ok {
+			message = msg
+		}
 
-				continue
-			}
-
-			// Map success boolean to status (default to failed if missing/malformed - safer for correlation)
-			status := ingestion.TestStatusFailed
-
-			successVal, hasSuccess := assertion["success"]
-			if !hasSuccess {
-				s.logger.Warn("assertion missing success field, defaulting to failed",
-					slog.String("run_id", runID),
-					slog.String("test_name", testName),
-				)
-			} else if success, ok := successVal.(bool); ok && success {
-				status = ingestion.TestStatusPassed
-			} else if !ok {
-				s.logger.Warn("assertion success is not a boolean, defaulting to failed",
-					slog.String("run_id", runID),
-					slog.String("test_name", testName),
-				)
-			}
-
-			// Extract optional column into metadata
-			var metadata map[string]interface{}
-			if column, ok := assertion["column"].(string); ok && column != "" {
-				metadata = map[string]interface{}{"column": column}
-			}
-
-			// Extract optional durationMs (milliseconds) - spec-compliant extended field
-			var durationMs int
-			if dur, ok := assertion["durationMs"].(float64); ok {
-				durationMs = int(dur)
-			}
-
-			// Extract optional message - spec-compliant extended field
-			var message string
-			if msg, ok := assertion["message"].(string); ok {
-				message = msg
-			}
-
-			// Store the test result
-			if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
-				TestName:        testName,
-				TestType:        "dataQualityAssertion",
-				DatasetURN:      input.URN(),
-				RunID:           runID,
-				Status:          status,
-				Message:         message,
-				DurationMs:      durationMs,
-				Metadata:        metadata,
-				ExecutedAt:      eventTime,
-				ProducerName:    extractProducerName(event.Producer),
-				ProducerVersion: extractProducerVersion(event.Producer),
-			}); err != nil {
-				s.logger.Warn("failed to store test result from facet",
-					slog.String("run_id", runID),
-					slog.String("test_name", testName),
-					slog.String("error", err.Error()),
-				)
-				// Non-blocking: continue processing other assertions
-			}
+		if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
+			TestName:        testName,
+			TestType:        testType,
+			DatasetURN:      input.URN(),
+			RunID:           runID,
+			Status:          status,
+			Message:         message,
+			DurationMs:      durationMs,
+			Metadata:        metadata,
+			ExecutedAt:      event.EventTime,
+			ProducerName:    extractProducerName(event.Producer),
+			ProducerVersion: extractProducerVersion(event.Producer),
+		}); err != nil {
+			s.logger.Warn("failed to store test result from facet",
+				slog.String("run_id", runID),
+				slog.String("facet_key", facetKey),
+				slog.String("test_name", testName),
+				slog.String("error", err.Error()),
+			)
 		}
 	}
 }

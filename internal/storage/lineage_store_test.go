@@ -72,6 +72,12 @@ func TestExtractProducerName(t *testing.T) {
 			producerURL: "https://github.com/apache/airflow/tree/providers-openlineage/2.10.0",
 			want:        "airflow",
 		},
+		{
+			name: "GE-ol deep path URL",
+			producerURL: "https://github.com/OpenLineage/OpenLineage/tree/" +
+				"1.24.2/integration/common/openlineage/provider/great_expectations",
+			want: "great_expectations",
+		},
 	}
 
 	for _, tt := range tests {
