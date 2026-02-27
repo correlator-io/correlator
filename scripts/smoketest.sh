@@ -26,13 +26,13 @@
 #     - POST /api/v1/lineage (standard OL API, single JSON object, 200 OK empty body)
 #   Section 1: Batch Ingestion (Tests 1-6)
 #     - POST /api/v1/lineage/batch (batch events, JSON array)
-#     - Single events (dbt, Airflow, Spark) with canonical job_run_id generation
+#     - Single events (dbt, Airflow, Spark) with run_id UUID as primary key
 #     - Duplicate detection (idempotency)
 #     - Invalid input validation (missing field)
 #     - Empty body rejection
 #
 #   Section 2: End-to-End Correlation (Tests 7-10)
-#     - Verify canonical ID format in job_runs table ("tool:runID")
+#     - Verify run_id UUID stored in job_runs table
 #     - Event with dataQualityAssertions facet (realistic dbt-correlator format)
 #     - Test results extracted and stored in test_results table
 #     - Failed test status correctly identified
@@ -135,8 +135,8 @@ cleanup_test_data() {
 
     -- 1. Delete test results for smoke test job runs
     DELETE FROM test_results
-    WHERE job_run_id IN (
-        SELECT job_run_id FROM job_runs
+    WHERE run_id IN (
+        SELECT run_id FROM job_runs
         WHERE job_namespace LIKE '%correlator-smoke-test%'
     );
 
@@ -146,8 +146,8 @@ cleanup_test_data() {
 
     -- 3. Delete lineage edges for smoke test job runs
     DELETE FROM lineage_edges
-    WHERE job_run_id IN (
-        SELECT job_run_id FROM job_runs
+    WHERE run_id IN (
+        SELECT run_id FROM job_runs
         WHERE job_namespace LIKE '%correlator-smoke-test%'
     );
 
@@ -573,35 +573,35 @@ echo "🔗 Section 2: End-to-End Correlation"
 echo "-------------------------------------"
 echo ""
 
-# Canonical job_run_id from dbt event (format: "dbt:runID")
-CANONICAL_JOB_RUN_ID="dbt:550e8400-e29b-41d4-a716-446655440000"
+# run_id UUID from dbt event (raw UUID, used as PK)
+RUN_ID="550e8400-e29b-41d4-a716-446655440000"
 
 #===============================================================================
-# Test 7: Verify canonical ID format in correlation view
+# Test 7: Verify run_id UUID stored in job_runs table
 #===============================================================================
-echo "Test 7: Verify canonical ID format (tool:runID)"
+echo "Test 7: Verify run_id UUID stored in job_runs"
 
 if [ -z "$DATABASE_URL" ]; then
     print_test_result "Test 7" "SKIP" "DATABASE_URL not set - cannot query database"
 elif ! command -v psql &> /dev/null; then
     print_test_result "Test 7" "SKIP" "psql not installed - cannot query database"
 else
-    # Query job_run_id format from job_runs table
-    JOB_RUN_ID=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
-    SELECT job_run_id
+    # Query run_id from job_runs table
+    STORED_RUN_ID=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
+    SELECT run_id
     FROM job_runs
     WHERE job_namespace LIKE '%correlator-smoke-test%'
     LIMIT 1;
 SQL
     )
 
-    JOB_RUN_ID=$(echo "$JOB_RUN_ID" | tr -d ' ')
+    STORED_RUN_ID=$(echo "$STORED_RUN_ID" | tr -d ' ')
 
-    # Verify format: "tool:runID" (should contain colon and start with known tool)
-    if echo "$JOB_RUN_ID" | grep -qE "^(dbt|airflow|spark|custom|unknown):"; then
-        print_test_result "Test 7" "PASS" "Canonical ID format verified: $JOB_RUN_ID"
+    # Verify format: valid UUID (8-4-4-4-12 hex pattern)
+    if echo "$STORED_RUN_ID" | grep -qE "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"; then
+        print_test_result "Test 7" "PASS" "run_id UUID verified: $STORED_RUN_ID"
     else
-        print_test_result "Test 7" "FAIL" "Invalid canonical ID format: $JOB_RUN_ID (expected 'tool:runID')"
+        print_test_result "Test 7" "FAIL" "Invalid run_id format: $STORED_RUN_ID (expected UUID)"
     fi
 fi
 echo ""
@@ -679,8 +679,8 @@ echo ""
 #===============================================================================
 echo "Test 9: Verify test results extracted from facet"
 
-# Canonical job_run_id for E2E test event (format: "dbt:runID")
-E2E_JOB_RUN_ID="dbt:550e8400-e29b-41d4-a716-446655440003"
+# run_id UUID for E2E test event (raw UUID, used as PK)
+E2E_RUN_ID="550e8400-e29b-41d4-a716-446655440003"
 
 if [ -z "$DATABASE_URL" ]; then
     print_test_result "Test 9" "SKIP" "DATABASE_URL not set - cannot query database"
@@ -689,7 +689,7 @@ elif ! command -v psql &> /dev/null; then
 else
     TEST_COUNT=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
     SELECT COUNT(*) FROM test_results
-    WHERE job_run_id = '$E2E_JOB_RUN_ID';
+    WHERE run_id = '$E2E_RUN_ID';
 SQL
     )
     TEST_COUNT=$(echo "$TEST_COUNT" | tr -d ' ')
@@ -714,7 +714,7 @@ elif ! command -v psql &> /dev/null; then
 else
     FAILED_TEST=$(psql "$DATABASE_URL" -t -v ON_ERROR_STOP=1 << SQL
     SELECT test_name FROM test_results
-    WHERE job_run_id = '$E2E_JOB_RUN_ID'
+    WHERE run_id = '$E2E_RUN_ID'
       AND status = 'failed'
     LIMIT 1;
 SQL

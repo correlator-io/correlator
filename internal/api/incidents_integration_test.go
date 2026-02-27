@@ -25,12 +25,12 @@ func TestListIncidents_Integration(t *testing.T) {
 	ctx := context.Background()
 	ts := setupTestServer(ctx, t)
 
-	// Setup test data using canonical URN format (see canonicalization.GenerateDatasetURN)
+	// Setup test data
 	now := time.Now()
-	jobRunID := "dbt:" + uuid.New().String()
+	runID := uuid.New().String()
 	datasetURN := "postgresql://prod-db/public.customers"
 
-	setupIncidentTestData(ctx, t, ts, jobRunID, datasetURN, now)
+	setupIncidentTestData(ctx, t, ts, runID, datasetURN, now)
 
 	// Refresh materialized views
 	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -150,10 +150,10 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 
 	// Setup test data
 	now := time.Now()
-	jobRunID := "dbt:" + uuid.New().String()
+	runID := uuid.New().String()
 	datasetURN := "postgresql://prod-db/public.orders"
 
-	testResultID := setupIncidentTestData(ctx, t, ts, jobRunID, datasetURN, now)
+	testResultID := setupIncidentTestData(ctx, t, ts, runID, datasetURN, now)
 
 	// Refresh materialized views
 	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -189,7 +189,7 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 		assert.NotEmpty(t, response.Test.Message)
 
 		// Verify job details
-		assert.Equal(t, jobRunID, response.Job.RunID)
+		assert.Equal(t, runID, response.Job.RunID)
 		assert.Equal(t, "dbt", response.Job.Producer)
 	})
 
@@ -236,11 +236,11 @@ func TestIncidents_HasCorrelationIssue_Integration(t *testing.T) {
 	// Set up a correlated incident:
 	// - Namespace has output edges from dbt (data producer)
 	// - This is a healthy namespace, so has_correlation_issue: false
-	correlatedJobRunID := "dbt:" + uuid.New().String()
+	correlatedRunID := uuid.New().String()
 	correlatedNamespace := "postgresql://prod/correlated"
 	correlatedDatasetURN := correlatedNamespace + ".customers"
 
-	correlatedTestResultID := setupIncidentTestData(ctx, t, ts, correlatedJobRunID, correlatedDatasetURN, now)
+	correlatedTestResultID := setupIncidentTestData(ctx, t, ts, correlatedRunID, correlatedDatasetURN, now)
 
 	// Update the dataset namespace to match our test namespace
 	_, err := ts.db.ExecContext(ctx, `
@@ -333,17 +333,17 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 	// - Namespace "postgres_orphan" has test results but NO output edges
 	// - This namespace will appear in the orphan list via health endpoint
 	// - But incidents in this namespace won't appear in incident list (by design)
-	geJobRunID := "great_expectations:" + uuid.New().String()
+	geRunID := uuid.New().String()
 	orphanNamespace := "postgres_orphan_" + uuid.New().String()[:8]
 	orphanDatasetURN := orphanNamespace + "/public.orphan_table"
 
 	// Insert GE job run
 	_, err := ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type,
+			run_id, job_name, job_namespace, current_state, event_type,
 			event_time, started_at, producer_name
-		) VALUES ($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, 'great_expectations')
-	`, geJobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		) VALUES ($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, 'great_expectations')
+	`, geRunID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err, "Failed to insert GE job run")
 
 	// Insert orphan dataset (NO output edges for this namespace)
@@ -356,10 +356,10 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 	// Insert failed test result for orphan dataset (NO output edges!)
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message,
+			test_name, test_type, dataset_urn, run_id, status, message,
 			executed_at, duration_ms
 		) VALUES ($1, $2, $3, $4, 'failed', 'Found nulls', $5, 100)
-	`, "orphan_test_"+uuid.New().String()[:8], "not_null", orphanDatasetURN, geJobRunID, now)
+	`, "orphan_test_"+uuid.New().String()[:8], "not_null", orphanDatasetURN, geRunID, now)
 	require.NoError(t, err, "Failed to insert test result")
 
 	// Refresh materialized views
@@ -435,16 +435,16 @@ func TestIncidentsWithDownstream_Integration(t *testing.T) {
 
 	// Setup test data with downstream lineage
 	now := time.Now()
-	jobRunID1 := "dbt:" + uuid.New().String()
-	jobRunID2 := "dbt:" + uuid.New().String()
+	runID1 := uuid.New().String()
+	runID2 := uuid.New().String()
 	datasetA := "postgresql://prod-db/public.source"
 	datasetB := "postgresql://prod-db/public.derived"
 
 	// Job 1 produces datasetA
-	testResultID := setupIncidentTestData(ctx, t, ts, jobRunID1, datasetA, now)
+	testResultID := setupIncidentTestData(ctx, t, ts, runID1, datasetA, now)
 
 	// Job 2 consumes datasetA and produces datasetB (downstream)
-	setupDownstreamJob(ctx, t, ts, jobRunID2, datasetA, datasetB, now)
+	setupDownstreamJob(ctx, t, ts, runID2, datasetA, datasetB, now)
 
 	// Refresh materialized views
 	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -486,7 +486,7 @@ func setupIncidentTestData(
 	ctx context.Context,
 	t *testing.T,
 	ts *testServer,
-	jobRunID, datasetURN string,
+	runID, datasetURN string,
 	now time.Time,
 ) int64 {
 	t.Helper()
@@ -494,10 +494,10 @@ func setupIncidentTestData(
 	// Insert job run
 	_, err := ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type,
+			run_id, job_name, job_namespace, current_state, event_type,
 			event_time, started_at, producer_name
-		) VALUES ($1, $2, 'test-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, jobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		) VALUES ($1, 'test-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, runID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err, "Failed to insert job run")
 
 	// Insert dataset
@@ -510,9 +510,9 @@ func setupIncidentTestData(
 
 	// Insert lineage edge (job produces dataset)
 	_, err = ts.db.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, jobRunID, datasetURN)
+	`, runID, datasetURN)
 	require.NoError(t, err, "Failed to insert lineage edge")
 
 	// Insert test result (failed test)
@@ -520,11 +520,11 @@ func setupIncidentTestData(
 
 	err = ts.db.QueryRowContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message,
+			test_name, test_type, dataset_urn, run_id, status, message,
 			executed_at, duration_ms
 		) VALUES ($1, $2, $3, $4, 'failed', 'Found 3 null values', $5, 150)
 		RETURNING id
-	`, "not_null_test", "not_null", datasetURN, jobRunID, now).Scan(&testResultID)
+	`, "not_null_test", "not_null", datasetURN, runID, now).Scan(&testResultID)
 	require.NoError(t, err, "Failed to insert test result")
 
 	return testResultID
@@ -535,7 +535,7 @@ func setupDownstreamJob(
 	ctx context.Context,
 	t *testing.T,
 	ts *testServer,
-	jobRunID, inputURN, outputURN string,
+	runID, inputURN, outputURN string,
 	now time.Time,
 ) {
 	t.Helper()
@@ -543,10 +543,10 @@ func setupDownstreamJob(
 	// Insert job run
 	_, err := ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type,
+			run_id, job_name, job_namespace, current_state, event_type,
 			event_time, started_at, producer_name
-		) VALUES ($1, $2, 'downstream-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, jobRunID, uuid.New().String(), now, now.Add(-2*time.Minute))
+		) VALUES ($1, 'downstream-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, runID, now, now.Add(-2*time.Minute))
 	require.NoError(t, err, "Failed to insert downstream job run")
 
 	// Insert output dataset
@@ -559,16 +559,16 @@ func setupDownstreamJob(
 
 	// Insert input edge (job consumes inputURN)
 	_, err = ts.db.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'input')
-	`, jobRunID, inputURN)
+	`, runID, inputURN)
 	require.NoError(t, err, "Failed to insert input edge")
 
 	// Insert output edge (job produces outputURN)
 	_, err = ts.db.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, jobRunID, outputURN)
+	`, runID, outputURN)
 	require.NoError(t, err, "Failed to insert output edge")
 }
 

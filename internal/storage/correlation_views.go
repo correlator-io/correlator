@@ -283,7 +283,7 @@ func (s *LineageStore) QueryIncidents(
 			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 			&r.TestExecutedAt, &r.TestDurationMs,
 			&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
-			&r.JobRunID, &r.OpenLineageRunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
+			&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
 			&r.JobStartedAt, &r.JobCompletedAt,
 			&r.ProducerName, &r.ProducerVersion,
 			&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
@@ -340,7 +340,7 @@ func buildIncidentCorrelationQuery(
 			test_result_id, test_name, test_type, test_status, test_message,
 			test_executed_at, test_duration_ms,
 			dataset_urn, dataset_name, dataset_namespace,
-			job_run_id, openlineage_run_id, job_name, job_namespace, job_status, job_event_type,
+			run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
 			producer_name, producer_version,
 			lineage_edge_id, lineage_edge_type, lineage_created_at,
@@ -397,17 +397,9 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 		paramIndex++
 	}
 
-	if filter.JobRunID != nil {
-		conditions = append(conditions, fmt.Sprintf("job_run_id = $%d", paramIndex))
-		args = append(args, *filter.JobRunID)
-		paramIndex++
-	}
-
-	if filter.Tool != nil {
-		// Filter by tool extracted from canonical job_run_id
-		// Format: "dbt:abc-123" → matches "dbt:%"
-		conditions = append(conditions, fmt.Sprintf("job_run_id LIKE $%d", paramIndex))
-		args = append(args, *filter.Tool+":%")
+	if filter.RunID != nil {
+		conditions = append(conditions, fmt.Sprintf("run_id = $%d", paramIndex))
+		args = append(args, *filter.RunID)
 		paramIndex++
 	}
 
@@ -446,13 +438,13 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 			test_result_id, test_name, test_type, test_status, test_message,
 			test_executed_at, test_duration_ms,
 			dataset_urn, dataset_name, dataset_namespace,
-			job_run_id, openlineage_run_id, job_name, job_namespace, job_status, job_event_type,
+			run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
 			producer_name, producer_version,
 			lineage_edge_id, lineage_edge_type, lineage_created_at,
-			parent_job_run_id, parent_job_name, parent_job_namespace,
+			parent_run_id, parent_job_name, parent_job_namespace,
 			parent_job_status, parent_job_completed_at, parent_producer_name,
-			root_parent_job_run_id, root_parent_job_name, root_parent_job_namespace,
+			root_parent_run_id, root_parent_job_name, root_parent_job_namespace,
 			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
 		FROM incident_correlation_view
 		WHERE test_result_id = $1
@@ -463,27 +455,25 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	var r correlation.Incident
 
-	var parentJobRunID, parentJobName, parentJobNamespace, parentJobStatus, parentProducerName sql.NullString
+	var parentRunID, parentJobName, parentJobNamespace, parentJobStatus, parentProducerName sql.NullString
 
-	var parentJobCompletedAt sql.NullTime
+	var parentJobCompletedAt, rootParentJobCompletedAt sql.NullTime
 
-	var rootParentJobRunID, rootParentJobName, rootParentJobNamespace sql.NullString
+	var rootParentRunID, rootParentJobName, rootParentJobNamespace sql.NullString
 
 	var rootParentJobStatus, rootParentProducerName sql.NullString
-
-	var rootParentJobCompletedAt sql.NullTime
 
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs,
 		&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
-		&r.JobRunID, &r.OpenLineageRunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
+		&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
 		&r.JobStartedAt, &r.JobCompletedAt,
 		&r.ProducerName, &r.ProducerVersion,
 		&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
-		&parentJobRunID, &parentJobName, &parentJobNamespace,
+		&parentRunID, &parentJobName, &parentJobNamespace,
 		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
-		&rootParentJobRunID, &rootParentJobName, &rootParentJobNamespace,
+		&rootParentRunID, &rootParentJobName, &rootParentJobNamespace,
 		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
 	)
 	if err != nil {
@@ -503,7 +493,7 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 	}
 
 	// Map nullable parent fields
-	r.ParentJobRunID = parentJobRunID.String
+	r.ParentRunID = parentRunID.String
 	r.ParentJobName = parentJobName.String
 	r.ParentJobNamespace = parentJobNamespace.String
 	r.ParentJobStatus = parentJobStatus.String
@@ -514,7 +504,7 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 	}
 
 	// Map nullable root parent fields
-	r.RootParentJobRunID = rootParentJobRunID.String
+	r.RootParentRunID = rootParentRunID.String
 	r.RootParentJobName = rootParentJobName.String
 	r.RootParentJobNamespace = rootParentJobNamespace.String
 	r.RootParentJobStatus = rootParentJobStatus.String
@@ -532,42 +522,42 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 }
 
 // QueryDownstreamCounts implements correlation.Store.
-// Returns downstream dataset counts for multiple job runs in a single query.
+// Returns downstream dataset counts for multiple run IDs in a single query.
 //
 // This method is optimized for batch queries to avoid N+1 problem when
 // displaying incident lists. It queries the lineage_impact_analysis view
-// and counts distinct downstream datasets (depth > 0) per job run.
+// and counts distinct downstream datasets (depth > 0) per run.
 //
 // Parameters:
-//   - jobRunIDs: Slice of job run IDs to query counts for
+//   - runIDs: Slice of run IDs to query counts for
 //
 // Returns:
-//   - Map of job_run_id -> downstream_count (missing keys have 0 downstream)
+//   - Map of run_id -> downstream_count (missing keys have 0 downstream)
 //   - Error if query fails or context is cancelled
 func (s *LineageStore) QueryDownstreamCounts(
 	ctx context.Context,
-	jobRunIDs []string,
+	runIDs []string,
 ) (map[string]int, error) {
 	start := time.Now()
 
 	// Return empty map for empty input (avoid unnecessary query)
-	if len(jobRunIDs) == 0 {
+	if len(runIDs) == 0 {
 		return map[string]int{}, nil
 	}
 
 	query := `
-		SELECT job_run_id, COUNT(DISTINCT dataset_urn) as downstream_count
+		SELECT run_id, COUNT(DISTINCT dataset_urn) as downstream_count
 		FROM lineage_impact_analysis
-		WHERE job_run_id = ANY($1)
+		WHERE run_id = ANY($1)
 		  AND depth > 0
-		GROUP BY job_run_id
+		GROUP BY run_id
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, pq.Array(jobRunIDs))
+	rows, err := s.conn.QueryContext(ctx, query, pq.Array(runIDs))
 	if err != nil {
 		s.logger.Error("Failed to query downstream counts",
 			slog.Any("error", err),
-			slog.Int("job_run_count", len(jobRunIDs)))
+			slog.Int("run_id_count", len(runIDs)))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
@@ -579,18 +569,18 @@ func (s *LineageStore) QueryDownstreamCounts(
 	results := make(map[string]int)
 
 	for rows.Next() {
-		var jobRunID string
+		var runID string
 
 		var count int
 
-		if err := rows.Scan(&jobRunID, &count); err != nil {
+		if err := rows.Scan(&runID, &count); err != nil {
 			s.logger.Error("Failed to scan downstream count row",
 				slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
 
-		results[jobRunID] = count
+		results[runID] = count
 	}
 
 	if err := rows.Err(); err != nil {
@@ -602,7 +592,7 @@ func (s *LineageStore) QueryDownstreamCounts(
 
 	s.logger.Info("Queried downstream counts",
 		slog.Duration("duration", time.Since(start)),
-		slog.Int("job_run_count", len(jobRunIDs)),
+		slog.Int("run_id_count", len(runIDs)),
 		slog.Int("result_count", len(results)))
 
 	return results, nil
@@ -612,10 +602,10 @@ func (s *LineageStore) QueryDownstreamCounts(
 // Queries downstream datasets with parent URN relationships for tree visualization.
 //
 // This method performs a recursive traversal starting from the job's direct outputs,
-// following input→output relationships through consuming jobs.
+// following input->output relationships through consuming jobs.
 //
 // Parameters:
-//   - jobRunID: Job run ID to query downstream impact for
+//   - runID: Run ID to query downstream impact for
 //   - maxDepth: Maximum recursion depth (typically 10)
 //
 // Returns:
@@ -629,7 +619,7 @@ func (s *LineageStore) QueryDownstreamCounts(
 //   - maxDepth prevents runaway recursion
 func (s *LineageStore) QueryDownstreamWithParents(
 	ctx context.Context,
-	jobRunID string,
+	runID string,
 	maxDepth int,
 ) ([]correlation.DownstreamResult, error) {
 	start := time.Now()
@@ -646,8 +636,8 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				COALESCE(jr.producer_name, '') AS producer
 			FROM lineage_edges le
 				JOIN datasets d ON le.dataset_urn = d.dataset_urn
-				LEFT JOIN job_runs jr ON le.job_run_id = jr.job_run_id
-			WHERE le.job_run_id = $1
+				LEFT JOIN job_runs jr ON le.run_id = jr.run_id
+			WHERE le.run_id = $1
 			  AND le.edge_type = 'output'
 
 			UNION ALL
@@ -664,10 +654,10 @@ func (s *LineageStore) QueryDownstreamWithParents(
 				JOIN lineage_edges le_in ON dt.dataset_urn = le_in.dataset_urn
 					AND le_in.edge_type = 'input'
 				-- Find outputs of those consuming jobs
-				JOIN lineage_edges le_out ON le_in.job_run_id = le_out.job_run_id
+				JOIN lineage_edges le_out ON le_in.run_id = le_out.run_id
 					AND le_out.edge_type = 'output'
 				JOIN datasets d ON le_out.dataset_urn = d.dataset_urn
-				LEFT JOIN job_runs jr ON le_out.job_run_id = jr.job_run_id
+				LEFT JOIN job_runs jr ON le_out.run_id = jr.run_id
 			WHERE dt.depth < $2
 			  -- Prevent self-loops
 			  AND le_out.dataset_urn != dt.dataset_urn
@@ -678,11 +668,11 @@ func (s *LineageStore) QueryDownstreamWithParents(
 		ORDER BY depth, dataset_urn
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, jobRunID, maxDepth)
+	rows, err := s.conn.QueryContext(ctx, query, runID, maxDepth)
 	if err != nil {
 		s.logger.Error("Failed to query downstream with parents",
 			slog.Any("error", err),
-			slog.String("job_run_id", jobRunID),
+			slog.String("run_id", runID),
 			slog.Int("max_depth", maxDepth))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
@@ -716,7 +706,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 
 	s.logger.Info("Queried downstream with parents",
 		slog.Duration("duration", time.Since(start)),
-		slog.String("job_run_id", jobRunID),
+		slog.String("run_id", runID),
 		slog.Int("max_depth", maxDepth),
 		slog.Int("result_count", len(results)))
 
@@ -727,12 +717,12 @@ func (s *LineageStore) QueryDownstreamWithParents(
 // Queries upstream datasets with child URN relationships for tree visualization.
 //
 // This is the inverse of QueryDownstreamWithParents:
-//   - Downstream: follows output→input→output chain forward (consumers)
-//   - Upstream: follows input→output→input chain backward (producers)
+//   - Downstream: follows output->input->output chain forward (consumers)
+//   - Upstream: follows input->output->input chain backward (producers)
 //
 // Parameters:
 //   - datasetURN: The root dataset URN (childURN for depth=1 results)
-//   - jobRunID: Job run ID that produced the root dataset
+//   - runID: Run ID that produced the root dataset
 //   - maxDepth: Maximum recursion depth (typically 3-10)
 //
 // Returns:
@@ -748,7 +738,7 @@ func (s *LineageStore) QueryDownstreamWithParents(
 func (s *LineageStore) QueryUpstreamWithChildren(
 	ctx context.Context,
 	datasetURN string,
-	jobRunID string,
+	runID string,
 	maxDepth int,
 ) ([]correlation.UpstreamResult, error) {
 	start := time.Now()
@@ -765,8 +755,8 @@ func (s *LineageStore) QueryUpstreamWithChildren(
 				JOIN datasets d ON le.dataset_urn = d.dataset_urn
 				LEFT JOIN lineage_edges le_prod ON le.dataset_urn = le_prod.dataset_urn
 					AND le_prod.edge_type = 'output'
-				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
-			WHERE le.job_run_id = $2
+				LEFT JOIN job_runs jr ON le_prod.run_id = jr.run_id
+			WHERE le.run_id = $2
 			  AND le.edge_type = 'input'
 
 			UNION ALL
@@ -780,12 +770,12 @@ func (s *LineageStore) QueryUpstreamWithChildren(
 			FROM upstream_tree ut
 				JOIN lineage_edges le_out ON ut.dataset_urn = le_out.dataset_urn
 					AND le_out.edge_type = 'output'
-				JOIN lineage_edges le_in ON le_out.job_run_id = le_in.job_run_id
+				JOIN lineage_edges le_in ON le_out.run_id = le_in.run_id
 					AND le_in.edge_type = 'input'
 				JOIN datasets d ON le_in.dataset_urn = d.dataset_urn
 				LEFT JOIN lineage_edges le_prod ON le_in.dataset_urn = le_prod.dataset_urn
 					AND le_prod.edge_type = 'output'
-				LEFT JOIN job_runs jr ON le_prod.job_run_id = jr.job_run_id
+				LEFT JOIN job_runs jr ON le_prod.run_id = jr.run_id
 			WHERE ut.depth < $3
 			  AND le_in.dataset_urn != ut.dataset_urn
 		)
@@ -794,12 +784,12 @@ func (s *LineageStore) QueryUpstreamWithChildren(
 		ORDER BY depth, dataset_urn
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, datasetURN, jobRunID, maxDepth)
+	rows, err := s.conn.QueryContext(ctx, query, datasetURN, runID, maxDepth)
 	if err != nil {
 		s.logger.Error("Failed to query upstream with children",
 			slog.Any("error", err),
 			slog.String("dataset_urn", datasetURN),
-			slog.String("job_run_id", jobRunID),
+			slog.String("run_id", runID),
 			slog.Int("max_depth", maxDepth))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
@@ -834,7 +824,7 @@ func (s *LineageStore) QueryUpstreamWithChildren(
 	s.logger.Info("Queried upstream with children",
 		slog.Duration("duration", time.Since(start)),
 		slog.String("dataset_urn", datasetURN),
-		slog.String("job_run_id", jobRunID),
+		slog.String("run_id", runID),
 		slog.Int("max_depth", maxDepth),
 		slog.Int("result_count", len(results)))
 
@@ -1154,13 +1144,13 @@ func (s *LineageStore) calculateCorrelationRateFromHealthStats(stats *healthStat
 	return 1.0 // No failed tests = healthy
 }
 
-// QueryOrchestrationChain walks the parent_job_run_id chain from a given job run
+// QueryOrchestrationChain walks the parent_run_id chain from a given run
 // up to the root orchestrator using a recursive CTE.
 // Returns the ancestor chain ordered from root (index 0) to immediate parent (last).
 // The starting job itself is excluded from the result.
 func (s *LineageStore) QueryOrchestrationChain(
 	ctx context.Context,
-	jobRunID string,
+	runID string,
 	maxDepth int,
 ) ([]correlation.OrchestrationNode, error) {
 	start := time.Now()
@@ -1168,42 +1158,42 @@ func (s *LineageStore) QueryOrchestrationChain(
 	query := `
 		WITH RECURSIVE chain AS (
 			SELECT
-				jr.job_run_id,
+				jr.run_id,
 				jr.job_name,
 				jr.job_namespace,
 				jr.producer_name,
 				jr.current_state,
-				jr.parent_job_run_id,
+				jr.parent_run_id,
 				1 AS depth
 			FROM job_runs jr
-			WHERE jr.job_run_id = (
-				SELECT parent_job_run_id FROM job_runs WHERE job_run_id = $1
+			WHERE jr.run_id = (
+				SELECT parent_run_id FROM job_runs WHERE run_id = $1
 			)
 
 			UNION ALL
 
 			SELECT
-				jr.job_run_id,
+				jr.run_id,
 				jr.job_name,
 				jr.job_namespace,
 				jr.producer_name,
 				jr.current_state,
-				jr.parent_job_run_id,
+				jr.parent_run_id,
 				c.depth + 1
 			FROM job_runs jr
-			JOIN chain c ON jr.job_run_id = c.parent_job_run_id
+			JOIN chain c ON jr.run_id = c.parent_run_id
 			WHERE c.depth < $2
 		)
-		SELECT job_run_id, job_name, job_namespace, producer_name, current_state, depth
+		SELECT run_id, job_name, job_namespace, producer_name, current_state, depth
 		FROM chain
 		ORDER BY depth DESC
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, jobRunID, maxDepth)
+	rows, err := s.conn.QueryContext(ctx, query, runID, maxDepth)
 	if err != nil {
 		s.logger.Error("Failed to query orchestration chain",
 			slog.Any("error", err),
-			slog.String("job_run_id", jobRunID))
+			slog.String("run_id", runID))
 
 		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
 	}
@@ -1220,7 +1210,7 @@ func (s *LineageStore) QueryOrchestrationChain(
 		var depth int
 
 		if err := rows.Scan(
-			&node.JobRunID, &node.JobName, &node.JobNamespace,
+			&node.RunID, &node.JobName, &node.JobNamespace,
 			&node.ProducerName, &node.Status, &depth,
 		); err != nil {
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
@@ -1235,7 +1225,7 @@ func (s *LineageStore) QueryOrchestrationChain(
 
 	s.logger.Info("Queried orchestration chain",
 		slog.Duration("duration", time.Since(start)),
-		slog.String("job_run_id", jobRunID),
+		slog.String("run_id", runID),
 		slog.Int("chain_length", len(chain)))
 
 	return chain, nil

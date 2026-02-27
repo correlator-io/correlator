@@ -46,11 +46,11 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 	t.Run("CorrelationHealth_WithCorrelatedData", func(t *testing.T) {
 		// Setup correlated test data (namespace has both test results and output edges)
 		now := time.Now()
-		jobRunID := "dbt:" + uuid.New().String()
+		runID := uuid.New().String()
 		namespace := "postgresql://prod/public"
 		datasetURN := namespace + ".customers"
 
-		setupCorrelatedTestData(ctx, t, ts, jobRunID, datasetURN, now)
+		setupCorrelatedTestData(ctx, t, ts, runID, datasetURN, now)
 
 		// Refresh materialized views
 		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -79,11 +79,11 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 	t.Run("CorrelationHealth_WithOrphanNamespace", func(t *testing.T) {
 		// Setup orphan namespace (test results exist but no output edges for this namespace)
 		now := time.Now()
-		geJobRunID := "great_expectations:" + uuid.New().String()
+		geRunID := uuid.New().String()
 		orphanNamespace := "postgres_orphan_" + uuid.New().String()[:8]
 		orphanDatasetURN := orphanNamespace + "/public.orphan_table"
 
-		setupOrphanTestData(ctx, t, ts, geJobRunID, orphanNamespace, orphanDatasetURN, now)
+		setupOrphanTestData(ctx, t, ts, geRunID, orphanNamespace, orphanDatasetURN, now)
 
 		// Refresh materialized views
 		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -128,18 +128,18 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		now := time.Now()
 
 		// Correlated data
-		dbtJobRunID := "dbt:" + uuid.New().String()
+		dbtRunID := uuid.New().String()
 		correlatedNS := "postgresql://prod/mixed"
 		correlatedDataset := correlatedNS + ".correlated_table"
 
-		setupCorrelatedTestData(ctx, t, ts, dbtJobRunID, correlatedDataset, now)
+		setupCorrelatedTestData(ctx, t, ts, dbtRunID, correlatedDataset, now)
 
 		// Orphan data
-		geJobRunID := "great_expectations:" + uuid.New().String()
+		geRunID := uuid.New().String()
 		orphanNS := "postgres_mixed_orphan_" + uuid.New().String()[:8]
 		orphanDataset := orphanNS + "/public.orphan_mixed"
 
-		setupOrphanTestData(ctx, t, ts, geJobRunID, orphanNS, orphanDataset, now)
+		setupOrphanTestData(ctx, t, ts, geRunID, orphanNS, orphanDataset, now)
 
 		// Refresh materialized views
 		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
@@ -182,7 +182,7 @@ func setupCorrelatedTestData(
 	ctx context.Context,
 	t *testing.T,
 	ts *testServer,
-	jobRunID, datasetURN string,
+	runID, datasetURN string,
 	now time.Time,
 ) {
 	t.Helper()
@@ -190,10 +190,10 @@ func setupCorrelatedTestData(
 	// Insert job run
 	_, err := ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type,
+			run_id, job_name, job_namespace, current_state, event_type,
 			event_time, started_at, producer_name
-		) VALUES ($1, $2, 'test-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, jobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		) VALUES ($1, 'test-job', 'dbt_prod', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, runID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err, "Failed to insert job run")
 
 	// Extract namespace from URN (simple extraction for test)
@@ -209,18 +209,18 @@ func setupCorrelatedTestData(
 
 	// Insert lineage edge (job produces dataset) - THIS MAKES IT CORRELATED
 	_, err = ts.db.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
 		VALUES ($1, $2, 'output')
-	`, jobRunID, datasetURN)
+	`, runID, datasetURN)
 	require.NoError(t, err, "Failed to insert lineage edge")
 
 	// Insert test result (failed test)
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message,
+			test_name, test_type, dataset_urn, run_id, status, message,
 			executed_at, duration_ms
 		) VALUES ($1, $2, $3, $4, 'failed', 'Found 3 null values', $5, 150)
-	`, "not_null_test_"+uuid.New().String()[:8], "not_null", datasetURN, jobRunID, now)
+	`, "not_null_test_"+uuid.New().String()[:8], "not_null", datasetURN, runID, now)
 	require.NoError(t, err, "Failed to insert test result")
 }
 
@@ -230,7 +230,7 @@ func setupOrphanTestData(
 	ctx context.Context,
 	t *testing.T,
 	ts *testServer,
-	jobRunID, namespace, datasetURN string,
+	runID, namespace, datasetURN string,
 	now time.Time,
 ) {
 	t.Helper()
@@ -238,10 +238,10 @@ func setupOrphanTestData(
 	// Insert GE job run
 	_, err := ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state, event_type,
+			run_id, job_name, job_namespace, current_state, event_type,
 			event_time, started_at, producer_name
-		) VALUES ($1, $2, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $3, $4, 'great_expectations')
-	`, jobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		) VALUES ($1, 'ge_validation', 'validation', 'COMPLETE', 'COMPLETE', $2, $3, 'great_expectations')
+	`, runID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err, "Failed to insert GE job run")
 
 	// Insert orphan dataset (NO output edges for this namespace!)
@@ -255,10 +255,10 @@ func setupOrphanTestData(
 	// Insert failed test result for orphan dataset (NO output edges!)
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, job_run_id, status, message,
+			test_name, test_type, dataset_urn, run_id, status, message,
 			executed_at, duration_ms
 		) VALUES ($1, $2, $3, $4, 'failed', 'Found nulls', $5, 100)
-	`, "orphan_test_"+uuid.New().String()[:8], "not_null", datasetURN, jobRunID, now)
+	`, "orphan_test_"+uuid.New().String()[:8], "not_null", datasetURN, runID, now)
 	require.NoError(t, err, "Failed to insert test result")
 }
 

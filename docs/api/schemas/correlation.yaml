@@ -89,10 +89,11 @@ components:
             type: string
           description: Dataset URNs affected by this incident
           example: ["postgres://prod.db/clean.users", "postgres://prod.db/user_metrics"]
-        job_run_id:
+        run_id:
           type: string
-          description: Canonical job run ID that caused this incident
-          example: "dbt:abc123-def456"
+          format: uuid
+          description: Run ID (UUID) of the job that caused this incident
+          example: "550e8400-e29b-41d4-a716-446655440000"
         correlation_confidence:
           type: number
           format: float
@@ -205,9 +206,10 @@ components:
         job_run_context:
           type: object
           properties:
-            job_run_id:
+            run_id:
               type: string
-              example: "dbt:abc123-def456"
+              format: uuid
+              example: "550e8400-e29b-41d4-a716-446655440000"
             job_name:
               type: string
               example: "models.users"
@@ -228,7 +230,7 @@ components:
       properties:
         method:
           type: string
-          enum: [job_run_id, dataset_lineage, temporal, heuristic]
+          enum: [run_id, dataset_lineage, temporal, heuristic]
           description: Primary correlation method used
         confidence_score:
           type: number
@@ -240,10 +242,11 @@ components:
         correlation_keys:
           type: object
           properties:
-            job_run_id:
+            run_id:
               type: string
-              description: Canonical job run ID used for correlation
-              example: "dbt:abc123-def456"
+              format: uuid
+              description: Run ID (UUID) used for correlation
+              example: "550e8400-e29b-41d4-a716-446655440000"
             dataset_urns:
               type: array
               items:
@@ -265,9 +268,10 @@ components:
     ProducingJobDetails:
       type: object
       properties:
-        job_run_id:
+        run_id:
           type: string
-          example: "dbt:abc123-def456"
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
         job_name:
           type: string
           example: "models.users"
@@ -305,10 +309,10 @@ components:
           type: integer
         description:
           type: string
-          example: "Matched test failure job_run_id with producing job run"
+          example: "Matched test failure run_id with producing job run"
         method:
           type: string
-          example: "canonical_id_match"
+          example: "run_id_match"
         confidence:
           type: number
           format: float
@@ -317,8 +321,8 @@ components:
           type: object
           additionalProperties: true
           example:
-            test_job_run_id: "dbt:abc123-def456"
-            producer_job_run_id: "dbt:abc123-def456"
+            test_run_id: "550e8400-e29b-41d4-a716-446655440000"
+            producer_run_id: "550e8400-e29b-41d4-a716-446655440000"
             match_type: "exact"
 
     # Timeline Event - Events in incident timeline
@@ -520,8 +524,9 @@ components:
           items:
             type: object
             properties:
-              job_run_id:
+              run_id:
                 type: string
+                format: uuid
               status:
                 type: string
               started_at:
@@ -560,11 +565,12 @@ components:
         relationship_type:
           type: string
           enum: [produces, consumes, transforms]
-        job_run_ids:
+        run_ids:
           type: array
           items:
             type: string
-          description: Job runs that created this relationship
+            format: uuid
+          description: Run IDs (UUIDs) of jobs that created this relationship
         metadata:
           type: object
           properties:
@@ -664,7 +670,7 @@ components:
             updated_at: "2024-01-01T12:05:30Z"
             correlation_status: "correlated"
             affected_datasets: ["postgres://prod.db/clean.users"]
-            job_run_id: "dbt:abc123-def456"
+            run_id: "550e8400-e29b-41d4-a716-446655440000"
             correlation_confidence: 94.5
             estimated_impact:
               affected_datasets: 3
@@ -728,7 +734,7 @@ components:
               failure_rate: 0.03
             executed_at: "2024-01-01T12:05:30Z"
             job_run_context:
-              job_run_id: "dbt:abc123-def456"
+              run_id: "550e8400-e29b-41d4-a716-446655440000"
               job_name: "models.users"
               started_at: "2024-01-01T12:00:00Z"
               completed_at: "2024-01-01T12:05:00Z"
@@ -736,14 +742,14 @@ components:
             dbt_docs: "https://docs.company.com/models/users"
             monitoring: "https://datadog.company.com/dashboard/users"
         correlation:
-          method: "job_run_id"
+          method: "run_id"
           confidence_score: 94.5
           correlation_keys:
-            job_run_id: "dbt:abc123-def456"
+            run_id: "550e8400-e29b-41d4-a716-446655440000"
             dataset_urns: ["postgres://prod.db/clean.users"]
             temporal_window: "5m"
           producing_job:
-            job_run_id: "dbt:abc123-def456"
+            run_id: "550e8400-e29b-41d4-a716-446655440000"
             job_name: "models.users"
             job_namespace: "dbt"
             started_at: "2024-01-01T12:00:00Z"

@@ -77,7 +77,6 @@ Automated correlation that connects test failures to their source, reducing time
 - **Faster incident resolution**: Automated correlation instead of manual investigation
 - **Unified view**: One place to see test results, lineage, and job runs
 - **Standards-based**: Built on OpenLineage — no vendor lock-in
-- **Extensible**: Plugin architecture for custom integrations
 
 ---
 
@@ -116,12 +115,12 @@ See `.correlator.yaml.example` for a full configuration template.
 
 ### Environment Variables
 
-| Variable                  | Description                          | Default            |
-|---------------------------|--------------------------------------|--------------------|
-| `CORRELATOR_CONFIG_PATH`  | Path to YAML config file             | `.correlator.yaml` |
-| `CORRELATOR_AUTH_ENABLED` | Enable API key authentication        | `false`            |
-| `CORRELATOR_PORT`         | HTTP server port                     | `8080`             |
-| `LOG_LEVEL`               | Log level (debug, info, warn, error) | `info`             |
+| Variable                      | Description                          | Default            |
+|-------------------------------|--------------------------------------|--------------------|
+| `CORRELATOR_CONFIG_PATH`      | Path to YAML config file             | `.correlator.yaml` |
+| `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication        | `false`            |
+| `CORRELATOR_PORT`             | HTTP server port                     | `8080`             |
+| `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error) | `info`             |
 
 See `.env.example` for all available configuration options.
 
@@ -134,7 +133,7 @@ This project follows [Semantic Versioning](https://semver.org/) with the followi
 - **0.x.y versions** (e.g., 0.1.0, 0.2.0) indicate **initial development phase**:
     - The API is not yet stable and may change between minor versions
     - Features may be added, modified, or removed without major version changes
-    - Not recommended for production-critical systems without pinned versions
+    - For production-critical systems, please pin a version that works in your environment
 
 - **1.0.0 and above** will indicate a **stable API** with semantic versioning guarantees:
     - MAJOR version for incompatible API changes
@@ -155,16 +154,6 @@ The current version is in early development stage, so expect possible API change
 
 ---
 
-## Plugins
-
-| Plugin                                                            | Description                  | Status      |
-|-------------------------------------------------------------------|------------------------------|-------------|
-| [dbt-correlator](https://github.com/correlator-io/correlator-dbt) | dbt test results and lineage | ✅ Available |
-| airflow-correlator                                                | Airflow DAG run correlation  | 🔲 Planned  |
-| great-expectations-correlator                                     | GX validation results        | 🔲 Planned  |
-
----
-
 ## Requirements
 
 - Go 1.23+
@@ -175,7 +164,6 @@ The current version is in early development stage, so expect possible API change
 
 ## Links
 
-- **dbt Plugin**: https://github.com/correlator-io/correlator-dbt
 - **OpenLineage**: https://openlineage.io/
 - **Issues**: https://github.com/correlator-io/correlator/issues
 - **Discussions**: https://github.com/correlator-io/correlator/discussions

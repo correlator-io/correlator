@@ -193,31 +193,6 @@ func (et EventType) IsTerminal() bool {
 	return et == EventTypeComplete || et == EventTypeFail || et == EventTypeAbort
 }
 
-// JobRunID returns the canonical job run ID for this event.
-//
-// This ID correlates all events from the same job run (START, COMPLETE, etc.).
-// The ID format is human-readable: "tool:runID"
-//
-// Formula: "{tool}:{run.runId}" where tool is extracted from job.namespace
-//
-// Tool extraction from namespace:
-//   - "dbt://analytics" → "dbt"
-//   - "airflow://production" → "airflow"
-//   - "spark://cluster" → "spark"
-//   - Unknown tools → "custom"
-//
-// Example:
-//
-//	event1 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "abc-123"}}
-//	event2 := RunEvent{Job: Job{Namespace: "dbt://analytics", Name: "orders"}, Run: Run{ID: "abc-123"}}
-//	event1.JobRunID() == event2.JobRunID()  // true (same run)
-//	// Returns: "dbt:abc-123"
-//
-// Returns: Canonical job run ID in format "tool:runID".
-func (e *RunEvent) JobRunID() string {
-	return canonicalization.GenerateJobRunID(e.Job.Namespace, e.Run.ID)
-}
-
 // IdempotencyKey returns the idempotency key for this event.
 //
 // This key is used to detect duplicate events and prevent reprocessing.
@@ -292,11 +267,10 @@ type (
 		// belongs in canonicalization package. Storage FK provides safety net.
 		DatasetURN string
 
-		// JobRunID is the canonical job run identifier (FK to job_runs table).
-		// Format: Canonical ID from canonicalization service
-		// Examples: "dbt:abc-123-def", "airflow:manual__2025-01-01T12:00:00"
+		// RunID is the OpenLineage run UUID (FK to job_runs table).
+		// Format: UUID string (e.g., "550e8400-e29b-41d4-a716-446655440000")
 		// CRITICAL: This is the correlation key linking test failures to producing jobs.
-		JobRunID string
+		RunID string
 
 		// Status indicates the test outcome.
 		// Valid values: "passed", "failed", "error", "skipped", "warning"
@@ -375,8 +349,8 @@ var (
 	// ErrDatasetURNInvalid indicates dataset_urn has invalid format.
 	ErrDatasetURNInvalid = errors.New("dataset_urn must contain ':' separator")
 
-	// ErrJobRunIDEmpty indicates job_run_id is required.
-	ErrJobRunIDEmpty = errors.New("job_run_id cannot be empty")
+	// ErrRunIDEmpty indicates run_id is required.
+	ErrRunIDEmpty = errors.New("run_id cannot be empty")
 
 	// ErrStatusInvalid indicates status is not a valid TestStatus.
 	ErrStatusInvalid = errors.New("status must be one of: passed, failed, error, skipped, warning")
@@ -394,7 +368,7 @@ var (
 // Validation rules:
 //   - test_name: required, ≤750 chars
 //   - dataset_urn: required, valid URN format (contains ":")
-//   - job_run_id: required
+//   - run_id: required
 //   - status: must be valid TestStatus
 //   - executed_at: required (not zero)
 //   - duration_ms: ≥0 if provided
@@ -420,9 +394,9 @@ func (tr *TestResult) Validate() error {
 		return fmt.Errorf("%w: '%s'", ErrDatasetURNInvalid, tr.DatasetURN)
 	}
 
-	// Validate job_run_id
-	if strings.TrimSpace(tr.JobRunID) == "" {
-		return ErrJobRunIDEmpty
+	// Validate run_id
+	if strings.TrimSpace(tr.RunID) == "" {
+		return ErrRunIDEmpty
 	}
 
 	// Validate status

@@ -5,7 +5,7 @@ describe("buildOrchestrationChain", () => {
   const baseJob = {
     name: "model.jaffle_shop_demo.stg_orders",
     namespace: "dbt://demo",
-    runId: "dbt:leaf-001",
+    runId: "019c628f-d07e-7000-8000-000000000007",
     producer: "dbt" as const,
     status: "RUNNING",
   };
@@ -20,7 +20,7 @@ describe("buildOrchestrationChain", () => {
       ...baseJob,
       parent: {
         name: "jaffle_shop_demo.run",
-        runId: "dbt:parent-001",
+        runId: "019c628f-d07e-7000-8000-000000000008",
         producer: "dbt",
         status: "COMPLETE",
       },
@@ -30,7 +30,7 @@ describe("buildOrchestrationChain", () => {
     expect(result[0]).toEqual({
       name: "jaffle_shop_demo.run",
       namespace: undefined,
-      runId: "dbt:parent-001",
+      runId: "019c628f-d07e-7000-8000-000000000008",
       producer: "dbt",
       status: "COMPLETE",
       isCurrent: false,
@@ -38,7 +38,7 @@ describe("buildOrchestrationChain", () => {
     expect(result[1]).toEqual({
       name: "model.jaffle_shop_demo.stg_orders",
       namespace: "dbt://demo",
-      runId: "dbt:leaf-001",
+      runId: "019c628f-d07e-7000-8000-000000000007",
       producer: "dbt",
       status: "RUNNING",
       isCurrent: true,
@@ -50,7 +50,7 @@ describe("buildOrchestrationChain", () => {
       ...baseJob,
       parent: {
         name: "jaffle_shop_demo.run",
-        runId: "dbt:parent-001",
+        runId: "019c628f-d07e-7000-8000-000000000008",
         producer: "dbt",
         status: "COMPLETE",
       },
@@ -69,7 +69,7 @@ describe("buildOrchestrationChain", () => {
       ...baseJob,
       parent: {
         name: "jaffle_shop_demo.run",
-        runId: "dbt:parent-001",
+        runId: "019c628f-d07e-7000-8000-000000000008",
         producer: "dbt",
         status: "COMPLETE",
       },
@@ -77,14 +77,14 @@ describe("buildOrchestrationChain", () => {
         {
           name: "demo_pipeline",
           namespace: "airflow://demo",
-          runId: "airflow:root-001",
+          runId: "019c628f-d07e-7000-8000-000000000009",
           producer: "airflow",
           status: "FAIL",
         },
         {
           name: "jaffle_shop_demo.run",
           namespace: "dbt://demo",
-          runId: "dbt:parent-001",
+          runId: "019c628f-d07e-7000-8000-000000000008",
           producer: "dbt",
           status: "COMPLETE",
         },
@@ -108,14 +108,14 @@ describe("buildOrchestrationChain", () => {
         {
           name: "demo_pipeline",
           namespace: "airflow://demo",
-          runId: "airflow:root-001",
+          runId: "019c628f-d07e-7000-8000-000000000009",
           producer: "airflow",
           status: "FAIL",
         },
         {
           name: "jaffle_shop_demo.run",
           namespace: "dbt://demo",
-          runId: "dbt:parent-001",
+          runId: "019c628f-d07e-7000-8000-000000000008",
           producer: "dbt",
           status: "COMPLETE",
         },

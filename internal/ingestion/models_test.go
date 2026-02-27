@@ -125,7 +125,7 @@ func TestTestResult_Validate(t *testing.T) {
 			TestName:   "test_column_not_null",
 			TestType:   "data_quality",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123-def",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			Message:    "Column contains NULL values",
 			ExecutedAt: time.Now(),
@@ -143,7 +143,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "minimal_test",
 			DatasetURN: "s3://bucket/path",
-			JobRunID:   "airflow:run-123",
+			RunID:      "660e8400-e29b-41d4-a716-446655440001",
 			Status:     TestStatusPassed,
 			ExecutedAt: time.Now(),
 		}
@@ -156,7 +156,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -170,7 +170,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "   ",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -186,7 +186,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   longName,
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -203,7 +203,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   maxName,
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusPassed,
 			ExecutedAt: time.Now(),
 		}
@@ -216,7 +216,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -230,7 +230,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "invalid-urn-no-colon", // No ":" separator
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -254,7 +254,7 @@ func TestTestResult_Validate(t *testing.T) {
 			tr := &TestResult{
 				TestName:   "test_name",
 				DatasetURN: urn,
-				JobRunID:   "dbt:abc-123",
+				RunID:      "550e8400-e29b-41d4-a716-446655440000",
 				Status:     TestStatusPassed,
 				ExecutedAt: time.Now(),
 			}
@@ -264,25 +264,25 @@ func TestTestResult_Validate(t *testing.T) {
 		}
 	})
 
-	t.Run("EmptyJobRunID", func(t *testing.T) {
+	t.Run("EmptyRunID", func(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "",
+			RunID:      "",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
 
 		err := tr.Validate()
-		require.Error(t, err, "Empty job_run_id should fail")
-		assert.True(t, errors.Is(err, ErrJobRunIDEmpty), "Should return ErrJobRunIDEmpty") //nolint:testifylint
+		require.Error(t, err, "Empty run_id should fail")
+		assert.True(t, errors.Is(err, ErrRunIDEmpty), "Should return ErrRunIDEmpty") //nolint:testifylint
 	})
 
 	t.Run("InvalidStatus", func(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatus("invalid_status"),
 			ExecutedAt: time.Now(),
 		}
@@ -306,7 +306,7 @@ func TestTestResult_Validate(t *testing.T) {
 			tr := &TestResult{
 				TestName:   "test_name",
 				DatasetURN: "postgres://localhost:5432/db.schema.table",
-				JobRunID:   "dbt:abc-123",
+				RunID:      "550e8400-e29b-41d4-a716-446655440000",
 				Status:     status,
 				ExecutedAt: time.Now(),
 			}
@@ -320,7 +320,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Time{}, // Zero time
 		}
@@ -334,7 +334,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 			DurationMs: -100, // Negative duration
@@ -350,7 +350,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusPassed,
 			ExecutedAt: time.Now(),
 			DurationMs: 0, // Zero is valid
@@ -364,7 +364,7 @@ func TestTestResult_Validate(t *testing.T) {
 		tr := &TestResult{
 			TestName:   "test_name",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusPassed,
 			ExecutedAt: time.Now(),
 			// Optional fields omitted
@@ -470,7 +470,7 @@ func TestTestResult_ValidationErrorMessages(t *testing.T) {
 		tr := &TestResult{
 			TestName:   strings.Repeat("a", 751),
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -483,7 +483,7 @@ func TestTestResult_ValidationErrorMessages(t *testing.T) {
 		tr2 := &TestResult{
 			TestName:   "test",
 			DatasetURN: "invalid-urn",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatusFailed,
 			ExecutedAt: time.Now(),
 		}
@@ -496,7 +496,7 @@ func TestTestResult_ValidationErrorMessages(t *testing.T) {
 		tr3 := &TestResult{
 			TestName:   "test",
 			DatasetURN: "postgres://localhost:5432/db.schema.table",
-			JobRunID:   "dbt:abc-123",
+			RunID:      "550e8400-e29b-41d4-a716-446655440000",
 			Status:     TestStatus("bad_status"),
 			ExecutedAt: time.Now(),
 		}

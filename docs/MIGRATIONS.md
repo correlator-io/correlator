@@ -268,9 +268,9 @@ ALTER TABLE job_runs DROP COLUMN IF EXISTS retry_count;
 ```sql
 -- Foreign keys should be DEFERRABLE for OpenLineage events
 CREATE TABLE lineage_edges (
-    job_run_id VARCHAR(255) NOT NULL 
-        REFERENCES job_runs(job_run_id) 
-        ON DELETE CASCADE 
+    run_id UUID NOT NULL
+        REFERENCES job_runs(run_id)
+        ON DELETE CASCADE
         DEFERRABLE INITIALLY DEFERRED,  -- ← Important!
     
     dataset_urn VARCHAR(500) NOT NULL 
@@ -706,7 +706,7 @@ ALTER TABLE job_runs
 -- 003_add_metadata.down.sql
 -- Preserve data in backup table before dropping
 CREATE TABLE IF NOT EXISTS job_runs_metadata_backup AS
-SELECT job_run_id, metadata FROM job_runs WHERE metadata IS NOT NULL;
+SELECT run_id, metadata FROM job_runs WHERE metadata IS NOT NULL;
 
 ALTER TABLE job_runs DROP COLUMN IF EXISTS metadata;
 
@@ -849,7 +849,7 @@ CREATE INDEX IF NOT EXISTS idx_job_runs_producer
 
 -- Composite index for common query pattern
 CREATE INDEX IF NOT EXISTS idx_test_results_correlation 
-    ON test_results(job_run_id, status, executed_at DESC);
+    ON test_results(run_id, status, executed_at DESC);
 
 -- down.sql
 DROP INDEX IF EXISTS idx_job_runs_producer;
@@ -870,13 +870,13 @@ CREATE MATERIALIZED VIEW incident_correlation AS
 SELECT 
     tr.id AS test_result_id,
     tr.test_name,
-    jr.job_run_id,
+    jr.run_id,
     jr.job_name,
     d.dataset_urn
 FROM test_results tr
 JOIN datasets d ON tr.dataset_urn = d.dataset_urn
 JOIN lineage_edges le ON d.dataset_urn = le.dataset_urn
-JOIN job_runs jr ON le.job_run_id = jr.job_run_id
+JOIN job_runs jr ON le.run_id = jr.run_id
 WHERE tr.status IN ('failed', 'error')
     AND le.edge_type = 'output';
 

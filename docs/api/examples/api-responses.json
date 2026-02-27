@@ -14,7 +14,7 @@
         "correlation_id": "123e4567-e89b-12d3-a456-426614174000",
         "processing_time_ms": 45.7,
         "correlation_status": "correlated",
-        "canonical_job_run_id": "dbt:abc123-def456-789ghi"
+        "run_id": "550e8400-e29b-41d4-a716-446655440000"
       }
     },
 
@@ -179,7 +179,7 @@
             "updated_at": "2024-01-01T12:05:30Z",
             "correlation_status": "correlated",
             "affected_datasets": ["postgres://prod.db/marts.users"],
-            "job_run_id": "dbt:abc123-def456-789ghi",
+            "run_id": "550e8400-e29b-41d4-a716-446655440000",
             "correlation_confidence": 96.8,
             "estimated_impact": {
               "affected_datasets": 3,
@@ -214,7 +214,7 @@
             "updated_at": "2024-01-01T10:45:00Z",
             "correlation_status": "correlated",
             "affected_datasets": ["postgres://prod.db/marts.users"],
-            "job_run_id": "ge:user_validation_suite.validation_run_xyz789",
+            "run_id": "660e8400-e29b-41d4-a716-446655440001",
             "correlation_confidence": 94.5,
             "estimated_impact": {
               "affected_datasets": 1,
@@ -282,7 +282,7 @@
             },
             "executed_at": "2024-01-01T12:05:26Z",
             "job_run_context": {
-              "job_run_id": "dbt:abc123-def456-789ghi",
+              "run_id": "550e8400-e29b-41d4-a716-446655440000",
               "job_name": "models.marts.users",
               "started_at": "2024-01-01T12:00:00Z",
               "completed_at": "2024-01-01T12:05:23Z"
@@ -310,20 +310,20 @@
           ],
           "external_links": {
             "dbt_docs": "https://docs.company.com/models/marts/users",
-            "dbt_run": "https://cloud.getdbt.com/runs/abc123-def456-789ghi",
+            "dbt_run": "https://cloud.getdbt.com/runs/550e8400-e29b-41d4-a716-446655440000",
             "monitoring": "https://datadog.company.com/dashboard/user-pipeline"
           }
         },
         "correlation": {
-          "method": "job_run_id",
+          "method": "run_id",
           "confidence_score": 96.8,
           "correlation_keys": {
-            "job_run_id": "dbt:abc123-def456-789ghi",
+            "run_id": "550e8400-e29b-41d4-a716-446655440000",
             "dataset_urns": ["postgres://prod.db/marts.users"],
             "temporal_window": "5m"
           },
           "producing_job": {
-            "job_run_id": "dbt:abc123-def456-789ghi",
+            "run_id": "550e8400-e29b-41d4-a716-446655440000",
             "job_name": "models.marts.users",
             "job_namespace": "dbt",
             "started_at": "2024-01-01T12:00:00Z",
@@ -332,30 +332,30 @@
             "tool_metadata": {
               "dbt_version": "1.6.0",
               "target": "prod",
-              "invocation_id": "abc123-def456-789ghi",
+              "invocation_id": "550e8400-e29b-41d4-a716-446655440000",
               "project_name": "analytics"
             },
-            "external_url": "https://cloud.getdbt.com/runs/abc123-def456-789ghi"
+            "external_url": "https://cloud.getdbt.com/runs/550e8400-e29b-41d4-a716-446655440000"
           },
           "correlation_path": [
             {
               "step_number": 1,
-              "description": "Extracted canonical job_run_id from test result",
+              "description": "Extracted run_id (UUID) from test result",
               "method": "test_metadata_extraction",
               "confidence": 100.0,
               "evidence": {
-                "test_job_run_id": "dbt:abc123-def456-789ghi",
+                "test_run_id": "550e8400-e29b-41d4-a716-446655440000",
                 "extraction_method": "direct_field_match"
               }
             },
             {
               "step_number": 2,
-              "description": "Matched test failure job_run_id with producing job run",
-              "method": "canonical_id_match",
+              "description": "Matched test failure run_id with producing job run",
+              "method": "run_id_match",
               "confidence": 98.5,
               "evidence": {
-                "test_job_run_id": "dbt:abc123-def456-789ghi",
-                "producer_job_run_id": "dbt:abc123-def456-789ghi",
+                "test_run_id": "550e8400-e29b-41d4-a716-446655440000",
+                "producer_run_id": "550e8400-e29b-41d4-a716-446655440000",
                 "match_type": "exact"
               }
             },
@@ -379,8 +379,8 @@
             "description": "dbt model 'marts.users' started execution",
             "source": "correlator-dbt",
             "metadata": {
-              "job_run_id": "dbt:abc123-def456-789ghi",
-              "invocation_id": "abc123-def456-789ghi"
+              "run_id": "550e8400-e29b-41d4-a716-446655440000",
+              "invocation_id": "550e8400-e29b-41d4-a716-446655440000"
             }
           },
           {
@@ -440,7 +440,7 @@
               "namespace": "dbt",
               "recent_runs": [
                 {
-                  "job_run_id": "dbt:abc123-def456-789ghi",
+                  "run_id": "550e8400-e29b-41d4-a716-446655440000",
                   "status": "success",
                   "started_at": "2024-01-01T12:00:00Z",
                   "completed_at": "2024-01-01T12:05:23Z"
@@ -471,7 +471,7 @@
               "source_id": "postgres://prod.staging.staging_users",
               "target_id": "dbt://models.marts.users",
               "relationship_type": "consumes",
-              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "run_ids": ["550e8400-e29b-41d4-a716-446655440000"],
               "metadata": {
                 "last_updated": "2024-01-01T12:00:00Z",
                 "confidence": 100.0
@@ -481,7 +481,7 @@
               "source_id": "dbt://models.marts.users",
               "target_id": "postgres://prod.marts.users",
               "relationship_type": "produces",
-              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "run_ids": ["550e8400-e29b-41d4-a716-446655440000"],
               "metadata": {
                 "last_updated": "2024-01-01T12:05:23Z",
                 "confidence": 100.0
@@ -668,7 +668,7 @@
         "total_incidents": 156,
         "successfully_correlated": 147,
         "correlation_methods": {
-          "job_run_id": {
+          "run_id": {
             "incidents": 134,
             "accuracy": 97.8
           },
@@ -686,7 +686,7 @@
             "accuracy": 96.8,
             "incident_count": 89,
             "correlation_method_distribution": {
-              "job_run_id": 87,
+              "run_id": 87,
               "dataset_lineage": 2
             }
           },
@@ -694,7 +694,7 @@
             "accuracy": 91.3,
             "incident_count": 43,
             "correlation_method_distribution": {
-              "job_run_id": 38,
+              "run_id": 38,
               "dataset_lineage": 5
             }
           },
@@ -702,7 +702,7 @@
             "accuracy": 89.5,
             "incident_count": 19,
             "correlation_method_distribution": {
-              "job_run_id": 16,
+              "run_id": 16,
               "temporal": 3
             }
           },
@@ -722,7 +722,7 @@
           "improvement_over_week": 2.3
         },
         "quality_indicators": {
-          "canonical_id_extraction_success": 98.7,
+          "run_id_extraction_success": 98.7,
           "lineage_resolution_success": 91.2,
           "temporal_correlation_success": 62.5
         }
@@ -833,7 +833,7 @@
               "namespace": "airflow",
               "recent_runs": [
                 {
-                  "job_run_id": "airflow:user_etl.extract_users.manual__2024-01-01T11:30:00",
+                  "run_id": "770e8400-e29b-41d4-a716-446655440002",
                   "status": "success",
                   "started_at": "2024-01-01T11:30:00Z",
                   "completed_at": "2024-01-01T11:35:42Z"
@@ -858,7 +858,7 @@
               "namespace": "dbt",
               "recent_runs": [
                 {
-                  "job_run_id": "dbt:abc123-def456-789ghi",
+                  "run_id": "550e8400-e29b-41d4-a716-446655440000",
                   "status": "success",
                   "started_at": "2024-01-01T12:00:00Z",
                   "completed_at": "2024-01-01T12:05:23Z"
@@ -900,7 +900,7 @@
               "source_id": "airflow://user_etl.extract_users",
               "target_id": "postgres://prod.staging.staging_users",
               "relationship_type": "produces",
-              "job_run_ids": ["airflow:user_etl.extract_users.manual__2024-01-01T11:30:00"],
+              "run_ids": ["770e8400-e29b-41d4-a716-446655440002"],
               "metadata": {
                 "last_updated": "2024-01-01T11:35:42Z",
                 "confidence": 100.0
@@ -910,7 +910,7 @@
               "source_id": "postgres://prod.staging.staging_users",
               "target_id": "dbt://models.marts.users",
               "relationship_type": "consumes",
-              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "run_ids": ["550e8400-e29b-41d4-a716-446655440000"],
               "metadata": {
                 "last_updated": "2024-01-01T12:00:00Z",
                 "confidence": 100.0
@@ -920,7 +920,7 @@
               "source_id": "dbt://models.marts.users",
               "target_id": "postgres://prod.marts.users",
               "relationship_type": "produces",
-              "job_run_ids": ["dbt:abc123-def456-789ghi"],
+              "run_ids": ["550e8400-e29b-41d4-a716-446655440000"],
               "metadata": {
                 "last_updated": "2024-01-01T12:05:23Z",
                 "confidence": 100.0

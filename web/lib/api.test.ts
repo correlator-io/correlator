@@ -46,7 +46,7 @@ describe("transformIncident", () => {
       dataset_name: "orders",
       producer: "dbt",
       job_name: "daily_finance_pipeline",
-      job_run_id: "dbt:abc123",
+      job_run_id: "019c628f-d07e-7000-8000-000000000001",
       downstream_count: 5,
       has_correlation_issue: false,
       executed_at: "2026-01-23T10:30:00Z",
@@ -63,7 +63,7 @@ describe("transformIncident", () => {
       datasetName: "orders",
       producer: "dbt",
       jobName: "daily_finance_pipeline",
-      jobRunId: "dbt:abc123",
+      jobRunId: "019c628f-d07e-7000-8000-000000000001",
       downstreamCount: 5,
       hasCorrelationIssue: false,
       executedAt: "2026-01-23T10:30:00Z",
@@ -80,7 +80,7 @@ describe("transformIncident", () => {
       dataset_name: "orders",
       producer: "great_expectations",
       job_name: "ge_validation",
-      job_run_id: "ge:val-123",
+      job_run_id: "019c628f-d07e-7000-8000-000000000002",
       downstream_count: 0,
       has_correlation_issue: true,
       executed_at: "2026-01-23T10:35:00Z",
@@ -114,7 +114,7 @@ describe("transformIncidentDetail", () => {
       job: {
         name: "build_orders_model",
         namespace: "daily_finance_pipeline",
-        run_id: "dbt:abc123",
+        run_id: "019c628f-d07e-7000-8000-000000000001",
         producer: "dbt",
         status: "COMPLETE",
         started_at: "2026-01-23T10:25:00Z",
@@ -137,7 +137,7 @@ describe("transformIncidentDetail", () => {
     expect(result.id).toBe("123");
     expect(result.test.executedAt).toBe("2026-01-23T10:30:00Z");
     expect(result.test.durationMs).toBe(1247);
-    expect(result.job?.runId).toBe("dbt:abc123");
+    expect(result.job?.runId).toBe("019c628f-d07e-7000-8000-000000000001");
     expect(result.job?.startedAt).toBe("2026-01-23T10:25:00Z");
     expect(result.job?.parent).toBeUndefined();
     expect(result.job?.orchestration).toBeUndefined();
@@ -197,14 +197,14 @@ describe("transformIncidentDetail", () => {
       job: {
         name: "model.jaffle_shop_demo.stg_orders",
         namespace: "dbt://demo",
-        run_id: "dbt:abc123",
+        run_id: "019c628f-d07e-7000-8000-000000000001",
         producer: "correlator-dbt",
         status: "RUNNING",
         started_at: "2026-01-23T10:25:00Z",
         completed_at: "0001-01-01T00:00:00Z",
         parent: {
           name: "jaffle_shop_demo.run",
-          run_id: "dbt:invocation-789",
+          run_id: "019c628f-d07e-7000-8000-000000000003",
           producer: "correlator-dbt",
           status: "COMPLETE",
           completed_at: "2026-01-23T10:29:00Z",
@@ -224,7 +224,7 @@ describe("transformIncidentDetail", () => {
     expect(result.job?.parent).toEqual({
       name: "jaffle_shop_demo.run",
       namespace: undefined,
-      runId: "dbt:invocation-789",
+      runId: "019c628f-d07e-7000-8000-000000000003",
       producer: "dbt",
       status: "COMPLETE",
       completedAt: "2026-01-23T10:29:00Z",
@@ -252,14 +252,14 @@ describe("transformIncidentDetail", () => {
       job: {
         name: "model.jaffle_shop_demo.stg_orders",
         namespace: "dbt://demo",
-        run_id: "dbt:019c85f1-leaf",
+        run_id: "019c85f1-d07e-7000-8000-000000000004",
         producer: "correlator-dbt",
         status: "RUNNING",
         started_at: "2026-02-22T15:22:07Z",
         completed_at: "0001-01-01T00:00:00Z",
         parent: {
           name: "jaffle_shop_demo.run",
-          run_id: "dbt:019c85f1-parent",
+          run_id: "019c85f1-d07e-7000-8000-000000000005",
           producer: "correlator-dbt",
           status: "COMPLETE",
           completed_at: "2026-02-22T15:22:07Z",
@@ -268,14 +268,14 @@ describe("transformIncidentDetail", () => {
           {
             name: "demo_pipeline",
             namespace: "airflow://demo",
-            run_id: "airflow:019c85f1-root",
+            run_id: "019c85f1-d07e-7000-8000-000000000006",
             producer: "airflow",
             status: "FAIL",
           },
           {
             name: "jaffle_shop_demo.run",
             namespace: "dbt://demo",
-            run_id: "dbt:019c85f1-parent",
+            run_id: "019c85f1-d07e-7000-8000-000000000005",
             producer: "correlator-dbt",
             status: "COMPLETE",
           },
@@ -291,7 +291,7 @@ describe("transformIncidentDetail", () => {
     expect(result.job?.parent).toEqual({
       name: "jaffle_shop_demo.run",
       namespace: undefined,
-      runId: "dbt:019c85f1-parent",
+      runId: "019c85f1-d07e-7000-8000-000000000005",
       producer: "dbt",
       status: "COMPLETE",
       completedAt: "2026-02-22T15:22:07Z",
@@ -301,14 +301,14 @@ describe("transformIncidentDetail", () => {
       {
         name: "demo_pipeline",
         namespace: "airflow://demo",
-        runId: "airflow:019c85f1-root",
+        runId: "019c85f1-d07e-7000-8000-000000000006",
         producer: "airflow",
         status: "FAIL",
       },
       {
         name: "jaffle_shop_demo.run",
         namespace: "dbt://demo",
-        runId: "dbt:019c85f1-parent",
+        runId: "019c85f1-d07e-7000-8000-000000000005",
         producer: "dbt",
         status: "COMPLETE",
       },

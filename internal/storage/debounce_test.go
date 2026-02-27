@@ -44,17 +44,17 @@ func seedMinimalCorrelationData(t *testing.T, store *LineageStore) {
 
 	ctx := context.Background()
 	now := time.Now()
-	jobRunID := "dbt:" + uuid.New().String()
+	runID := uuid.New().String()
 	datasetURN := "postgresql://prod-db/public.debounce_test_" + uuid.New().String()[:8]
 
 	db := store.conn.DB
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO job_runs (
-			job_run_id, run_id, job_name, job_namespace, current_state,
+			run_id, job_name, job_namespace, current_state,
 		    event_type, event_time, started_at, producer_name)
-		VALUES ($1, $2, 'debounce_test_job', 'test', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
-	`, jobRunID, uuid.New().String(), now, now.Add(-5*time.Minute))
+		VALUES ($1, 'debounce_test_job', 'test', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, runID, now, now.Add(-5*time.Minute))
 	require.NoError(t, err)
 
 	_, err = db.ExecContext(ctx, `
@@ -63,14 +63,14 @@ func seedMinimalCorrelationData(t *testing.T, store *LineageStore) {
 	require.NoError(t, err)
 
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO lineage_edges (job_run_id, dataset_urn, edge_type) VALUES ($1, $2, 'output')
-	`, jobRunID, datasetURN)
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type) VALUES ($1, $2, 'output')
+	`, runID, datasetURN)
 	require.NoError(t, err)
 
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO test_results (test_name, test_type, dataset_urn, job_run_id, status, message, executed_at, duration_ms)
+		INSERT INTO test_results (test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms)
 		VALUES ('test_not_null', 'not_null', $1, $2, 'failed', 'found nulls', $3, 50)
-	`, datasetURN, jobRunID, now)
+	`, datasetURN, runID, now)
 	require.NoError(t, err)
 }
 

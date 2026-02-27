@@ -17,7 +17,6 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/correlator-io/correlator/internal/aliasing"
-	"github.com/correlator-io/correlator/internal/canonicalization"
 	"github.com/correlator-io/correlator/internal/config"
 	"github.com/correlator-io/correlator/internal/correlation"
 	"github.com/correlator-io/correlator/internal/ingestion"
@@ -317,7 +316,7 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 		// Duplicate event - return success (200 OK, not 409 Conflict)
 		s.logger.Debug("duplicate event detected",
 			slog.String("idempotency_key", idempotencyKey),
-			slog.String("job_run_id", event.JobRunID()),
+			slog.String("run_id", event.Run.ID),
 		)
 
 		return false, true, nil
@@ -359,7 +358,7 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 	}
 
 	s.logger.Info("event stored successfully",
-		slog.String("job_run_id", event.JobRunID()),
+		slog.String("run_id", event.Run.ID),
 		slog.String("event_type", string(event.EventType)),
 		slog.Time("event_time", event.EventTime),
 	)
@@ -653,7 +652,7 @@ func looksLikeVersion(s string) bool {
 	return versionPattern.MatchString(s)
 }
 
-// extractParentJobRunID extracts parent job run ID from OpenLineage ParentRunFacet.
+// extractParentRunID extracts parent run UUID from OpenLineage ParentRunFacet.
 //
 // ParentRunFacet structure (from run.facets.parent):
 //
@@ -662,15 +661,14 @@ func looksLikeVersion(s string) bool {
 //	  "run": {"runId": "019c628f-d07e-7000-8000-000000000000"}
 //	}
 //
-// Uses canonicalization.GenerateJobRunID to construct parent ID in same format
-// as child job_run_id, enabling JOIN queries.
+// Returns the raw run UUID from the facet, which matches the run_id PK in job_runs.
 //
 // Returns empty string if ParentRunFacet is not present or malformed.
-func extractParentJobRunID(runFacets map[string]interface{}) string {
-	return extractJobRunIDFromFacetObject(getParentFacetObject(runFacets))
+func extractParentRunID(runFacets map[string]interface{}) string {
+	return extractRunIDFromFacet(getParentFacetObject(runFacets))
 }
 
-// extractRootParentJobRunID extracts the root parent job run ID from OpenLineage ParentRunFacet.
+// extractRootParentRunID extracts the root parent run UUID from OpenLineage ParentRunFacet.
 //
 // ParentRunFacet with root (from run.facets.parent):
 //
@@ -684,7 +682,7 @@ func extractParentJobRunID(runFacets map[string]interface{}) string {
 //	}
 //
 // Returns empty string if root is not present or malformed.
-func extractRootParentJobRunID(runFacets map[string]interface{}) string {
+func extractRootParentRunID(runFacets map[string]interface{}) string {
 	parent := getParentFacetObject(runFacets)
 	if parent == nil {
 		return ""
@@ -695,7 +693,7 @@ func extractRootParentJobRunID(runFacets map[string]interface{}) string {
 		return ""
 	}
 
-	return extractJobRunIDFromFacetObject(root)
+	return extractRunIDFromFacet(root)
 }
 
 // getParentFacetObject extracts the "parent" object from run facets.
@@ -712,19 +710,12 @@ func getParentFacetObject(runFacets map[string]interface{}) map[string]interface
 	return parent
 }
 
-// extractJobRunIDFromFacetObject extracts a canonical job run ID from an object
-// containing "job" and "run" sub-objects (used for both parent and root).
-func extractJobRunIDFromFacetObject(obj map[string]interface{}) string {
+// extractRunIDFromFacet extracts the raw run UUID from an object
+// containing "run" sub-object with "runId" field (used for both parent and root).
+func extractRunIDFromFacet(obj map[string]interface{}) string {
 	if obj == nil {
 		return ""
 	}
-
-	job, ok := obj["job"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-
-	namespace, _ := job["namespace"].(string)
 
 	run, ok := obj["run"].(map[string]interface{})
 	if !ok {
@@ -733,11 +724,7 @@ func extractJobRunIDFromFacetObject(obj map[string]interface{}) string {
 
 	runID, _ := run["runId"].(string)
 
-	if namespace == "" || runID == "" {
-		return ""
-	}
-
-	return canonicalization.GenerateJobRunID(namespace, runID)
+	return runID
 }
 
 // checkIdempotency checks if an event with the given idempotency key already exists.
@@ -767,7 +754,7 @@ func (s *LineageStore) checkIdempotency(ctx context.Context, idempotencyKey stri
 
 // fetchJobRunState retrieves the current state of a job run with a row lock.
 // Returns jobRunState with exists=false if the job run doesn't exist.
-func fetchJobRunState(ctx context.Context, tx *sql.Tx, jobRunID string) (jobRunState, error) {
+func fetchJobRunState(ctx context.Context, tx *sql.Tx, runID string) (jobRunState, error) {
 	var (
 		state             jobRunState
 		existingState     sql.NullString
@@ -778,7 +765,7 @@ func fetchJobRunState(ctx context.Context, tx *sql.Tx, jobRunID string) (jobRunS
 	// The FOR UPDATE clause in the query below is a PostgreSQL row-level lock that:
 	// 1. Locks the row for the duration of the transaction
 	// 2. Blocks other transactions attempting to SELECT ... FOR UPDATE, UPDATE, or DELETE the same row
-	// 3. Prevents race conditions where two concurrent events for the same job_run_id could both read the same state
+	// 3. Prevents race conditions where two concurrent events for the same run_id could both read the same state
 	// and both try to record a transition.
 	//
 	// This ensures that when we:
@@ -793,11 +780,11 @@ func fetchJobRunState(ctx context.Context, tx *sql.Tx, jobRunID string) (jobRunS
 	query := `
 		SELECT current_state, event_time, state_history
 		FROM job_runs
-		WHERE job_run_id = $1
+		WHERE run_id = $1
 		FOR UPDATE
 	`
 
-	err := tx.QueryRowContext(ctx, query, jobRunID).Scan(
+	err := tx.QueryRowContext(ctx, query, runID).Scan(
 		&existingState, &existingEventTime, &state.stateHistory,
 	)
 
@@ -905,7 +892,7 @@ func buildJobRunMetadata(event *ingestion.RunEvent) ([]byte, error) {
 //
 // Out-of-order events are handled via eventTime comparison in the SQL upsert.
 func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *ingestion.RunEvent) error {
-	jobRunID := event.JobRunID()
+	runID := event.Run.ID
 	newState := string(event.EventType)
 
 	// Build metadata
@@ -915,7 +902,7 @@ func (s *LineageStore) upsertJobRun(ctx context.Context, tx *sql.Tx, event *inge
 	}
 
 	// Fetch existing state (with row lock)
-	existing, err := fetchJobRunState(ctx, tx, jobRunID)
+	existing, err := fetchJobRunState(ctx, tx, runID)
 	if err != nil {
 		return err
 	}
@@ -967,13 +954,12 @@ func (s *LineageStore) executeJobRunUpsert(
 		completedAt = event.EventTime // Set completed_at only for terminal states
 	}
 
-	// Extract parent job run ID from ParentRunFacet
-	parentJobRunID := extractParentJobRunID(event.Run.Facets)
-	rootParentJobRunID := extractRootParentJobRunID(event.Run.Facets)
+	// Extract parent run IDs from ParentRunFacet
+	parentRunID := extractParentRunID(event.Run.Facets)
+	rootParentRunID := extractRootParentRunID(event.Run.Facets)
 
 	query := `
 		INSERT INTO job_runs (
-			job_run_id,
 			run_id,
 			job_name,
 			job_namespace,
@@ -986,12 +972,12 @@ func (s *LineageStore) executeJobRunUpsert(
 			producer_version,
 			started_at,
 			completed_at,
-			parent_job_run_id,
-			root_parent_job_run_id,
+			parent_run_id,
+			root_parent_run_id,
 			created_at,
 			updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
-		ON CONFLICT (job_run_id) DO UPDATE
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+		ON CONFLICT (run_id) DO UPDATE
 		SET
 			current_state = CASE
 				WHEN EXCLUDED.event_time > job_runs.event_time THEN EXCLUDED.current_state
@@ -1013,26 +999,25 @@ func (s *LineageStore) executeJobRunUpsert(
 					THEN EXCLUDED.completed_at
 				ELSE job_runs.completed_at
 			END,
-			parent_job_run_id = COALESCE(EXCLUDED.parent_job_run_id, job_runs.parent_job_run_id),
-			root_parent_job_run_id = COALESCE(EXCLUDED.root_parent_job_run_id, job_runs.root_parent_job_run_id),
+			parent_run_id = COALESCE(EXCLUDED.parent_run_id, job_runs.parent_run_id),
+			root_parent_run_id = COALESCE(EXCLUDED.root_parent_run_id, job_runs.root_parent_run_id),
 			updated_at = NOW()
 	`
 
-	// Convert parentJobRunID to sql.NullString for proper NULL handling
-	var parentJobRunIDParam sql.NullString
-	if parentJobRunID != "" {
-		parentJobRunIDParam = sql.NullString{String: parentJobRunID, Valid: true}
+	// Convert parentRunID to sql.NullString for proper NULL handling
+	var parentRunIDParam sql.NullString
+	if parentRunID != "" {
+		parentRunIDParam = sql.NullString{String: parentRunID, Valid: true}
 	}
 
-	var rootParentJobRunIDParam sql.NullString
-	if rootParentJobRunID != "" {
-		rootParentJobRunIDParam = sql.NullString{String: rootParentJobRunID, Valid: true}
+	var rootParentRunIDParam sql.NullString
+	if rootParentRunID != "" {
+		rootParentRunIDParam = sql.NullString{String: rootParentRunID, Valid: true}
 	}
 
 	_, err := tx.ExecContext(
 		ctx,
 		query,
-		event.JobRunID(),
 		event.Run.ID,
 		event.Job.Name,
 		event.Job.Namespace,
@@ -1045,8 +1030,8 @@ func (s *LineageStore) executeJobRunUpsert(
 		extractProducerVersion(event.Producer),
 		event.EventTime,
 		completedAt,
-		parentJobRunIDParam,
-		rootParentJobRunIDParam,
+		parentRunIDParam,
+		rootParentRunIDParam,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert job_run: %w", err)
@@ -1058,7 +1043,7 @@ func (s *LineageStore) executeJobRunUpsert(
 // upsertDatasetsAndEdges upserts datasets and creates lineage edges.
 // Creates separate lineage edge rows for each input and output dataset.
 func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, event *ingestion.RunEvent) error {
-	jobRunID := event.JobRunID()
+	runID := event.Run.ID
 
 	// Upsert input datasets and create input edges
 	for _, dataset := range event.Inputs {
@@ -1068,7 +1053,7 @@ func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, e
 		}
 
 		// Create input edge
-		if err := s.createLineageEdge(ctx, tx, jobRunID, "input", dataset); err != nil {
+		if err := s.createLineageEdge(ctx, tx, runID, "input", dataset); err != nil {
 			return fmt.Errorf("failed to create input edge: %w", err)
 		}
 	}
@@ -1081,7 +1066,7 @@ func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, e
 		}
 
 		// Create output edge
-		if err := s.createLineageEdge(ctx, tx, jobRunID, "output", dataset); err != nil {
+		if err := s.createLineageEdge(ctx, tx, runID, "output", dataset); err != nil {
 			return fmt.Errorf("failed to create output edge: %w", err)
 		}
 	}
@@ -1149,7 +1134,7 @@ func (s *LineageStore) upsertDataset(ctx context.Context, tx *sql.Tx, dataset *i
 func (s *LineageStore) createLineageEdge(
 	ctx context.Context,
 	tx *sql.Tx,
-	jobRunID string,
+	runID string,
 	edgeType string,
 	dataset ingestion.Dataset,
 ) error {
@@ -1181,7 +1166,7 @@ func (s *LineageStore) createLineageEdge(
 	// 3. Otherwise, merge with || operator (right side wins)
 	query := `
 		INSERT INTO lineage_edges (
-			job_run_id,
+			run_id,
 			dataset_urn,
 			edge_type,
 			input_facets,
@@ -1193,7 +1178,7 @@ func (s *LineageStore) createLineageEdge(
 			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE '{}'::jsonb END,
 			NOW()
 		)
-		ON CONFLICT (job_run_id, dataset_urn, edge_type) DO UPDATE SET
+		ON CONFLICT (run_id, dataset_urn, edge_type) DO UPDATE SET
 			input_facets = CASE
 				WHEN $3::text != 'input' THEN lineage_edges.input_facets
 				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.input_facets
@@ -1211,7 +1196,7 @@ func (s *LineageStore) createLineageEdge(
 	_, err = tx.ExecContext(
 		ctx,
 		query,
-		jobRunID,
+		runID,
 		dataset.URN(),
 		edgeType,
 		facetsJSON,
@@ -1236,7 +1221,7 @@ func (s *LineageStore) recordIdempotency(
 		"job_name":      event.Job.Name,
 		"job_namespace": event.Job.Namespace,
 		"event_time":    event.EventTime.Format("2006-01-02T15:04:05.000Z"),
-		"job_run_id":    event.JobRunID(),
+		"run_id":        event.Run.ID,
 		"producer":      event.Producer,
 	}
 
@@ -1451,7 +1436,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 	tx *sql.Tx,
 	event *ingestion.RunEvent,
 ) {
-	jobRunID := event.JobRunID()
+	runID := event.Run.ID
 	eventTime := event.EventTime
 
 	for _, input := range event.Inputs {
@@ -1465,7 +1450,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 		facetMap, ok := facet.(map[string]interface{})
 		if !ok {
 			s.logger.Warn("dataQualityAssertions facet is not a map",
-				slog.String("job_run_id", jobRunID),
+				slog.String("run_id", runID),
 				slog.String("dataset_urn", input.URN()),
 			)
 
@@ -1476,7 +1461,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 		assertionsRaw, ok := facetMap["assertions"]
 		if !ok {
 			s.logger.Warn("dataQualityAssertions facet missing assertions field",
-				slog.String("job_run_id", jobRunID),
+				slog.String("run_id", runID),
 				slog.String("dataset_urn", input.URN()),
 			)
 
@@ -1486,7 +1471,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 		assertions, ok := assertionsRaw.([]interface{})
 		if !ok {
 			s.logger.Warn("dataQualityAssertions assertions is not an array",
-				slog.String("job_run_id", jobRunID),
+				slog.String("run_id", runID),
 				slog.String("dataset_urn", input.URN()),
 			)
 
@@ -1498,7 +1483,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 			assertion, ok := assertionRaw.(map[string]interface{})
 			if !ok {
 				s.logger.Warn("assertion is not a map",
-					slog.String("job_run_id", jobRunID),
+					slog.String("run_id", runID),
 				)
 
 				continue
@@ -1508,7 +1493,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 			testName, _ := assertion["assertion"].(string)
 			if testName == "" {
 				s.logger.Warn("assertion missing name",
-					slog.String("job_run_id", jobRunID),
+					slog.String("run_id", runID),
 				)
 
 				continue
@@ -1520,14 +1505,14 @@ func (s *LineageStore) extractDataQualityAssertions(
 			successVal, hasSuccess := assertion["success"]
 			if !hasSuccess {
 				s.logger.Warn("assertion missing success field, defaulting to failed",
-					slog.String("job_run_id", jobRunID),
+					slog.String("run_id", runID),
 					slog.String("test_name", testName),
 				)
 			} else if success, ok := successVal.(bool); ok && success {
 				status = ingestion.TestStatusPassed
 			} else if !ok {
 				s.logger.Warn("assertion success is not a boolean, defaulting to failed",
-					slog.String("job_run_id", jobRunID),
+					slog.String("run_id", runID),
 					slog.String("test_name", testName),
 				)
 			}
@@ -1555,7 +1540,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 				TestName:        testName,
 				TestType:        "dataQualityAssertion",
 				DatasetURN:      input.URN(),
-				JobRunID:        jobRunID,
+				RunID:           runID,
 				Status:          status,
 				Message:         message,
 				DurationMs:      durationMs,
@@ -1565,7 +1550,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 				ProducerVersion: extractProducerVersion(event.Producer),
 			}); err != nil {
 				s.logger.Warn("failed to store test result from facet",
-					slog.String("job_run_id", jobRunID),
+					slog.String("run_id", runID),
 					slog.String("test_name", testName),
 					slog.String("error", err.Error()),
 				)
@@ -1598,7 +1583,7 @@ func (s *LineageStore) storeTestResult(
 			test_name,
 			test_type,
 			dataset_urn,
-			job_run_id,
+			run_id,
 			status,
 			message,
 			metadata,
@@ -1610,7 +1595,7 @@ func (s *LineageStore) storeTestResult(
 		ON CONFLICT (test_name, dataset_urn, executed_at)
 		DO UPDATE SET
 			test_type = EXCLUDED.test_type,
-			job_run_id = EXCLUDED.job_run_id,
+			run_id = EXCLUDED.run_id,
 			status = EXCLUDED.status,
 			message = EXCLUDED.message,
 			metadata = EXCLUDED.metadata,
@@ -1626,7 +1611,7 @@ func (s *LineageStore) storeTestResult(
 		testResult.TestName,
 		testResult.TestType,
 		testResult.DatasetURN,
-		testResult.JobRunID,
+		testResult.RunID,
 		testResult.Status.String(),
 		testResult.Message,
 		metadataJSON,

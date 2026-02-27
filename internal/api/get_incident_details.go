@@ -84,12 +84,12 @@ func (s *Server) assembleIncidentDetailResponse(
 	correlationID string,
 	incident *correlation.Incident,
 ) IncidentDetailResponse {
-	downstream, err := s.correlationStore.QueryDownstreamWithParents(ctx, incident.JobRunID, defaultMaxDepth)
+	downstream, err := s.correlationStore.QueryDownstreamWithParents(ctx, incident.RunID, defaultMaxDepth)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "Failed to query downstream",
 			"correlation_id", correlationID,
 			"incident_id", id,
-			"job_run_id", incident.JobRunID,
+			"run_id", incident.RunID,
 			"error", err.Error(),
 		)
 		// Non-fatal: continue with empty downstream
@@ -97,13 +97,13 @@ func (s *Server) assembleIncidentDetailResponse(
 	}
 
 	upstream, err := s.correlationStore.QueryUpstreamWithChildren(
-		ctx, incident.DatasetURN, incident.JobRunID, defaultMaxDepth)
+		ctx, incident.DatasetURN, incident.RunID, defaultMaxDepth)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "Failed to query upstream",
 			"correlation_id", correlationID,
 			"incident_id", id,
 			"dataset_urn", incident.DatasetURN,
-			"job_run_id", incident.JobRunID,
+			"run_id", incident.RunID,
 			"error", err.Error(),
 		)
 		// Non-fatal: continue with empty upstream
@@ -126,13 +126,13 @@ func (s *Server) assembleIncidentDetailResponse(
 	// Query orchestration chain (ancestors from root to immediate parent)
 	var orchestrationChain []correlation.OrchestrationNode
 
-	if incident.JobRunID != "" {
-		chain, err := s.correlationStore.QueryOrchestrationChain(ctx, incident.JobRunID, defaultMaxDepth)
+	if incident.RunID != "" {
+		chain, err := s.correlationStore.QueryOrchestrationChain(ctx, incident.RunID, defaultMaxDepth)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "Failed to query orchestration chain",
 				"correlation_id", correlationID,
 				"incident_id", id,
-				"job_run_id", incident.JobRunID,
+				"run_id", incident.RunID,
 				"error", err.Error(),
 			)
 			// Non-fatal: continue without orchestration chain
@@ -174,7 +174,7 @@ func mapIncidentToDetail(
 		CorrelationStatus: determineCorrelationStatus(inc, orphanDatasetSet),
 	}
 
-	if inc.JobRunID != "" {
+	if inc.RunID != "" {
 		jobStatus := inc.JobStatus
 		jobCompletedAt := inc.JobCompletedAt
 
@@ -187,18 +187,18 @@ func mapIncidentToDetail(
 		response.Job = &JobDetail{
 			Name:        inc.JobName,
 			Namespace:   inc.JobNamespace,
-			RunID:       inc.JobRunID,
+			RunID:       inc.RunID,
 			Producer:    inc.ProducerName,
 			Status:      jobStatus,
 			StartedAt:   inc.JobStartedAt,
 			CompletedAt: jobCompletedAt,
 		}
 
-		if inc.ParentJobRunID != "" {
+		if inc.ParentRunID != "" {
 			response.Job.Parent = &ParentJob{
 				Name:        inc.ParentJobName,
 				Namespace:   inc.ParentJobNamespace,
-				RunID:       inc.ParentJobRunID,
+				RunID:       inc.ParentRunID,
 				Producer:    inc.ParentProducerName,
 				Status:      inc.ParentJobStatus,
 				CompletedAt: inc.ParentJobCompletedAt,
@@ -230,7 +230,7 @@ func mapOrchestrationChain(chain []correlation.OrchestrationNode) []Orchestratio
 		nodes = append(nodes, OrchestrationNode{
 			Name:      n.JobName,
 			Namespace: n.JobNamespace,
-			RunID:     n.JobRunID,
+			RunID:     n.RunID,
 			Producer:  n.ProducerName,
 			Status:    n.Status,
 		})
@@ -282,7 +282,7 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 // determineCorrelationStatus determines the correlation status of an incident.
 //
 // Status Logic:
-//   - "unknown": No job correlation (JobRunID is empty)
+//   - "unknown": No job correlation (RunID is empty)
 //   - "orphan": Dataset URN aliasing issue (dataset in orphan set)
 //   - "correlated": Fully correlated with data-producing job
 //
@@ -290,7 +290,7 @@ func mapDownstreamResults(results []correlation.DownstreamResult) []DownstreamDa
 // fundamental correlation failure (no job association at all).
 func determineCorrelationStatus(inc *correlation.Incident, orphanDatasetSet map[string]bool) string {
 	// No job correlation at all
-	if inc.JobRunID == "" {
+	if inc.RunID == "" {
 		return CorrelationStatusUnknown
 	}
 
