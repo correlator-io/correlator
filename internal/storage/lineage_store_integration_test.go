@@ -2103,7 +2103,7 @@ func createEventWithGEAssertions(runID string, assertions []geAssertionData) *in
 		"greatExpectations_assertions": map[string]interface{}{
 			"_producer": geOLProducerURL,
 			"_schemaURL": "https://github.com/OpenLineage/OpenLineage/tree/main/" +
-				"integration/common/openlineage/common/provider/ge-assertions-dataset-facet.json",
+				"integration/common/src/openlineage/common/provider/ge-assertions-dataset-facet.json",
 			"assertions": assertionsArray,
 		},
 	}
