@@ -31,11 +31,19 @@ type (
 	// testResultRow holds query results for test result verification.
 	testResultRow struct {
 		testName   string
+		testType   string
 		status     string
 		datasetURN string
 		runID      string
 		durationMs int    // Extended field
 		message    string // Extended field
+	}
+
+	// geAssertionData holds test data for creating GE-ol assertions.
+	geAssertionData struct {
+		expectationType string
+		success         bool
+		column          string
 	}
 )
 
@@ -1835,9 +1843,204 @@ func testExtractExtendedFields(ctx context.Context, t *testing.T, store *Lineage
 	assert.Empty(t, passedResult.message, "message should be empty for passed test")
 }
 
+// TestExtractGEAssertions tests extraction of test results from
+// greatExpectations_assertions facets emitted by the standard GE-ol integration.
+func TestExtractGEAssertions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	container, conn := setupTestDatabase(ctx, t)
+
+	defer func() {
+		_ = conn.Close()
+		_ = container.Terminate(ctx)
+	}()
+
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("NewLineageStore() error = %v", err)
+	}
+
+	defer func() {
+		_ = store.Close()
+	}()
+
+	t.Run("SingleAssertion", func(t *testing.T) {
+		testExtractGESingleAssertion(ctx, t, store, conn)
+	})
+	t.Run("MultipleAssertions", func(t *testing.T) {
+		testExtractGEMultipleAssertions(ctx, t, store, conn)
+	})
+	t.Run("MalformedFacet", func(t *testing.T) {
+		testExtractGEMalformedFacet(ctx, t, store, conn)
+	})
+	t.Run("BothFacetsOnSameInput", func(t *testing.T) {
+		testExtractBothFacetsOnSameInput(ctx, t, store, conn)
+	})
+	t.Run("ProducerName", func(t *testing.T) {
+		testExtractGEProducerName(ctx, t, store, conn)
+	})
+}
+
+// testExtractGESingleAssertion verifies extraction of a single GE-ol assertion
+// from the greatExpectations_assertions facet.
+func testExtractGESingleAssertion(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	event := createEventWithGEAssertions(
+		"ge-single-assertion-test",
+		[]geAssertionData{
+			{
+				expectationType: "expect_column_values_to_not_be_null",
+				success:         true,
+				column:          "order_id",
+			},
+		},
+	)
+
+	stored, duplicate, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored)
+	assert.False(t, duplicate)
+
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
+	assert.Equal(t, 1, count, "Should have 1 test result extracted from GE facet")
+
+	result := getTestResultByTestName(ctx, t, conn, "expect_column_values_to_not_be_null")
+	assert.Equal(t, "passed", result.status)
+	assert.Equal(t, "greatExpectationsAssertion", result.testType, "Test type should distinguish GE assertions")
+	assert.Equal(t, event.Run.ID, result.runID)
+}
+
+// testExtractGEMultipleAssertions verifies extraction of multiple GE expectations
+// with correct status mapping.
+func testExtractGEMultipleAssertions(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	event := createEventWithGEAssertions(
+		"ge-multi-assertion-test",
+		[]geAssertionData{
+			{expectationType: "expect_column_values_to_not_be_null", success: true, column: "order_id"},
+			{expectationType: "expect_column_values_to_be_unique", success: true, column: "order_id"},
+			{expectationType: "expect_column_values_to_be_in_set", success: false, column: "status"},
+		},
+	)
+
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
+	assert.Equal(t, 3, count, "Should have 3 test results extracted")
+
+	passedCount := countTestResultsByStatus(ctx, t, conn, event.Run.ID, "passed")
+	failedCount := countTestResultsByStatus(ctx, t, conn, event.Run.ID, "failed")
+	assert.Equal(t, 2, passedCount, "Should have 2 passed tests")
+	assert.Equal(t, 1, failedCount, "Should have 1 failed test")
+}
+
+// testExtractGEMalformedFacet verifies non-blocking handling of malformed
+// greatExpectations_assertions facet.
+func testExtractGEMalformedFacet(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	event := createTestEvent("ge-malformed-facet-test", ingestion.EventTypeComplete, 1, 1)
+	event.Inputs[0].InputFacets = ingestion.Facets{
+		"greatExpectations_assertions": map[string]interface{}{
+			"_producer":  "test",
+			"assertions": "not-an-array",
+		},
+	}
+
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err, "Event storage should succeed even with malformed GE facet")
+	assert.True(t, stored)
+
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
+	assert.Equal(t, 0, count, "Should have 0 test results (malformed facet)")
+}
+
+// testExtractBothFacetsOnSameInput verifies that when an input dataset has both
+// dataQualityAssertions and greatExpectations_assertions facets, both are extracted.
+func testExtractBothFacetsOnSameInput(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	event := createTestEvent("both-facets-test", ingestion.EventTypeComplete, 1, 1)
+	event.Inputs[0].InputFacets = ingestion.Facets{
+		"dataQualityAssertions": map[string]interface{}{
+			"_producer":  "https://github.com/OpenLineage/OpenLineage/tree/1.24.2/integration/dbt",
+			"_schemaURL": "https://openlineage.io/spec/facets/1-0-1/DataQualityAssertionsDatasetFacet.json",
+			"assertions": []interface{}{
+				map[string]interface{}{
+					"assertion": "not_null_customer_id",
+					"success":   false,
+				},
+			},
+		},
+		"greatExpectations_assertions": map[string]interface{}{
+			"_producer": geOLProducerURL,
+			"assertions": []interface{}{
+				map[string]interface{}{
+					"expectationType": "expect_column_values_to_be_unique",
+					"success":         true,
+					"column":          "customer_id",
+				},
+			},
+		},
+	}
+
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
+	assert.Equal(t, 2, count, "Should have 2 test results (one from each facet)")
+
+	// Verify standard facet result
+	dbtResult := getTestResultByTestName(ctx, t, conn, "not_null_customer_id")
+	assert.Equal(t, "dataQualityAssertion", dbtResult.testType)
+	assert.Equal(t, "failed", dbtResult.status)
+
+	// Verify GE facet result
+	geResult := getTestResultByTestName(ctx, t, conn, "expect_column_values_to_be_unique")
+	assert.Equal(t, "greatExpectationsAssertion", geResult.testType)
+	assert.Equal(t, "passed", geResult.status)
+}
+
+// testExtractGEProducerName verifies that GE-ol producer URL is correctly
+// extracted to "great_expectations" end-to-end.
+func testExtractGEProducerName(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+	t.Helper()
+
+	event := createEventWithGEAssertions(
+		"ge-producer-name-test",
+		[]geAssertionData{
+			{expectationType: "expect_table_row_count_to_be_between", success: true},
+		},
+	)
+
+	stored, _, err := store.StoreEvent(ctx, event)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	// Verify producer_name stored in test_results
+	var producerName string
+
+	query := `SELECT producer_name FROM test_results WHERE run_id = $1`
+
+	err = conn.QueryRowContext(ctx, query, event.Run.ID).Scan(&producerName)
+	require.NoError(t, err)
+	assert.Equal(t, "great_expectations", producerName, "GE-ol producer URL should resolve to great_expectations")
+}
+
 // ============================================================================
 // Facet Extraction Helper Types and Functions
 // ============================================================================
+
+const geOLProducerURL = "https://github.com/OpenLineage/OpenLineage/tree/" +
+	"1.24.2/integration/common/openlineage/provider/great_expectations"
 
 // createEventWithAssertions creates an OpenLineage event with dataQualityAssertions facet.
 func createEventWithAssertions(runID string, assertions []assertionData) *ingestion.RunEvent {
@@ -1870,6 +2073,37 @@ func createEventWithAssertions(runID string, assertions []assertionData) *ingest
 		"dataQualityAssertions": map[string]interface{}{
 			"_producer":  "https://github.com/correlator-io/dbt-correlator/0.1.0",
 			"_schemaURL": "https://openlineage.io/spec/facets/1-0-1/DataQualityAssertionsDatasetFacet.json",
+			"assertions": assertionsArray,
+		},
+	}
+
+	return event
+}
+
+// createEventWithGEAssertions creates an OpenLineage event with greatExpectations_assertions facet.
+func createEventWithGEAssertions(runID string, assertions []geAssertionData) *ingestion.RunEvent {
+	event := createTestEvent(runID, ingestion.EventTypeComplete, 1, 1)
+	event.Producer = geOLProducerURL
+
+	// Build assertions array using GE-ol field names
+	assertionsArray := make([]interface{}, len(assertions))
+	for i, a := range assertions {
+		assertion := map[string]interface{}{
+			"expectationType": a.expectationType,
+			"success":         a.success,
+		}
+		if a.column != "" {
+			assertion["column"] = a.column
+		}
+
+		assertionsArray[i] = assertion
+	}
+
+	event.Inputs[0].InputFacets = ingestion.Facets{
+		"greatExpectations_assertions": map[string]interface{}{
+			"_producer": geOLProducerURL,
+			"_schemaURL": "https://github.com/OpenLineage/OpenLineage/tree/main/" +
+				"integration/common/src/openlineage/common/provider/ge-assertions-dataset-facet.json",
 			"assertions": assertionsArray,
 		},
 	}
@@ -1918,11 +2152,11 @@ func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection
 		message sql.NullString
 	)
 
-	query := `SELECT test_name, status, dataset_urn, run_id, duration_ms, message
+	query := `SELECT test_name, test_type, status, dataset_urn, run_id, duration_ms, message
               FROM test_results WHERE test_name = $1`
 
 	err := conn.QueryRowContext(ctx, query, testName).Scan(
-		&result.testName, &result.status, &result.datasetURN, &result.runID,
+		&result.testName, &result.testType, &result.status, &result.datasetURN, &result.runID,
 		&result.durationMs, &message,
 	)
 	if err != nil {
