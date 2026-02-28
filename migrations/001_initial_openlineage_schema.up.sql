@@ -133,14 +133,20 @@ CREATE TABLE datasets (
     -- Flexible JSONB allows storing any facet without schema changes
     facets JSONB DEFAULT '{}',
 
+    -- UUID of the last job run that produced (output) this dataset.
+    -- Only set when the dataset appears in event.Outputs — validators never set this.
+    -- Enables direct dataset-to-producer correlation without joining through lineage_edges.
+    last_producing_run_id UUID REFERENCES job_runs(run_id) ON DELETE SET NULL,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Comments
-COMMENT ON TABLE datasets IS 'Dataset registry with OpenLineage facets';
+COMMENT ON TABLE datasets IS 'Dataset registry with OpenLineage facets — owned by producers, not validators';
 COMMENT ON COLUMN datasets.dataset_urn IS 'OpenLineage dataset URN: namespace/name format (supports : or / delimiter)';
-COMMENT ON COLUMN datasets.facets IS 'OpenLineage dataset facets: schema, statistics, documentation, ownership (all metadata in JSONB)';
+COMMENT ON COLUMN datasets.facets IS 'OpenLineage dataset facets from producer events: schema, statistics, documentation, ownership (all metadata in JSONB)';
+COMMENT ON COLUMN datasets.last_producing_run_id IS 'UUID of the last job run that produced (output) this dataset — enables direct dataset-to-producer correlation';
 
 -- =====================================================
 -- 3. RESOLVED DATASETS - URN resolution lookup table
@@ -193,9 +199,6 @@ CREATE TABLE lineage_edges (
     dataset_urn VARCHAR(500) NOT NULL REFERENCES datasets(dataset_urn) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     edge_type VARCHAR(10) NOT NULL CHECK (edge_type IN ('input', 'output')),
 
-    input_facets JSONB DEFAULT '{}',
-    output_facets JSONB DEFAULT '{}',
-
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -204,7 +207,7 @@ CREATE INDEX idx_lineage_edges_run_id ON lineage_edges(run_id);
 CREATE INDEX idx_lineage_edges_dataset_urn ON lineage_edges(dataset_urn, edge_type, run_id);
 
 -- Unique constraint: One edge per (run_id, dataset_urn, edge_type) combination
--- Go code uses UPSERT with facet merging to handle duplicate edge insertions
+-- Go code uses UPSERT to handle duplicate edge insertions
 CREATE UNIQUE INDEX idx_lineage_edges_unique ON lineage_edges(run_id, dataset_urn, edge_type);
 
 -- Comments
@@ -244,6 +247,11 @@ CREATE TABLE test_results (
 
     metadata JSONB DEFAULT '{}',
 
+    -- Raw OpenLineage input facets from the validation event.
+    -- Preserves the complete facet blob (assertions, data quality metrics) for auditability.
+    -- Validator observations belong here, not in datasets.facets.
+    facets JSONB DEFAULT '{}',
+
     executed_at TIMESTAMP WITH TIME ZONE NOT NULL,
     duration_ms INTEGER,
 
@@ -265,6 +273,7 @@ CREATE UNIQUE INDEX idx_test_results_upsert_key ON test_results(test_name, datas
 COMMENT ON TABLE test_results IS 'Data quality test outcomes with job run correlation for incident analysis';
 COMMENT ON COLUMN test_results.run_id IS 'CRITICAL correlation key linking test failures to producing job runs';
 COMMENT ON COLUMN test_results.test_name IS 'Extended to VARCHAR(750) based on real-world test naming analysis';
+COMMENT ON COLUMN test_results.facets IS 'Raw OpenLineage input facets from validation event — preserves assertions, data quality metrics for auditability';
 
 -- =====================================================
 -- 6. LINEAGE EVENT IDEMPOTENCY - Duplicate detection

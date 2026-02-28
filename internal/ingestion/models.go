@@ -309,6 +309,11 @@ type (
 		// ProducerVersion is the version of the testing tool.
 		// Example: "0.18.0"
 		ProducerVersion string
+
+		// Facets stores the raw OpenLineage input facets from the validation event.
+		// Preserves the complete facet blob (assertions, data quality metrics) for auditability.
+		// Validator observations belong here, not in the datasets.facets column.
+		Facets map[string]interface{}
 	}
 
 	// TestStatus represents valid test execution outcomes.

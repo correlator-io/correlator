@@ -35,8 +35,9 @@ type (
 		status     string
 		datasetURN string
 		runID      string
-		durationMs int    // Extended field
-		message    string // Extended field
+		durationMs int
+		message    string
+		facets     map[string]interface{} // Raw input facets from validator event
 	}
 
 	// geAssertionData holds test data for creating GE-ol assertions.
@@ -915,9 +916,10 @@ func testStoreEventProducerExtraction(ctx context.Context, store *LineageStore, 
 // Expected: Facets accumulate over time, newer values override older ones.
 func testStoreEventDatasetFacetMerge(ctx context.Context, store *LineageStore, conn *Connection) func(*testing.T) {
 	return func(t *testing.T) {
-		// Event 1: Dataset with facets {"schema": "v1", "owner": "alice"}
-		event1 := createTestEvent("facet-merge-1", ingestion.EventTypeStart, 1, 0)
-		event1.Inputs[0].Facets = ingestion.Facets{
+		// Event 1: Producer outputs a dataset with facets {"schema": "v1", "owner": "alice"}
+		// Uses (0 inputs, 1 output) so the event is treated as a producer.
+		event1 := createTestEvent("facet-merge-1", ingestion.EventTypeStart, 0, 1)
+		event1.Outputs[0].Facets = ingestion.Facets{
 			"schema": map[string]interface{}{"version": "v1"},
 			"owner":  "alice",
 		}
@@ -931,11 +933,11 @@ func testStoreEventDatasetFacetMerge(ctx context.Context, store *LineageStore, c
 			t.Errorf("First StoreEvent() stored = false, want true")
 		}
 
-		// Event 2: Same dataset with facets {"rows": 1000, "schema": "v2"}
-		event2 := createTestEvent("facet-merge-2", ingestion.EventTypeComplete, 1, 0)
-		event2.Inputs[0].Namespace = event1.Inputs[0].Namespace
-		event2.Inputs[0].Name = event1.Inputs[0].Name // Same dataset!
-		event2.Inputs[0].Facets = ingestion.Facets{
+		// Event 2: Different producer outputs the same dataset with facets {"rows": 1000, "schema": "v2"}
+		event2 := createTestEvent("facet-merge-2", ingestion.EventTypeComplete, 0, 1)
+		event2.Outputs[0].Namespace = event1.Outputs[0].Namespace
+		event2.Outputs[0].Name = event1.Outputs[0].Name // Same dataset!
+		event2.Outputs[0].Facets = ingestion.Facets{
 			"rows":   float64(1000),
 			"schema": map[string]interface{}{"version": "v2"},
 		}
@@ -950,7 +952,7 @@ func testStoreEventDatasetFacetMerge(ctx context.Context, store *LineageStore, c
 		}
 
 		// Verify merged facets: {"schema": "v2", "owner": "alice", "rows": 1000}
-		facets := getDatasetFacets(ctx, t, conn, event1.Inputs[0].URN())
+		facets := getDatasetFacets(ctx, t, conn, event1.Outputs[0].URN())
 
 		// Check schema was updated to v2 (newer value wins)
 		if schema, ok := facets["schema"].(map[string]interface{}); !ok {
@@ -1675,8 +1677,8 @@ func TestExtractDataQualityAssertions(t *testing.T) {
 	t.Run("MalformedFacet", func(t *testing.T) {
 		testExtractMalformedFacet(ctx, t, store, conn)
 	})
-	t.Run("ExtendedFields", func(t *testing.T) {
-		testExtractExtendedFields(ctx, t, store, conn)
+	t.Run("RawFacetsStored", func(t *testing.T) {
+		testExtractRawFacetsStored(ctx, t, store, conn)
 	})
 }
 
@@ -1793,29 +1795,29 @@ func testExtractMalformedFacet(ctx context.Context, t *testing.T, store *Lineage
 	assert.Equal(t, 0, count, "Should have 0 test results (malformed facet)")
 }
 
-// testExtractExtendedFields verifies extraction of extended fields (durationMs, message)
-// from dataQualityAssertions facets. These are spec-compliant extensions allowed by
-// OpenLineage's additionalProperties: true in the facet schema.
-func testExtractExtendedFields(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
+// testExtractRawFacetsStored verifies that raw input facets from validator events are stored
+// in the test_results.facets column, and that durationMs/message are NOT extracted from
+// assertion facets (these fields don't exist in standard OL or GE-ol assertions).
+func testExtractRawFacetsStored(ctx context.Context, t *testing.T, store *LineageStore, conn *Connection) {
 	t.Helper()
 
-	// Create event with assertions containing extended fields
+	// Create event with assertions containing extended fields that we intentionally ignore
 	event := createEventWithAssertions(
-		"extended-fields-test",
+		"raw-facets-test",
 		[]assertionData{
 			{
-				assertion:  "unique_customer_id",
+				assertion:  "unique_customer_id_raw",
 				success:    false,
 				column:     "customer_id",
 				durationMs: 1250,
 				message:    "Got 5 results, configured to fail if != 0",
 			},
 			{
-				assertion:  "not_null_customer_name",
+				assertion:  "not_null_customer_name_raw",
 				success:    true,
 				column:     "customer_name",
 				durationMs: 823,
-				message:    "", // Passed tests typically don't have message
+				message:    "",
 			},
 		},
 	)
@@ -1830,17 +1832,15 @@ func testExtractExtendedFields(ctx context.Context, t *testing.T, store *Lineage
 	count := countTestResultsForJobRun(ctx, t, conn, event.Run.ID)
 	assert.Equal(t, 2, count, "Should have 2 test results extracted from facet")
 
-	// Verify extended fields for failed test
-	failedResult := getTestResultByTestName(ctx, t, conn, "unique_customer_id")
+	// Verify durationMs and message are NOT extracted (these fields don't exist in standard OL assertions)
+	failedResult := getTestResultByTestName(ctx, t, conn, "unique_customer_id_raw")
 	assert.Equal(t, "failed", failedResult.status)
-	assert.Equal(t, 1250, failedResult.durationMs, "durationMs should be extracted")
-	assert.Equal(t, "Got 5 results, configured to fail if != 0", failedResult.message, "message should be extracted")
+	assert.Equal(t, 0, failedResult.durationMs, "durationMs should not be extracted from OL assertions")
+	assert.Empty(t, failedResult.message, "message should not be extracted from OL assertions")
 
-	// Verify extended fields for passed test
-	passedResult := getTestResultByTestName(ctx, t, conn, "not_null_customer_name")
-	assert.Equal(t, "passed", passedResult.status)
-	assert.Equal(t, 823, passedResult.durationMs, "durationMs should be extracted for passed test")
-	assert.Empty(t, passedResult.message, "message should be empty for passed test")
+	// Verify raw input facets are stored in test_results.facets
+	assert.NotNil(t, failedResult.facets, "raw input facets should be stored")
+	assert.Contains(t, failedResult.facets, "dataQualityAssertions", "facets should contain the assertion facet")
 }
 
 // TestExtractGEAssertions tests extraction of test results from
@@ -2148,22 +2148,29 @@ func getTestResultByTestName(ctx context.Context, t *testing.T, conn *Connection
 	t.Helper()
 
 	var (
-		result  testResultRow
-		message sql.NullString
+		result    testResultRow
+		message   sql.NullString
+		facetsRaw []byte
 	)
 
-	query := `SELECT test_name, test_type, status, dataset_urn, run_id, duration_ms, message
+	query := `SELECT test_name, test_type, status, dataset_urn, run_id, duration_ms, message, facets
               FROM test_results WHERE test_name = $1`
 
 	err := conn.QueryRowContext(ctx, query, testName).Scan(
 		&result.testName, &result.testType, &result.status, &result.datasetURN, &result.runID,
-		&result.durationMs, &message,
+		&result.durationMs, &message, &facetsRaw,
 	)
 	if err != nil {
 		t.Fatalf("Failed to get test result: %v", err)
 	}
 
 	result.message = message.String
+
+	if len(facetsRaw) > 0 {
+		if err := json.Unmarshal(facetsRaw, &result.facets); err != nil {
+			t.Fatalf("Failed to unmarshal test result facets: %v", err)
+		}
+	}
 
 	return result
 }
@@ -2246,4 +2253,273 @@ func testStoreEventParentRunFacet(ctx context.Context, store *LineageStore, conn
 			t.Errorf("parent_run_id = %q, want %q", *storedParentRunID, parentRunUUID)
 		}
 	}
+}
+
+// TestDatasetWriteRules verifies that dataset records are written correctly based on
+// whether the event is from a producer or validator, and whether the dataset is an input or output.
+// This is the core data layer alignment change — see notes/tasks/week-4-data-layer-alignment.md.
+func TestDatasetWriteRules(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	container, conn := setupTestDatabase(ctx, t)
+
+	defer func() {
+		_ = conn.Close()
+		_ = container.Terminate(ctx)
+	}()
+
+	store, err := NewLineageStore(conn, 1*time.Hour)
+	require.NoError(t, err)
+
+	defer store.Close()
+
+	t.Run("ProducerOutputDataset", func(t *testing.T) {
+		// Producer event: has outputs → output dataset gets full upsert + last_producing_run_id
+		event := createTestEvent("producer-output", ingestion.EventTypeComplete, 0, 1)
+		event.Outputs[0].Facets = ingestion.Facets{
+			"schema": map[string]interface{}{"fields": []interface{}{"id", "name"}},
+		}
+		event.Outputs[0].OutputFacets = ingestion.Facets{
+			"outputStats": map[string]interface{}{"rowCount": float64(500)},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, event)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		// Verify facets stored: common + output-prefixed
+		facets := getDatasetFacets(ctx, t, conn, event.Outputs[0].URN())
+		assert.Contains(t, facets, "schema", "common facets should be stored")
+		assert.Contains(t, facets, "output_outputStats", "output facets should be stored with prefix")
+
+		// Verify last_producing_run_id is set
+		producerRunID := getDatasetProducerRunID(ctx, t, conn, event.Outputs[0].URN())
+		assert.NotNil(t, producerRunID, "last_producing_run_id should be set for output dataset")
+		assert.Equal(t, event.Run.ID, *producerRunID)
+	})
+
+	t.Run("ProducerInputDataset", func(t *testing.T) {
+		// Producer event: has outputs → input datasets get common facets but NOT last_producing_run_id.
+		event := createTestEvent("producer-input", ingestion.EventTypeComplete, 1, 1)
+		event.Inputs[0].Facets = ingestion.Facets{
+			"schema":     map[string]interface{}{"fields": []interface{}{"order_id"}},
+			"dataSource": map[string]interface{}{"name": "prod-db", "uri": "postgresql://prod-db:5432"},
+		}
+		// InputFacets are empty in practice. However, we verify both common facets and the
+		// input facet flatten path (prefixed "input_") for structural completeness.
+		event.Inputs[0].InputFacets = ingestion.Facets{
+			"customLineage": map[string]interface{}{"origin": "upstream_system"},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, event)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		// Verify common facets stored
+		facets := getDatasetFacets(ctx, t, conn, event.Inputs[0].URN())
+		assert.Contains(t, facets, "schema", "common facets should be stored for consumed dataset")
+		assert.Contains(t, facets, "dataSource", "common facets should be stored for consumed dataset")
+
+		// Verify input facets stored with prefix
+		assert.Contains(t, facets, "input_customLineage", "input facets should be flattened with prefix")
+
+		// Verify last_producing_run_id is NOT set (producer reads this dataset, doesn't create it)
+		producerRunID := getDatasetProducerRunID(ctx, t, conn, event.Inputs[0].URN())
+		assert.Nil(t, producerRunID, "last_producing_run_id should NOT be set for input dataset")
+	})
+
+	t.Run("ValidatorExistingDataset", func(t *testing.T) {
+		// Step 1: Producer creates the dataset
+		producerEvent := createTestEvent("validator-existing-producer", ingestion.EventTypeComplete, 0, 1)
+		producerEvent.Outputs[0].Namespace = "postgresql://prod-db:5432"
+		producerEvent.Outputs[0].Name = "analytics.public.validator_existing_target"
+		producerEvent.Outputs[0].Facets = ingestion.Facets{
+			"schema":     map[string]interface{}{"fields": []interface{}{"id"}},
+			"dataSource": map[string]interface{}{"name": "prod-db"},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, producerEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		datasetURN := producerEvent.Outputs[0].URN()
+		facetsBefore := getDatasetFacets(ctx, t, conn, datasetURN)
+		producerRunIDBefore := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+
+		// Step 2: Validator observes the same dataset — should NOT touch datasets table
+		validatorEvent := createTestEvent("validator-existing-validator", ingestion.EventTypeComplete, 1, 0)
+		validatorEvent.Inputs[0].Namespace = "postgresql://prod-db:5432"
+		validatorEvent.Inputs[0].Name = "analytics.public.validator_existing_target"
+		validatorEvent.Inputs[0].InputFacets = ingestion.Facets{
+			"dataQualityAssertions": map[string]interface{}{
+				"assertions": []interface{}{
+					map[string]interface{}{"assertion": "not_null_id", "success": true},
+				},
+			},
+		}
+
+		stored, _, err = store.StoreEvent(ctx, validatorEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		// Verify datasets table unchanged
+		facetsAfter := getDatasetFacets(ctx, t, conn, datasetURN)
+		producerRunIDAfter := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+
+		assert.Equal(t, facetsBefore, facetsAfter, "validator should NOT modify existing dataset facets")
+		assert.Equal(t, producerRunIDBefore, producerRunIDAfter, "validator should NOT modify last_producing_run_id")
+
+		// Verify validator observations went to test_results
+		count := countTestResultsForJobRun(ctx, t, conn, validatorEvent.Run.ID)
+		assert.Equal(t, 1, count, "validator assertions should be stored in test_results")
+	})
+
+	t.Run("ValidatorMissingDataset", func(t *testing.T) {
+		// Validator event for a dataset that doesn't exist yet (out-of-order arrival)
+		validatorEvent := createTestEvent("validator-missing", ingestion.EventTypeComplete, 1, 0)
+		validatorEvent.Inputs[0].Namespace = "postgresql://prod-db:5432"
+		validatorEvent.Inputs[0].Name = "analytics.public.validator_missing_target"
+		validatorEvent.Inputs[0].InputFacets = ingestion.Facets{
+			"dataQualityAssertions": map[string]interface{}{
+				"assertions": []interface{}{
+					map[string]interface{}{"assertion": "unique_id", "success": false},
+				},
+			},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, validatorEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		datasetURN := validatorEvent.Inputs[0].URN()
+
+		// Verify skeleton dataset created
+		facets := getDatasetFacets(ctx, t, conn, datasetURN)
+		assert.Empty(t, facets, "skeleton dataset should have empty facets")
+
+		// Verify last_producing_run_id is NULL
+		producerRunID := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+		assert.Nil(t, producerRunID, "skeleton dataset should have NULL last_producing_run_id")
+
+		// Verify test results are stored
+		count := countTestResultsForJobRun(ctx, t, conn, validatorEvent.Run.ID)
+		assert.Equal(t, 1, count, "validator assertions should be stored even for missing dataset")
+	})
+
+	t.Run("OutOfOrder_ValidatorThenProducer", func(t *testing.T) {
+		// Step 1: Validator arrives first — creates skeleton
+		validatorEvent := createTestEvent("ooo-val-then-prod-validator", ingestion.EventTypeComplete, 1, 0)
+		validatorEvent.Inputs[0].Namespace = "postgresql://prod-db:5432"
+		validatorEvent.Inputs[0].Name = "analytics.public.ooo_val_prod_target"
+		validatorEvent.Inputs[0].InputFacets = ingestion.Facets{
+			"dataQualityAssertions": map[string]interface{}{
+				"assertions": []interface{}{
+					map[string]interface{}{"assertion": "check_ooo", "success": true},
+				},
+			},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, validatorEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		datasetURN := validatorEvent.Inputs[0].URN()
+
+		// Verify skeleton: empty facets, NULL last_producing_run_id
+		skeletonFacets := getDatasetFacets(ctx, t, conn, datasetURN)
+		assert.Empty(t, skeletonFacets, "skeleton should have empty facets before producer arrives")
+
+		skeletonProducerRunID := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+		assert.Nil(t, skeletonProducerRunID, "skeleton should have NULL last_producing_run_id")
+
+		// Step 2: Producer arrives — fills in skeleton with real data
+		producerEvent := createTestEvent("ooo-val-then-prod-producer", ingestion.EventTypeComplete, 0, 1)
+		producerEvent.Outputs[0].Namespace = "postgresql://prod-db:5432"
+		producerEvent.Outputs[0].Name = "analytics.public.ooo_val_prod_target"
+		producerEvent.Outputs[0].Facets = ingestion.Facets{
+			"schema": map[string]interface{}{"fields": []interface{}{"id", "name"}},
+		}
+
+		stored, _, err = store.StoreEvent(ctx, producerEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		// Verify producer superseded skeleton: facets populated, last_producing_run_id set
+		facets := getDatasetFacets(ctx, t, conn, datasetURN)
+		assert.Contains(t, facets, "schema", "producer should fill in skeleton facets")
+
+		producerRunID := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+		assert.NotNil(t, producerRunID, "producer should set last_producing_run_id on former skeleton")
+		assert.Equal(t, producerEvent.Run.ID, *producerRunID)
+	})
+
+	t.Run("OutOfOrder_ProducerThenValidator", func(t *testing.T) {
+		// Step 1: Producer creates dataset with rich facets
+		producerEvent := createTestEvent("ooo-prod-then-val-producer", ingestion.EventTypeComplete, 0, 1)
+		producerEvent.Outputs[0].Namespace = "postgresql://prod-db:5432"
+		producerEvent.Outputs[0].Name = "analytics.public.ooo_prod_val_target"
+		producerEvent.Outputs[0].Facets = ingestion.Facets{
+			"schema":     map[string]interface{}{"fields": []interface{}{"id", "name"}},
+			"dataSource": map[string]interface{}{"name": "prod-db"},
+		}
+
+		stored, _, err := store.StoreEvent(ctx, producerEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		datasetURN := producerEvent.Outputs[0].URN()
+		facetsBefore := getDatasetFacets(ctx, t, conn, datasetURN)
+		producerRunIDBefore := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+
+		// Step 2: Validator arrives after — must NOT overwrite producer data
+		validatorEvent := createTestEvent("ooo-prod-then-val-validator", ingestion.EventTypeComplete, 1, 0)
+		validatorEvent.Inputs[0].Namespace = "postgresql://prod-db:5432"
+		validatorEvent.Inputs[0].Name = "analytics.public.ooo_prod_val_target"
+		validatorEvent.Inputs[0].InputFacets = ingestion.Facets{
+			"dataQualityAssertions": map[string]interface{}{
+				"assertions": []interface{}{
+					map[string]interface{}{"assertion": "check_after_prod", "success": false},
+				},
+			},
+		}
+
+		stored, _, err = store.StoreEvent(ctx, validatorEvent)
+		require.NoError(t, err)
+		assert.True(t, stored)
+
+		// Verify producer data untouched
+		facetsAfter := getDatasetFacets(ctx, t, conn, datasetURN)
+		producerRunIDAfter := getDatasetProducerRunID(ctx, t, conn, datasetURN)
+
+		assert.Equal(t, facetsBefore, facetsAfter, "validator must NOT overwrite producer facets")
+		assert.Equal(t, producerRunIDBefore, producerRunIDAfter, "validator must NOT overwrite last_producing_run_id")
+
+		// Verify validator observations went to test_results
+		count := countTestResultsForJobRun(ctx, t, conn, validatorEvent.Run.ID)
+		assert.Equal(t, 1, count, "validator assertions should be stored in test_results")
+	})
+}
+
+// getDatasetProducerRunID retrieves the last_producing_run_id for a dataset.
+// Returns nil if the column is NULL.
+func getDatasetProducerRunID(ctx context.Context, t *testing.T, conn *Connection, datasetURN string) *string {
+	t.Helper()
+
+	var producerRunID sql.NullString
+
+	err := conn.QueryRowContext(ctx,
+		"SELECT last_producing_run_id FROM datasets WHERE dataset_urn = $1", datasetURN,
+	).Scan(&producerRunID)
+	if err != nil {
+		t.Fatalf("Failed to get last_producing_run_id: %v", err)
+	}
+
+	if !producerRunID.Valid {
+		return nil
+	}
+
+	return &producerRunID.String
 }
