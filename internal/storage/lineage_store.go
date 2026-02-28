@@ -1045,21 +1045,11 @@ func (s *LineageStore) executeJobRunUpsert(
 // Creates separate lineage edge rows for each input and output dataset.
 func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, event *ingestion.RunEvent) error {
 	runID := event.Run.ID
+	isValidator := len(event.Outputs) == 0
 
-	// Upsert input datasets and create input edges
-	for _, dataset := range event.Inputs {
-		if err := s.upsertDataset(ctx, tx, &dataset); err != nil {
-			return fmt.Errorf("failed to upsert input dataset: %w", err)
-		}
-
-		if err := s.createLineageEdge(ctx, tx, runID, "input", dataset); err != nil {
-			return fmt.Errorf("failed to create input edge: %w", err)
-		}
-	}
-
-	// Upsert output datasets and create output edges
+	// Process output datasets (producer events only — validators have no outputs)
 	for _, dataset := range event.Outputs {
-		if err := s.upsertDataset(ctx, tx, &dataset); err != nil {
+		if err := s.upsertProducedDataset(ctx, tx, &dataset, runID); err != nil {
 			return fmt.Errorf("failed to upsert output dataset: %w", err)
 		}
 
@@ -1068,22 +1058,40 @@ func (s *LineageStore) upsertDatasetsAndEdges(ctx context.Context, tx *sql.Tx, e
 		}
 	}
 
+	// Process input datasets for both producers and validators
+	for _, dataset := range event.Inputs {
+		if isValidator {
+			// Validator: create skeleton record only if dataset doesn't exist.
+			// Validator observations belong in test_results, not datasets.
+			if err := s.ensureDatasetExists(ctx, tx, &dataset); err != nil {
+				return fmt.Errorf("failed to ensure input dataset exists: %w", err)
+			}
+		} else {
+			// Producer: full upsert with common facets (e.g. schema), but do NOT
+			// set last_producing_run_id — the producer reads these, it didn't create them.
+			if err := s.upsertConsumedDataset(ctx, tx, &dataset); err != nil {
+				return fmt.Errorf("failed to upsert input dataset: %w", err)
+			}
+		}
+
+		if err := s.createLineageEdge(ctx, tx, runID, "input", dataset); err != nil {
+			return fmt.Errorf("failed to create input edge: %w", err)
+		}
+	}
+
 	return nil
 }
 
-// upsertDataset inserts or updates a dataset record.
-func (s *LineageStore) upsertDataset(ctx context.Context, tx *sql.Tx, dataset *ingestion.Dataset) error {
-	datasetURN := dataset.URN()
-
-	// Combine all facets into single JSONB
+// upsertProducedDataset inserts or updates a dataset that a producer run outputs.
+// Stores common facets + output facets (prefixed "output_") and sets last_producing_run_id.
+// On conflict: merges facets and updates last_producing_run_id to the current run.
+func (s *LineageStore) upsertProducedDataset(
+	ctx context.Context, tx *sql.Tx, dataset *ingestion.Dataset, runID string,
+) error {
 	allFacets := make(map[string]interface{})
 
 	for k, v := range dataset.Facets {
 		allFacets[k] = v
-	}
-
-	for k, v := range dataset.InputFacets {
-		allFacets["input_"+k] = v
 	}
 
 	for k, v := range dataset.OutputFacets {
@@ -1097,37 +1105,82 @@ func (s *LineageStore) upsertDataset(ctx context.Context, tx *sql.Tx, dataset *i
 
 	query := `
 		INSERT INTO datasets (
-			dataset_urn,
-			name,
-			namespace,
-			facets,
-			created_at,
-			updated_at
-		) VALUES ($1, $2, $3, $4, NOW(), NOW())
-		ON CONFLICT (dataset_urn) DO UPDATE
-		SET
+			dataset_urn, name, namespace, facets, last_producing_run_id,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (dataset_urn) DO UPDATE SET
 			facets = datasets.facets || EXCLUDED.facets,
+			last_producing_run_id = EXCLUDED.last_producing_run_id,
 			updated_at = NOW()
 	`
 
-	_, err = tx.ExecContext(
-		ctx,
-		query,
-		datasetURN,
-		dataset.Name,
-		dataset.Namespace,
-		facetsJSON,
-	)
+	_, err = tx.ExecContext(ctx, query, dataset.URN(), dataset.Name, dataset.Namespace, facetsJSON, runID)
 	if err != nil {
-		return fmt.Errorf("failed to upsert dataset: %w", err)
+		return fmt.Errorf("failed to upsert produced dataset: %w", err)
 	}
 
 	return nil
 }
 
-// createLineageEdge creates or updates a lineage edge (input or output) for a job run.
-// Uses UPSERT to handle duplicate edges - merges facets instead of creating duplicates.
-// Facet merging strategy: Keep non-empty facets (new facets win if both are non-empty).
+// upsertConsumedDataset inserts or updates a dataset that a producer run reads as input.
+// Flattens common facets + input facets (prefixed "input_") into a single JSONB object.
+// Does NOT set last_producing_run_id — the producer reads this dataset, it didn't create it.
+func (s *LineageStore) upsertConsumedDataset(ctx context.Context, tx *sql.Tx, dataset *ingestion.Dataset) error {
+	allFacets := make(map[string]interface{})
+
+	for k, v := range dataset.Facets {
+		allFacets[k] = v
+	}
+
+	for k, v := range dataset.InputFacets {
+		allFacets["input_"+k] = v
+	}
+
+	facetsJSON, err := json.Marshal(allFacets)
+	if err != nil {
+		return fmt.Errorf("failed to marshal facets: %w", err)
+	}
+
+	query := `
+		INSERT INTO datasets (
+			dataset_urn, name, namespace, facets,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (dataset_urn) DO UPDATE SET
+			facets = datasets.facets || EXCLUDED.facets,
+			updated_at = NOW()
+	`
+
+	_, err = tx.ExecContext(ctx, query, dataset.URN(), dataset.Name, dataset.Namespace, facetsJSON)
+	if err != nil {
+		return fmt.Errorf("failed to upsert consumed dataset: %w", err)
+	}
+
+	return nil
+}
+
+// ensureDatasetExists creates a minimal dataset record if none exists.
+// Used for validator events whose input datasets may not have been created by a producer yet
+// (out-of-order event arrival). Never overwrites existing data — ON CONFLICT DO NOTHING.
+func (s *LineageStore) ensureDatasetExists(ctx context.Context, tx *sql.Tx, dataset *ingestion.Dataset) error {
+	query := `
+		INSERT INTO datasets (
+			dataset_urn, name, namespace, facets,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, '{}', NOW(), NOW())
+		ON CONFLICT (dataset_urn) DO NOTHING
+	`
+
+	_, err := tx.ExecContext(ctx, query, dataset.URN(), dataset.Name, dataset.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to ensure dataset exists: %w", err)
+	}
+
+	return nil
+}
+
+// createLineageEdge creates a lineage edge (input or output) for a job run.
+// Uses UPSERT to handle duplicate edges — ON CONFLICT is a no-op since edges are immutable facts.
 func (s *LineageStore) createLineageEdge(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1135,67 +1188,26 @@ func (s *LineageStore) createLineageEdge(
 	edgeType string,
 	dataset ingestion.Dataset,
 ) error {
-	var facets ingestion.Facets
-
-	switch edgeType {
-	case "input":
-		facets = dataset.InputFacets
-	case "output":
-		facets = dataset.OutputFacets
-	default:
+	if edgeType != "input" && edgeType != "output" {
 		return fmt.Errorf("%w: got %q", ErrInvalidEdgeType, edgeType)
 	}
 
-	facetsJSON, err := json.Marshal(facets)
-	if err != nil {
-		return fmt.Errorf("failed to marshal facets: %w", err)
-	}
-
-	// UPSERT with facet merging strategy:
-	// - If existing facets are empty ({}), use new facets
-	// - If new facets are empty ({}), keep existing facets
-	// - If both have data, merge them (new facets win for conflicting keys)
-	//
-	// The CASE statements handle the merge logic:
-	// 1. If new facets are empty, keep existing
-	// 2. If existing facets are empty, use new
-	// 3. Otherwise, merge with || operator (right side wins)
 	query := `
 		INSERT INTO lineage_edges (
 			run_id,
 			dataset_urn,
 			edge_type,
-			input_facets,
-			output_facets,
 			created_at
-		) VALUES (
-			$1, $2, $3::text,
-			CASE WHEN $3::text = 'input' THEN $4::jsonb ELSE '{}'::jsonb END,
-			CASE WHEN $3::text = 'output' THEN $4::jsonb ELSE '{}'::jsonb END,
-			NOW()
-		)
-		ON CONFLICT (run_id, dataset_urn, edge_type) DO UPDATE SET
-			input_facets = CASE
-				WHEN $3::text != 'input' THEN lineage_edges.input_facets
-				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.input_facets
-				WHEN lineage_edges.input_facets = '{}'::jsonb THEN $4::jsonb
-				ELSE lineage_edges.input_facets || $4::jsonb
-			END,
-			output_facets = CASE
-				WHEN $3::text != 'output' THEN lineage_edges.output_facets
-				WHEN $4::jsonb = '{}'::jsonb THEN lineage_edges.output_facets
-				WHEN lineage_edges.output_facets = '{}'::jsonb THEN $4::jsonb
-				ELSE lineage_edges.output_facets || $4::jsonb
-			END
+		) VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (run_id, dataset_urn, edge_type) DO NOTHING
 	`
 
-	_, err = tx.ExecContext(
+	_, err := tx.ExecContext(
 		ctx,
 		query,
 		runID,
 		dataset.URN(),
 		edgeType,
-		facetsJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert lineage edge: %w", err)
@@ -1429,7 +1441,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 //   - testNameField: The JSON field holding the test name (e.g. "assertion", "expectationType")
 //   - testType: The test_type value to store (e.g. "dataQualityAssertion", "greatExpectationsAssertion")
 //
-//nolint:gocognit,funlen,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
+//nolint:funlen // Parsing untyped OpenLineage facets requires sequential type assertions
 func (s *LineageStore) extractAssertionsFromFacet(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1525,18 +1537,11 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			metadata = map[string]interface{}{"column": column}
 		}
 
-		// TODO: Remove durationMs and message fields. They are not relevant anymore since we pivoted to OL integrations
-		// Extract optional durationMs (milliseconds) - spec-compliant extended field
-		var durationMs int
-		if dur, ok := assertion["durationMs"].(float64); ok {
-			durationMs = int(dur)
-		}
-
-		// Extract optional message - spec-compliant extended field
-		var message string
-		if msg, ok := assertion["message"].(string); ok {
-			message = msg
-		}
+		// NOTE: duration_ms and message columns remain in the test_results schema but are not
+		// extracted from OL assertion facets. Neither the standard OL DataQualityAssertionsDatasetFacet
+		// nor GE-ol's greatExpectations_assertions include these fields. If future OL spec versions
+		// add them, extraction can be re-enabled here. Consider contributing to OL integration, by adding these fields
+		// if the fields are required by a critical feature in Correlator requested by user community.
 
 		if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
 			TestName:        testName,
@@ -1544,9 +1549,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			DatasetURN:      input.URN(),
 			RunID:           runID,
 			Status:          status,
-			Message:         message,
-			DurationMs:      durationMs,
 			Metadata:        metadata,
+			Facets:          input.InputFacets,
 			ExecutedAt:      event.EventTime,
 			ProducerName:    extractProducerName(event.Producer),
 			ProducerVersion: extractProducerVersion(event.Producer),
@@ -1573,10 +1577,14 @@ func (s *LineageStore) storeTestResult(
 	tx *sql.Tx,
 	testResult *ingestion.TestResult,
 ) error {
-	// Marshal metadata to JSONB
 	metadataJSON, err := marshalJSONB(testResult.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	facetsJSON, err := marshalJSONB(testResult.Facets)
+	if err != nil {
+		return fmt.Errorf("failed to marshal facets: %w", err)
 	}
 
 	query := `
@@ -1588,11 +1596,12 @@ func (s *LineageStore) storeTestResult(
 			status,
 			message,
 			metadata,
+			facets,
 			executed_at,
 			duration_ms,
 			producer_name,
 			producer_version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (test_name, dataset_urn, executed_at)
 		DO UPDATE SET
 			test_type = EXCLUDED.test_type,
@@ -1600,6 +1609,7 @@ func (s *LineageStore) storeTestResult(
 			status = EXCLUDED.status,
 			message = EXCLUDED.message,
 			metadata = EXCLUDED.metadata,
+			facets = EXCLUDED.facets,
 			duration_ms = EXCLUDED.duration_ms,
 			producer_name = EXCLUDED.producer_name,
 			producer_version = EXCLUDED.producer_version,
@@ -1616,6 +1626,7 @@ func (s *LineageStore) storeTestResult(
 		testResult.Status.String(),
 		testResult.Message,
 		metadataJSON,
+		facetsJSON,
 		testResult.ExecutedAt,
 		testResult.DurationMs,
 		testResult.ProducerName,

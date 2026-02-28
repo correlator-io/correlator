@@ -323,31 +323,36 @@ directly as the primary key, eliminating the `tool:runId` canonical prefix forma
 ### Tables
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   job_runs      │    │    datasets     │    │  lineage_edges  │
-├─────────────────┤    ├─────────────────┤    ├─────────────────┤
-│ run_id (PK,UUID)│◀───│ dataset_urn (PK)│◀───│ id (PK)         │
-│ job_name        │    │ name            │    │ run_id (FK,UUID)│
-│                 │    │ namespace       │    │ dataset_urn (FK)│
-│ job_namespace   │    │ facets (JSONB)  │    │ edge_type       │
-│ current_state   │    │ created_at      │    │ input_facets    │
-│ state_history   │    │ updated_at      │    │ output_facets   │
-│ event_time      │    └─────────────────┘    │ created_at      │
-│ metadata (JSONB)│                           └─────────────────┘
-│ producer_name   │
-│ created_at      │    ┌─────────────────┐    ┌─────────────────┐
-│ updated_at      │    │  test_results   │    │    api_keys     │
-└─────────────────┘    ├─────────────────┤    ├─────────────────┤
-                       │ id (PK)         │    │ id (PK)         │
-                       │ test_name       │    │ plugin_id       │
-                       │ dataset_urn (FK)│    │ key_hash        │
-                       │ run_id (FK,UUID)│    │ key_prefix      │
-                       │ status          │    │ permissions     │
-                       │ metadata (JSONB)│    │ active          │
-                       │ executed_at     │    │ expires_at      │
-                       │ created_at      │    │ created_at      │
-                       │ updated_at      │    │ updated_at      │
-                       └─────────────────┘    └─────────────────┘
+┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────┐
+│   job_runs          │  │    datasets         │  │  lineage_edges  │
+├─────────────────────┤  ├─────────────────────┤  ├─────────────────┤
+│ run_id (PK,UUID)    │◀─│ dataset_urn (PK)    │◀─│ id (PK)         │
+│ job_name            │  │ name                │  │ run_id (FK,UUID)│
+│ job_namespace       │  │ namespace           │  │ dataset_urn (FK)│
+│ current_state       │  │ facets (JSONB)      │  │ edge_type       │
+│ state_history       │  │ last_producing_     │  │ created_at      │
+│ event_time          │  │   run_id (FK,UUID)  │  └─────────────────┘
+│ metadata (JSONB)    │  │ created_at          │
+│ producer_name       │  │ updated_at          │  ┌─────────────────┐
+│ parent_run_id       │  └─────────────────────┘  │resolved_datasets│
+│ root_parent_run_id  │                           ├─────────────────┤
+│ created_at          │  ┌─────────────────────┐  │ raw_urn (PK)    │
+│ updated_at          │  │  test_results       │  │ canonical_urn   │
+└─────────────────────┘  ├─────────────────────┤  └─────────────────┘
+                         │ id (PK)             │
+┌─────────────────────┐  │ test_name           │
+│    api_keys         │  │ dataset_urn (FK)    │
+├─────────────────────┤  │ run_id (FK,UUID)    │
+│ id (PK)             │  │ status              │
+│ plugin_id           │  │ metadata (JSONB)    │
+│ key_hash            │  │ facets (JSONB)      │
+│ key_lookup_hash     │  │ executed_at         │
+│ permissions         │  │ created_at          │
+│ active              │  │ updated_at          │
+│ expires_at          │  └─────────────────────┘
+│ created_at          │
+│ updated_at          │
+└─────────────────────┘
 ```
 
 ### Materialized Views
