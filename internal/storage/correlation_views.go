@@ -1007,6 +1007,9 @@ func (s *LineageStore) QueryCorrelationHealth(ctx context.Context) (*correlation
 
 	// Generate pattern suggestions from orphans
 	suggestedPatterns := correlation.SuggestPatterns(orphans)
+	if len(suggestedPatterns) == 0 {
+		s.logger.Warn("failed to generate pattern suggestions from orphans", slog.Any("orphans", orphans))
+	}
 
 	// Query health statistics
 	stats, err := s.queryHealthStats(ctx)

@@ -244,7 +244,7 @@ func TestSuggestPatterns_ProtocolInCanonical(t *testing.T) {
 }
 
 // TestSuggestPatterns_NameMismatchSkipped tests that orphan/match pairs with
-// different dataset names are skipped (pattern substitution wouldn't work).
+// different dataset names AND different namespaces are skipped.
 func TestSuggestPatterns_NameMismatchSkipped(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -259,5 +259,209 @@ func TestSuggestPatterns_NameMismatchSkipped(t *testing.T) {
 
 	patterns := SuggestPatterns(orphans)
 
-	assert.Empty(t, patterns, "Should not suggest pattern when names differ")
+	assert.Empty(t, patterns, "Should not suggest pattern when names differ across namespaces")
+}
+
+// --- Same-namespace name-transformation tests ---
+
+// TestSuggestPatterns_SameNamespace_PrefixAddition tests anchored pattern generation
+// when GE emits {schema}.{table} and dbt emits {db}.{schema}.{table} in the same namespace.
+func TestSuggestPatterns_SameNamespace_PrefixAddition(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN: "postgresql://demo-postgres/marts.customers",
+			LikelyMatch: &DatasetMatch{
+				DatasetURN:  "postgresql://demo-postgres/demo.marts.customers",
+				Confidence:  1.0,
+				MatchReason: "exact_table_name",
+			},
+		},
+		{
+			DatasetURN: "postgresql://demo-postgres/marts.orders",
+			LikelyMatch: &DatasetMatch{
+				DatasetURN:  "postgresql://demo-postgres/demo.marts.orders",
+				Confidence:  1.0,
+				MatchReason: "exact_table_name",
+			},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 1, "Should suggest 1 anchored pattern")
+	assert.Equal(t, "postgresql://demo-postgres/marts.{table}", patterns[0].Pattern)
+	assert.Equal(t, "postgresql://demo-postgres/demo.marts.{table}", patterns[0].Canonical)
+	assert.Equal(t, 2, patterns[0].ResolvesCount)
+	assert.ElementsMatch(t, []string{
+		"postgresql://demo-postgres/marts.customers",
+		"postgresql://demo-postgres/marts.orders",
+	}, patterns[0].OrphansResolved)
+}
+
+// TestSuggestPatterns_SameNamespace_MultipleSchemas tests that orphans from different
+// schemas produce separate anchored patterns (different anchors = different groups).
+func TestSuggestPatterns_SameNamespace_MultipleSchemas(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN:  "postgresql://demo-postgres/marts.customers",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/demo.marts.customers"},
+		},
+		{
+			DatasetURN:  "postgresql://demo-postgres/staging.raw_events",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/demo.staging.raw_events"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 2, "Should suggest 2 patterns (different anchors)")
+
+	patternMap := make(map[string]SuggestedPattern)
+	for _, p := range patterns {
+		patternMap[p.Pattern] = p
+	}
+
+	p1, ok := patternMap["postgresql://demo-postgres/marts.{table}"]
+	require.True(t, ok, "Should have marts anchor pattern")
+	assert.Equal(t, "postgresql://demo-postgres/demo.marts.{table}", p1.Canonical)
+	assert.Equal(t, 1, p1.ResolvesCount)
+
+	p2, ok := patternMap["postgresql://demo-postgres/staging.{table}"]
+	require.True(t, ok, "Should have staging anchor pattern")
+	assert.Equal(t, "postgresql://demo-postgres/demo.staging.{table}", p2.Canonical)
+	assert.Equal(t, 1, p2.ResolvesCount)
+}
+
+// TestSuggestPatterns_SameNamespace_PrefixStripping tests the reversed case where
+// the orphan has MORE segments than the canonical (strip prefix instead of add).
+func TestSuggestPatterns_SameNamespace_PrefixStripping(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN:  "postgresql://demo-postgres/demo.marts.customers",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/marts.customers"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 1, "Should suggest 1 prefix-stripping pattern")
+	assert.Equal(t, "postgresql://demo-postgres/demo.marts.{table}", patterns[0].Pattern)
+	assert.Equal(t, "postgresql://demo-postgres/marts.{table}", patterns[0].Canonical)
+	assert.Equal(t, 1, patterns[0].ResolvesCount)
+}
+
+// TestSuggestPatterns_SameNamespace_SingleSegmentFallback tests exact mapping fallback
+// when orphan name has only one segment (no anchor possible).
+func TestSuggestPatterns_SameNamespace_SingleSegmentFallback(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN:  "postgresql://demo-postgres/customers",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/demo.customers"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 1, "Should suggest exact mapping for single-segment name")
+	// Exact mapping: no {table} variable, full URN as pattern
+	assert.Equal(t, "postgresql://demo-postgres/customers", patterns[0].Pattern)
+	assert.Equal(t, "postgresql://demo-postgres/demo.customers", patterns[0].Canonical)
+	assert.Equal(t, 1, patterns[0].ResolvesCount)
+}
+
+// TestSuggestPatterns_SameNamespace_NoSuffixRelationship tests that same-namespace
+// pairs with unrelated names are skipped (no suffix match at dot boundaries).
+func TestSuggestPatterns_SameNamespace_NoSuffixRelationship(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN:  "postgresql://demo-postgres/foo.bar",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/baz.qux"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	assert.Empty(t, patterns, "Should not suggest pattern when names have no suffix relationship")
+}
+
+// TestSuggestPatterns_Mixed_NamespaceAndNameTransformations tests that namespace-level
+// and name-level patterns coexist without cross-contamination.
+func TestSuggestPatterns_Mixed_NamespaceAndNameTransformations(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		// Namespace transformation: demo_postgres → postgresql://demo-postgres
+		{
+			DatasetURN:  "demo_postgres/marts.customers",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/marts.customers"},
+		},
+		// Name transformation: same namespace, different name depth
+		{
+			DatasetURN:  "postgresql://demo-postgres/marts.orders",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo-postgres/demo.marts.orders"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 2, "Should suggest both namespace and name patterns")
+
+	patternMap := make(map[string]SuggestedPattern)
+	for _, p := range patterns {
+		patternMap[p.Pattern] = p
+	}
+
+	// Verify namespace transformation pattern
+	p1, ok := patternMap["demo_postgres/{name}"]
+	require.True(t, ok, "Should have namespace transformation pattern")
+	assert.Equal(t, "postgresql://demo-postgres/{name}", p1.Canonical)
+
+	// Verify name transformation pattern
+	p2, ok := patternMap["postgresql://demo-postgres/marts.{table}"]
+	require.True(t, ok, "Should have name transformation pattern")
+	assert.Equal(t, "postgresql://demo-postgres/demo.marts.{table}", p2.Canonical)
+}
+
+// TestSuggestPatterns_SameNamespace_DeepHierarchy tests anchored pattern with 3+ segment
+// orphan names (anchor includes all segments except the last).
+func TestSuggestPatterns_SameNamespace_DeepHierarchy(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("skipping unit test in non-short mode")
+	}
+
+	orphans := []OrphanDataset{
+		{
+			DatasetURN:  "postgresql://db/a.b.table1",
+			LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://db/x.a.b.table1"},
+		},
+	}
+
+	patterns := SuggestPatterns(orphans)
+
+	require.Len(t, patterns, 1, "Should suggest 1 anchored pattern")
+	assert.Equal(t, "postgresql://db/a.b.{table}", patterns[0].Pattern)
+	assert.Equal(t, "postgresql://db/x.a.b.{table}", patterns[0].Canonical)
+	assert.Equal(t, 1, patterns[0].ResolvesCount)
 }

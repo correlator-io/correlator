@@ -536,6 +536,34 @@ func isDatabaseConnectionError(err error) bool {
 	return errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn)
 }
 
+// resolveProducer extracts the producer name and version from an OpenLineage producer URL,
+// logging warnings when extraction fails for a non-empty URL. This is expected for integrations
+// with malformed producer URLs (e.g., GE-ol's literal "$VERSION" placeholder).
+func (s *LineageStore) resolveProducer(producerURL, runID string) (string, string) {
+	producerName := extractProducerName(producerURL)
+	producerVersion := extractProducerVersion(producerURL)
+
+	if producerURL == "" {
+		return producerName, producerVersion
+	}
+
+	if producerName == "" {
+		s.logger.Warn("could not extract producer name from producer URL",
+			slog.String("producer", producerURL),
+			slog.String("run_id", runID),
+		)
+	}
+
+	if producerVersion == "" {
+		s.logger.Warn("could not extract producer version from producer URL",
+			slog.String("producer", producerURL),
+			slog.String("run_id", runID),
+		)
+	}
+
+	return producerName, producerVersion
+}
+
 // extractProducerName extracts the producer name from an OpenLineage producer URL.
 //
 // OpenLineage producers are typically URLs with version information:
@@ -1016,6 +1044,8 @@ func (s *LineageStore) executeJobRunUpsert(
 		rootParentRunIDParam = sql.NullString{String: rootParentRunID, Valid: true}
 	}
 
+	producerName, producerVersion := s.resolveProducer(event.Producer, event.Run.ID)
+
 	_, err := tx.ExecContext(
 		ctx,
 		query,
@@ -1027,8 +1057,8 @@ func (s *LineageStore) executeJobRunUpsert(
 		event.EventTime,
 		stateHistoryJSON,
 		metadataJSON,
-		extractProducerName(event.Producer),
-		extractProducerVersion(event.Producer),
+		producerName,
+		producerVersion,
 		event.EventTime,
 		completedAt,
 		parentRunIDParam,
@@ -1491,6 +1521,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 		return
 	}
 
+	producerName, producerVersion := s.resolveProducer(event.Producer, runID)
+
 	for _, assertionRaw := range assertions {
 		assertion, ok := assertionRaw.(map[string]interface{})
 		if !ok {
@@ -1552,8 +1584,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			Metadata:        metadata,
 			Facets:          input.InputFacets,
 			ExecutedAt:      event.EventTime,
-			ProducerName:    extractProducerName(event.Producer),
-			ProducerVersion: extractProducerVersion(event.Producer),
+			ProducerName:    producerName,
+			ProducerVersion: producerVersion,
 		}); err != nil {
 			s.logger.Warn("failed to store test result from facet",
 				slog.String("run_id", runID),

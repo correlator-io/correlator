@@ -3,6 +3,7 @@ package correlation
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
 )
@@ -25,44 +26,44 @@ type (
 		OrphansResolved []string
 	}
 
-	// patternGroup holds orphans with the same namespace transformation.
+	// patternGroup collects orphans that share the same pattern transformation.
 	patternGroup struct {
-		orphanNamespace    string
-		canonicalNamespace string
-		orphans            []string
+		pattern   string
+		canonical string
+		orphans   []string
 	}
 )
 
 // SuggestPatterns analyzes orphan datasets and suggests patterns to resolve them.
 //
-// Algorithm:
-//  1. Filter orphans that have LikelyMatch (others can't be resolved)
-//  2. Parse each orphan/match URN at the namespace/name boundary (aligned with GenerateDatasetURN)
-//  3. Group orphans by namespace transformation (orphan_namespace → canonical_namespace)
-//  4. Generate pattern strings with {name} placeholder
-//  5. Sort by ResolvesCount descending (most impactful first)
+// The algorithm handles two categories of orphan→match relationships:
 //
-// Example:
+// Category 1 — Namespace transformation (different namespaces, same name):
 //
-//	orphans := []OrphanDataset{
-//	    {
-//	   		DatasetURN: "demo_postgres/marts.customers",
-//	   		LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo/marts.customers"}
-//	   	},
-//	    {
-//	   		DatasetURN: "demo_postgres/marts.orders",
-//	   		LikelyMatch: &DatasetMatch{DatasetURN: "postgresql://demo/marts.orders"}
-//	   	},
-//	}
-//	patterns := SuggestPatterns(orphans)
-//	// → [{Pattern: "demo_postgres/{name}", Canonical: "postgresql://demo/{name}", ResolvesCount: 2}]
+//	Orphan:     "demo_postgres/marts.customers"
+//	Canonical:  "postgresql://demo/marts.customers"
+//	Pattern:    "demo_postgres/{name}" → "postgresql://demo/{name}"
+//
+// Category 2 — Name transformation (same namespace, different name depth):
+//
+//	Orphan:     "postgresql://demo-postgres/marts.customers"
+//	Canonical:  "postgresql://demo-postgres/demo.marts.customers"
+//	Pattern:    "postgresql://demo-postgres/marts.{table}" → "postgresql://demo-postgres/demo.marts.{table}"
+//
+// Name-transformation patterns use an anchored {table} variable instead of {name} to avoid
+// the double-prefix problem (see implementation plan for details). When the orphan name has
+// only one dot-separated segment, an exact URN-to-URN mapping is generated as a fallback.
+//
+// All patterns are sorted by ResolvesCount descending (most impactful first).
 func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 	if len(orphans) == 0 {
 		return nil
 	}
 
-	// Group orphans by namespace transformation
-	// Key: "orphanNamespace|canonicalNamespace" (e.g., "demo_postgres|postgresql://demo")
+	// Groups keyed with type-discriminator prefix to prevent collisions:
+	//   "ns:orphanNS|canonicalNS"              — namespace transformation
+	//   "name:namespace|orphanAnchor|canonicalAnchor" — name transformation
+	//   "exact:orphanURN"                       — exact mapping fallback
 	groups := make(map[string]*patternGroup)
 
 	for _, orphan := range orphans {
@@ -80,23 +81,24 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 			continue
 		}
 
-		// Only suggest patterns where the dataset names match exactly.
-		// This ensures the {name} placeholder substitution produces correct results.
-		if orphanName != canonicalName {
-			continue
-		}
-
-		key := orphanNamespace + "|" + canonicalNamespace
-
-		if groups[key] == nil {
-			groups[key] = &patternGroup{
-				orphanNamespace:    orphanNamespace,
-				canonicalNamespace: canonicalNamespace,
-				orphans:            make([]string, 0),
+		switch {
+		case orphanNamespace != canonicalNamespace && orphanName == canonicalName:
+			// Category 1: namespace transformation
+			key := "ns:" + orphanNamespace + "|" + canonicalNamespace
+			if groups[key] == nil {
+				groups[key] = &patternGroup{
+					pattern:   orphanNamespace + "/{name}",
+					canonical: canonicalNamespace + "/{name}",
+					orphans:   make([]string, 0),
+				}
 			}
-		}
 
-		groups[key].orphans = append(groups[key].orphans, orphan.DatasetURN)
+			groups[key].orphans = append(groups[key].orphans, orphan.DatasetURN)
+
+		case orphanNamespace == canonicalNamespace && orphanName != canonicalName:
+			// Category 2: name transformation (same namespace, different name depth)
+			addNameTransformationGroup(groups, orphanNamespace, orphanName, canonicalName, orphan.DatasetURN)
+		}
 	}
 
 	// Convert groups to suggested patterns
@@ -104,8 +106,8 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 
 	for _, group := range groups {
 		patterns = append(patterns, SuggestedPattern{
-			Pattern:         group.orphanNamespace + "/{name}",
-			Canonical:       group.canonicalNamespace + "/{name}",
+			Pattern:         group.pattern,
+			Canonical:       group.canonical,
 			ResolvesCount:   len(group.orphans),
 			OrphansResolved: group.orphans,
 		})
@@ -117,4 +119,75 @@ func SuggestPatterns(orphans []OrphanDataset) []SuggestedPattern {
 	})
 
 	return patterns
+}
+
+// addNameTransformationGroup handles Category 2 (same namespace, different name depth).
+// It detects dot-boundary suffix relationships and generates anchored patterns or
+// exact mappings depending on orphan segment count.
+func addNameTransformationGroup(
+	groups map[string]*patternGroup,
+	namespace, orphanName, canonicalName, orphanURN string,
+) {
+	orphanSegments := strings.Split(orphanName, ".")
+	canonicalSegments := strings.Split(canonicalName, ".")
+
+	// Determine which name is shorter and which is longer
+	shorter, longer := orphanSegments, canonicalSegments
+	if len(orphanSegments) > len(canonicalSegments) {
+		shorter, longer = canonicalSegments, orphanSegments
+	}
+
+	// Names must differ in length for a suffix relationship
+	if len(shorter) >= len(longer) {
+		return
+	}
+
+	// Verify dot-boundary suffix: shorter segments must match the tail of longer segments
+	tail := longer[len(longer)-len(shorter):]
+	if !segmentsEqual(shorter, tail) {
+		return
+	}
+
+	if len(orphanSegments) < 2 { //nolint:mnd
+		// Single-segment orphan name: no anchor possible, use exact mapping
+		key := "exact:" + orphanURN
+		groups[key] = &patternGroup{
+			pattern:   namespace + "/" + orphanName,
+			canonical: namespace + "/" + canonicalName,
+			orphans:   []string{orphanURN},
+		}
+
+		return
+	}
+
+	// Multi-segment orphan name: generate anchored pattern using {table}
+	// Anchor = all segments except the last (provides specificity to avoid double-prefix)
+	orphanAnchor := strings.Join(orphanSegments[:len(orphanSegments)-1], ".")
+	canonicalAnchor := strings.Join(canonicalSegments[:len(canonicalSegments)-1], ".")
+
+	key := "name:" + namespace + "|" + orphanAnchor + "|" + canonicalAnchor
+	if groups[key] == nil {
+		groups[key] = &patternGroup{
+			pattern:   namespace + "/" + orphanAnchor + ".{table}",
+			canonical: namespace + "/" + canonicalAnchor + ".{table}",
+			orphans:   make([]string, 0),
+		}
+	}
+
+	groups[key].orphans = append(groups[key].orphans, orphanURN)
+}
+
+// segmentsEqual returns true if two string slices are element-wise equal.
+func segmentsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
