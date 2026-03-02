@@ -12,11 +12,25 @@
 #   1. Run your data tools (dbt, Airflow, GE) to ingest events
 #   2. Check the Health page for orphan datasets
 #   3. Add patterns below to map orphans to canonical URNs
-#   4. Restart Correlator - correlation improves immediately
+#   4. Restart Correlator — correlation improves immediately
 
 dataset_patterns:
-  # Great Expectations → dbt dataset mapping
-  # GE emits: demo_postgres/customers, demo_postgres/orders
-  # dbt emits: postgresql://demo/marts.customers, postgresql://demo/marts.orders
-  - pattern: "demo_postgres/{name}"
-    canonical: "postgresql://demo/marts.{name}"
+  # Example: GE → dbt dataset name transformation (same namespace, different name depth)
+  # GE emits:  postgresql://prod-db/marts.customers
+  # dbt emits: postgresql://prod-db/analytics.marts.customers
+  - pattern: "postgresql://prod-db/marts.{table}"
+    canonical: "postgresql://prod-db/analytics.marts.{table}"
+
+  # Example: Namespace transformation (different namespace, same name)
+  # Tool A emits: postgres_prod/customers
+  # Tool B emits: postgresql://prod-db/customers
+  # - pattern: "postgres_prod/{name}"
+  #   canonical: "postgresql://prod-db/{name}"
+
+  # Example: Multi-variable pattern
+  # - pattern: "{namespace}/{schema}/{table}"
+  #   canonical: "postgresql://prod/{schema}.{table}"
+
+  # Example: Path capture (for S3/GCS bucket migration)
+  # - pattern: "s3://old-bucket/{path*}"
+  #   canonical: "s3://new-bucket/{path*}"
