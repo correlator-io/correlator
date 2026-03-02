@@ -26,12 +26,9 @@ type (
 	//   - JobStatus: Job execution status (e.g., "COMPLETE", "FAIL")
 	//   - JobStartedAt: When the job started
 	//   - JobCompletedAt: When the job completed (nil if still running)
-	//   - ProducerName: Tool that generated the lineage event (e.g., "dbt", "airflow")
-	//   - ProducerVersion: Version of the producer tool (nullable)
-	//   - LineageEdgeID: Primary key of the lineage edge
-	//   - LineageEdgeType: Type of lineage relationship ("input" or "output")
+	//   - TestProducerName: Tool that ran the validation (e.g., "great_expectations", "dbt")
+	//   - JobProducerName: Tool that generated the lineage event (e.g., "dbt", "airflow")
 	//   - JobEventType: OpenLineage event type (e.g., "COMPLETE", "FAIL")
-	//   - LineageCreatedAt: When the lineage edge was created
 	//   - ParentRunID: Parent run UUID (empty if no parent)
 	//   - ParentJobName: Parent job name (e.g., "jaffle_shop.build")
 	//   - ParentJobStatus: Parent job status (e.g., "COMPLETE", "FAIL")
@@ -58,23 +55,19 @@ type (
 		JobStatus        string
 		JobStartedAt     time.Time
 		JobCompletedAt   *time.Time
-		ProducerName     string
-		ProducerVersion  *string
-		LineageEdgeID    int64
-		LineageEdgeType  string
+		JobProducerName  string
 		JobEventType     string
-		LineageCreatedAt time.Time
 		// Parent job fields (from OpenLineage ParentRunFacet)
 		ParentRunID          string     // Parent run UUID (empty if no parent)
 		ParentJobName        string     // Parent job name (e.g., "jaffle_shop.build")
-		ParentJobNamespace   string     // Parent job namespace (e.g., "dbt://demo")
+		ParentJobNamespace   string     // Parent job namespace (e.g., "dbt")
 		ParentJobStatus      string     // Parent job status (e.g., "COMPLETE", "FAIL")
 		ParentJobCompletedAt *time.Time // Parent job completion timestamp
 		ParentProducerName   string     // Parent producer name (e.g., "correlator-dbt")
 		// Root parent job fields (from OpenLineage ParentRunFacet root)
 		RootParentRunID          string     // Root parent run UUID (empty if no root)
 		RootParentJobName        string     // Root parent job name (e.g., "demo_pipeline")
-		RootParentJobNamespace   string     // Root parent job namespace (e.g., "airflow://demo")
+		RootParentJobNamespace   string     // Root parent job namespace (e.g., "airflow")
 		RootParentJobStatus      string     // Root parent job status
 		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
 		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
@@ -100,7 +93,7 @@ type (
 	//
 	// Fields:
 	//   - JobStatus: Filter by job status (e.g., "COMPLETE", "FAIL")
-	//   - ProducerName: Filter by producer (e.g., "dbt", "airflow")
+	//   - JobProducerName: Filter by job producer (e.g., "dbt", "airflow")
 	//   - DatasetURN: Filter by specific dataset URN
 	//   - RunID: Filter by specific run UUID
 	//   - TestExecutedAfter: Filter tests executed after this timestamp
@@ -110,13 +103,13 @@ type (
 	//
 	//	// Find all incidents from dbt jobs in the last 24 hours
 	//	filter := &correlation.IncidentFilter{
-	//	    ProducerName: strPtr("dbt"),
+	//	    JobProducerName: strPtr("dbt"),
 	//	    TestExecutedAfter: timePtr(time.Now().Add(-24 * time.Hour)),
 	//	}
 	//	result, err := store.QueryIncidents(ctx, filter, nil)
 	IncidentFilter struct {
 		JobStatus          *string
-		ProducerName       *string
+		JobProducerName    *string
 		DatasetURN         *string
 		RunID              *string
 		TestExecutedAfter  *time.Time

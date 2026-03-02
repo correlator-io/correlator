@@ -188,7 +188,7 @@ func mapIncidentToDetail(
 			Name:        inc.JobName,
 			Namespace:   inc.JobNamespace,
 			RunID:       inc.RunID,
-			Producer:    inc.ProducerName,
+			Producer:    inc.JobProducerName,
 			Status:      jobStatus,
 			StartedAt:   inc.JobStartedAt,
 			CompletedAt: jobCompletedAt,

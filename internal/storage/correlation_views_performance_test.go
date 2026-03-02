@@ -145,7 +145,7 @@ func TestQueryIncidentsPerformance(t *testing.T) {
 	t.Run("FilteredByProducer", func(t *testing.T) {
 		producer := "dbt"
 		filter := &correlation.IncidentFilter{
-			ProducerName: &producer,
+			JobProducerName: &producer,
 		}
 
 		start := time.Now()
@@ -231,7 +231,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
 				test_result_id, test_name, test_status,
-				dataset_urn, run_id,
+				dataset_urn, job_run_id,
 				test_executed_at
 			FROM incident_correlation_view
 			ORDER BY test_executed_at DESC
@@ -256,7 +256,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			"Unfiltered query should complete in <10ms")
 	})
 
-	// Test 2: Incident Correlation View - Filtered by run_id
+	// Test 2: Incident Correlation View - Filtered by job_run_id
 	t.Run("IncidentCorrelationView_FilteredByRunID", func(t *testing.T) {
 		// Get a real run_id from test data
 		var runID string
@@ -269,10 +269,10 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
 				test_result_id, test_name, test_status,
-				dataset_urn, run_id,
+				dataset_urn, job_run_id,
 				test_executed_at
 			FROM incident_correlation_view
-			WHERE run_id = '%s'
+			WHERE job_run_id = '%s'
 			ORDER BY test_executed_at DESC
 		`, runID)
 
@@ -330,7 +330,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 		explainQuery := `
 			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 			SELECT
-				run_id, job_name, producer_name,
+				job_run_id, job_name, producer_name,
 				failed_test_count, affected_dataset_count,
 				last_test_failure_at
 			FROM recent_incidents_summary
@@ -513,9 +513,9 @@ func TestMaterializedViewIndexes(t *testing.T) {
 			reason    string
 		}{
 			{
-				indexName: "idx_incident_correlation_view_run_id",
+				indexName: "idx_incident_correlation_view_job_run_id",
 				viewName:  "incident_correlation_view",
-				reason:    "Fast lookups by run_id (common filter in correlation queries)",
+				reason:    "Fast lookups by job_run_id (common filter in correlation queries)",
 			},
 		}
 

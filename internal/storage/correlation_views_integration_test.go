@@ -136,14 +136,14 @@ func TestQueryIncidentCorrelation(t *testing.T) {
 	// Test 2: Filter by producer
 	producer := "dbt"
 	filter := &correlation.IncidentFilter{
-		ProducerName: &producer,
+		JobProducerName: &producer,
 	}
 
 	result, err = store.QueryIncidents(ctx, filter, nil)
 	require.NoError(t, err)
 
 	assert.Len(t, result.Incidents, 1, "Should return 1 dbt incident")
-	assert.Equal(t, "dbt", result.Incidents[0].ProducerName)
+	assert.Equal(t, "dbt", result.Incidents[0].JobProducerName)
 
 	// Test 3: Filter by run_id
 	filter = &correlation.IncidentFilter{
@@ -1131,7 +1131,7 @@ func TestQueryIncidents_WithPatternResolution(t *testing.T) {
 			"Incident should show canonical dataset URN (dbt format)")
 		assert.Equal(t, dbtRunID, incident.RunID,
 			"Incident should correlate to dbt job run (producer)")
-		assert.Equal(t, "dbt", incident.ProducerName,
+		assert.Equal(t, "dbt", incident.JobProducerName,
 			"Producer should be dbt")
 		assert.Equal(t, "dbt_transform_customers", incident.JobName,
 			"Job name should be dbt transform job")
@@ -1546,7 +1546,7 @@ func TestQueryIncidents_WithPatternResolution_LargeDataset(t *testing.T) {
 	// Verify all incidents correlate to dbt job
 	for _, incident := range result.Incidents {
 		assert.Equal(t, dbtRunID, incident.RunID, "Should correlate to dbt job")
-		assert.Equal(t, "dbt", incident.ProducerName)
+		assert.Equal(t, "dbt", incident.JobProducerName)
 		assert.Contains(t, incident.DatasetURN, "postgresql://demo/marts.",
 			"Should use canonical URN")
 	}
@@ -1697,7 +1697,7 @@ func TestQueryIncidentByID_WithPatternResolution(t *testing.T) {
 	// Job should be dbt (producer), not GE (test runner)
 	assert.Equal(t, dbtRunID, incident.RunID,
 		"Incident should correlate to dbt job run (producer)")
-	assert.Equal(t, "dbt", incident.ProducerName,
+	assert.Equal(t, "dbt", incident.JobProducerName,
 		"Producer should be dbt")
 	assert.Equal(t, "dbt_transform_customers", incident.JobName,
 		"Job name should be dbt transform job")

@@ -82,34 +82,36 @@ Automated correlation that connects test failures to their source, reducing time
 
 ## Configuration
 
-### Namespace Aliasing
+### Dataset Pattern Aliasing
 
-Different data tools emit different namespace formats for the same data source:
+Different tools can emit different dataset URNs for the same underlying table. For example, when tools use different
+schema prefixes or naming conventions, Correlator sees them as separate datasets and cannot correlate test failures
+across tools.
 
-| Tool               | Example Namespace                |
-|--------------------|----------------------------------|
-| Great Expectations | `postgres_prod`                  |
-| dbt                | `postgresql://prod-db:5432/mydb` |
-| Airflow            | `postgres://prod-db:5432`        |
-
-Without aliasing, Correlator sees these as separate datasets and cannot correlate test failures across tools.
-
-**Solution:** Configure namespace aliases in `.correlator.yaml`:
+**Solution:** Configure dataset patterns in `.correlator.yaml` to map orphan URNs to their canonical form:
 
 ```yaml
 # .correlator.yaml
-namespace_aliases:
-  # Map GE namespace to dbt's canonical format
-  postgres_prod: "postgresql://prod-db:5432/mydb"
-  postgres://prod-db:5432: "postgresql://prod-db:5432/mydb"
+dataset_patterns:
+  # GE emits:  postgresql://prod-db/marts.customers
+  # dbt emits: postgresql://prod-db/analytics.marts.customers
+  - pattern: "postgresql://prod-db/marts.{table}"
+    canonical: "postgresql://prod-db/analytics.marts.{table}"
 ```
+
+**Pattern syntax:**
+
+- `{variable}` — captures any characters except `/`
+- `{variable*}` — captures any characters including `/` (for paths)
+- Literal characters match exactly
+- First matching pattern wins (order matters)
 
 **Workflow:**
 
-1. Deploy Correlator without aliases
-2. Check Correlation Health page for orphan namespaces
-3. Configure aliases based on discovered orphans
-4. Restart Correlator - historical data is immediately resolved
+1. Deploy Correlator and run your data tools (dbt, GE, Airflow)
+2. Check the Correlation Health page for orphan datasets
+3. Apply suggested patterns or write custom ones in `.correlator.yaml`
+4. Restart Correlator — historical data is immediately resolved
 
 See `.correlator.yaml.example` for a full configuration template.
 
@@ -119,7 +121,7 @@ See `.correlator.yaml.example` for a full configuration template.
 |-------------------------------|--------------------------------------|--------------------|
 | `CORRELATOR_CONFIG_PATH`      | Path to YAML config file             | `.correlator.yaml` |
 | `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication        | `false`            |
-| `CORRELATOR_PORT`             | HTTP server port                     | `8080`             |
+| `CORRELATOR_SERVER_PORT`      | HTTP server port                     | `8080`             |
 | `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error) | `info`             |
 
 See `.env.example` for all available configuration options.

@@ -198,11 +198,15 @@ func NewLineageStore(
 	return store, nil
 }
 
-// InitResolvedDatasets populates the resolved_datasets lookup table.
-// Must be called once at startup before serving traffic to ensure materialized
-// views can use resolved URNs from the first query.
+// InitResolvedDatasets populates the resolved_datasets lookup table and refreshes
+// all materialized views. Must be called once at startup before serving traffic
+// so that views reflect the current alias resolver configuration.
 func (s *LineageStore) InitResolvedDatasets(ctx context.Context) error {
-	return s.refreshResolvedDatasets(ctx)
+	if err := s.refreshResolvedDatasets(ctx); err != nil {
+		return err
+	}
+
+	return s.refreshViews(ctx)
 }
 
 // Close stops background goroutines gracefully.
@@ -534,6 +538,34 @@ func isDatabaseConnectionError(err error) bool {
 
 	// Check standard database/sql connection errors
 	return errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn)
+}
+
+// resolveProducer extracts the producer name and version from an OpenLineage producer URL,
+// logging warnings when extraction fails for a non-empty URL. This is expected for integrations
+// with malformed producer URLs (e.g., GE-ol's literal "$VERSION" placeholder).
+func (s *LineageStore) resolveProducer(producerURL, runID string) (string, string) {
+	producerName := extractProducerName(producerURL)
+	producerVersion := extractProducerVersion(producerURL)
+
+	if producerURL == "" {
+		return producerName, producerVersion
+	}
+
+	if producerName == "" {
+		s.logger.Warn("could not extract producer name from producer URL",
+			slog.String("producer", producerURL),
+			slog.String("run_id", runID),
+		)
+	}
+
+	if producerVersion == "" {
+		s.logger.Warn("could not extract producer version from producer URL",
+			slog.String("producer", producerURL),
+			slog.String("run_id", runID),
+		)
+	}
+
+	return producerName, producerVersion
 }
 
 // extractProducerName extracts the producer name from an OpenLineage producer URL.
@@ -1016,6 +1048,8 @@ func (s *LineageStore) executeJobRunUpsert(
 		rootParentRunIDParam = sql.NullString{String: rootParentRunID, Valid: true}
 	}
 
+	producerName, producerVersion := s.resolveProducer(event.Producer, event.Run.ID)
+
 	_, err := tx.ExecContext(
 		ctx,
 		query,
@@ -1027,8 +1061,8 @@ func (s *LineageStore) executeJobRunUpsert(
 		event.EventTime,
 		stateHistoryJSON,
 		metadataJSON,
-		extractProducerName(event.Producer),
-		extractProducerVersion(event.Producer),
+		producerName,
+		producerVersion,
 		event.EventTime,
 		completedAt,
 		parentRunIDParam,
@@ -1441,7 +1475,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 //   - testNameField: The JSON field holding the test name (e.g. "assertion", "expectationType")
 //   - testType: The test_type value to store (e.g. "dataQualityAssertion", "greatExpectationsAssertion")
 //
-//nolint:funlen // Parsing untyped OpenLineage facets requires sequential type assertions
+//nolint:funlen,gocognit,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
 func (s *LineageStore) extractAssertionsFromFacet(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1491,6 +1525,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 		return
 	}
 
+	producerName, producerVersion := s.resolveProducer(event.Producer, runID)
+
 	for _, assertionRaw := range assertions {
 		assertion, ok := assertionRaw.(map[string]interface{})
 		if !ok {
@@ -1537,6 +1573,11 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			metadata = map[string]interface{}{"column": column}
 		}
 
+		// Extract optional severity into metadata
+		if column, ok := assertion["severity"].(string); ok && column != "" {
+			metadata = map[string]interface{}{"severity": column}
+		}
+
 		// NOTE: duration_ms and message columns remain in the test_results schema but are not
 		// extracted from OL assertion facets. Neither the standard OL DataQualityAssertionsDatasetFacet
 		// nor GE-ol's greatExpectations_assertions include these fields. If future OL spec versions
@@ -1552,8 +1593,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			Metadata:        metadata,
 			Facets:          input.InputFacets,
 			ExecutedAt:      event.EventTime,
-			ProducerName:    extractProducerName(event.Producer),
-			ProducerVersion: extractProducerVersion(event.Producer),
+			ProducerName:    producerName,
+			ProducerVersion: producerVersion,
 		}); err != nil {
 			s.logger.Warn("failed to store test result from facet",
 				slog.String("run_id", runID),

@@ -1,5 +1,5 @@
 # Correlator Demo - dbt Project
-# Jaffle Shop data transformation with dbt-correlator integration
+# Jaffle Shop data transformation with OpenLineage integration
 
 name: 'jaffle_shop_demo'
 version: '1.0.0'
@@ -35,7 +35,5 @@ seeds:
   jaffle_shop_demo:
     +schema: raw
 
-# dbt-correlator configuration
-# Emits OpenLineage events to Correlator
-vars:
-  correlator_enabled: true
+# OpenLineage integration is handled by dbt-ol CLI
+# Configuration via OPENLINEAGE_URL env var

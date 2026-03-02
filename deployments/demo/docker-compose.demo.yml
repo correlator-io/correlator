@@ -144,7 +144,7 @@ services:
       - demo-network
 
   # =============================================================================
-  # Airflow (with airflow-correlator plugin)
+  # Airflow (with standard OpenLineage integrations)
   # =============================================================================
 
   # Airflow database initialization
@@ -224,13 +224,12 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dairflow
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
       - OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
-      # dbt-correlator configuration
-      - CORRELATOR_URL=http://demo-correlator:8080
-      - OPENLINEAGE_NAMESPACE=airflow://demo
-      # GE configuration
-      - GE_POSTGRES_URL=postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo
-      - CORRELATOR_ENDPOINT=http://demo-correlator:8080/api/v1/lineage/events
-      - GE_JOB_NAMESPACE=great_expectations://demo
+      # Standard OpenLineage configuration
+      - OPENLINEAGE_URL=http://demo-correlator:8080
+      # Namespaces like airflow://demo will fail because the OL integration does not use rsplit()
+      # - OPENLINEAGE_NAMESPACE=airflow
+      # GE configuration (search_path includes 'marts' for OL action table reflection)
+      - GE_POSTGRES_URL=postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dmarts
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/openlineage.yml:/opt/airflow/openlineage.yml:ro
@@ -247,15 +246,16 @@ services:
   # These are run on-demand, not as long-running services
   # =============================================================================
 
-  # dbt with dbt-correlator
+  # dbt with openlineage-dbt
   demo-dbt:
     build:
       context: .
       dockerfile: dockerfiles/dbt.Dockerfile
     container_name: demo-dbt
     environment:
-      - CORRELATOR_URL=http://demo-correlator:8080
-      - OPENLINEAGE_NAMESPACE=dbt://demo
+      - OPENLINEAGE_URL=http://demo-correlator:8080
+      # Namespaces like dbt://demo will fail because the OL integration does not use rsplit()
+      #- OPENLINEAGE_NAMESPACE=dbt
     volumes:
       - ./dbt:/dbt
     working_dir: /dbt
@@ -269,16 +269,18 @@ services:
     profiles:
       - tools
 
-  # Great Expectations with ge-correlator
+  # Great Expectations with standard OpenLineage integration
   demo-great-expectations:
     build:
       context: .
       dockerfile: dockerfiles/ge.Dockerfile
     container_name: demo-ge
     environment:
-      - GE_POSTGRES_URL=postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo
-      - CORRELATOR_ENDPOINT=http://demo-correlator:8080/api/v1/lineage/events
-      - GE_JOB_NAMESPACE=great_expectations://demo
+      # search_path includes 'marts' so OL action can reflect mart tables (see demo_checkpoint.py)
+      - GE_POSTGRES_URL=postgresql://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dmarts
+      - OPENLINEAGE_URL=http://demo-correlator:8080
+      # Namespaces like great_expectations://demo will fail because the OL integration does not use rsplit()
+      #- OPENLINEAGE_NAMESPACE=great_expectations
     volumes:
       - ./great-expectations:/ge
     working_dir: /ge

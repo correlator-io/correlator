@@ -617,8 +617,9 @@ run-demo-pipeline:
 	fi
 
 # Run dbt commands in demo
-# Note: 'run' and 'test' use dbt-correlator to emit OpenLineage events
-# Other commands (seed, debug, etc.) use plain dbt
+# All commands use dbt-ol (openlineage-dbt) which emits OpenLineage events
+# for seed/run/test/build/snapshot. Unsupported commands (e.g. debug) are
+# still executed via dbt-ol but no lineage events are emitted.
 run-demo-dbt:
 	@if [ -z "$(DBTCMD)" ]; then \
 		echo "❌ No dbt command specified"; \
@@ -626,26 +627,17 @@ run-demo-dbt:
 		echo "💡 Usage: make run demo dbt <command>"; \
 		echo ""; \
 		echo "Examples:"; \
-		echo "  make run demo dbt seed      # Load seed data (plain dbt)"; \
-		echo "  make run demo dbt run       # Run transformations (dbt-correlator)"; \
-		echo "  make run demo dbt test      # Run tests (dbt-correlator)"; \
-		echo "  make run demo dbt debug     # Show dbt debug info (plain dbt)"; \
+		echo "  make run demo dbt seed      # Load seed data (no dataset lineage)"; \
+		echo "  make run demo dbt run       # Run transformations (emits lineage)"; \
+		echo "  make run demo dbt test      # Run tests (emits lineage)"; \
+		echo "  make run demo dbt debug     # Show dbt debug info"; \
 		exit 1; \
 	fi
-	@FIRST_ARG=$$(echo "$(DBTCMD)" | awk '{print $$1}'); \
-	if [ "$$FIRST_ARG" = "run" ] || [ "$$FIRST_ARG" = "test" ]; then \
-		echo "🔧 Running: dbt-correlator $(DBTCMD) (with OpenLineage emission)"; \
-		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm \
-			--entrypoint dbt-correlator \
-			demo-dbt $(DBTCMD) \
-			--project-dir . \
-			--profiles-dir . \
-			--correlator-endpoint http://demo-correlator:8080/api/v1/lineage/events \
-			--openlineage-namespace dbt://demo; \
-	else \
-		echo "🔧 Running: dbt $(DBTCMD)"; \
-		cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm demo-dbt $(DBTCMD); \
-	fi
+	@echo "🔧 Running: dbt-ol $(DBTCMD)"; \
+	cd $(DEMO_DIR) && docker compose -f docker-compose.demo.yml --profile tools run --rm \
+		demo-dbt $(DBTCMD) \
+		--project-dir . \
+		--profiles-dir .
 
 # Run GE commands in demo
 run-demo-ge:

@@ -58,3 +58,6 @@ deployments/demo/dbt/target/
 *.png
 
 .secrets.baseline
+
+# correlator configs
+.correlator.yaml
