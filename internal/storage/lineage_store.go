@@ -198,11 +198,15 @@ func NewLineageStore(
 	return store, nil
 }
 
-// InitResolvedDatasets populates the resolved_datasets lookup table.
-// Must be called once at startup before serving traffic to ensure materialized
-// views can use resolved URNs from the first query.
+// InitResolvedDatasets populates the resolved_datasets lookup table and refreshes
+// all materialized views. Must be called once at startup before serving traffic
+// so that views reflect the current alias resolver configuration.
 func (s *LineageStore) InitResolvedDatasets(ctx context.Context) error {
-	return s.refreshResolvedDatasets(ctx)
+	if err := s.refreshResolvedDatasets(ctx); err != nil {
+		return err
+	}
+
+	return s.refreshViews(ctx)
 }
 
 // Close stops background goroutines gracefully.
