@@ -617,8 +617,9 @@ run-demo-pipeline:
 	fi
 
 # Run dbt commands in demo
-# Note: All commands use dbt-ol (openlineage-dbt) which emits OpenLineage events
-# for run/test and falls back to plain dbt for seed/debug/etc.
+# All commands use dbt-ol (openlineage-dbt) which emits OpenLineage events
+# for seed/run/test/build/snapshot. Unsupported commands (e.g. debug) are
+# still executed via dbt-ol but no lineage events are emitted.
 run-demo-dbt:
 	@if [ -z "$(DBTCMD)" ]; then \
 		echo "❌ No dbt command specified"; \
@@ -626,7 +627,7 @@ run-demo-dbt:
 		echo "💡 Usage: make run demo dbt <command>"; \
 		echo ""; \
 		echo "Examples:"; \
-		echo "  make run demo dbt seed      # Load seed data"; \
+		echo "  make run demo dbt seed      # Load seed data (no dataset lineage)"; \
 		echo "  make run demo dbt run       # Run transformations (emits lineage)"; \
 		echo "  make run demo dbt test      # Run tests (emits lineage)"; \
 		echo "  make run demo dbt debug     # Show dbt debug info"; \

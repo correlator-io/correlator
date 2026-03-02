@@ -2,7 +2,7 @@
 Correlator Demo Pipeline DAG
 
 This DAG orchestrates the demo data pipeline:
-1. dbt seed - Load raw Jaffle Shop data (no lineage events)
+1. dbt-ol seed - Load raw Jaffle Shop data (wrapper job events only, no dataset lineage)
 2. dbt-ol run - Transform data and emit lineage events
 3. dbt-ol test - Run data quality tests and emit test result events
 4. GE validate - Run Great Expectations checkpoint and emit validation events
@@ -38,16 +38,17 @@ with DAG(
         catchup=False,
         tags=["correlator", "demo", "dbt", "great-expectations"],
 ) as dag:
-    # Task 1: dbt seed - Load raw data
-    # Note: dbt-ol doesn't support seed, so we use plain dbt
-    # No lineage events are emitted for this task (only Airflow task events)
+    # Task 1: dbt-ol seed - Load raw data
+    # dbt-ol wraps dbt seed but parse_execution() skips seed. nodes, so only
+    # bare START/COMPLETE job events are emitted (no input/output datasets).
     dbt_seed = BashOperator(
         task_id="dbt_seed",
         bash_command="""
             cd /dbt && \
-            dbt seed --profiles-dir . --project-dir .
+            dbt-ol seed --profiles-dir . --project-dir .
         """,
         env={
+            # "OPENLINEAGE_NAMESPACE": "dbt",
             "OPENLINEAGE_PARENT_ID": (
                 "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
             ),
@@ -57,12 +58,13 @@ with DAG(
         },
         append_env=True,
         doc_md="""
-        ### dbt Seed
+        ### dbt Seed (with dbt-ol)
         Loads raw Jaffle Shop data (customers, orders) into PostgreSQL.
         This creates the source tables that staging models will reference.
 
-        Note: Uses plain dbt (not dbt-ol) as seed is not supported.
-        Only Airflow task events are emitted for this step.
+        Note: dbt-ol accepts seed but its parse_execution() skips seed nodes,
+        so only wrapper job lifecycle events are emitted (no dataset lineage).
+        Airflow task-level OL events are still emitted by the provider.
         """,
     )
 
