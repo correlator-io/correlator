@@ -1475,7 +1475,7 @@ func (s *LineageStore) extractDataQualityAssertions(
 //   - testNameField: The JSON field holding the test name (e.g. "assertion", "expectationType")
 //   - testType: The test_type value to store (e.g. "dataQualityAssertion", "greatExpectationsAssertion")
 //
-//nolint:funlen // Parsing untyped OpenLineage facets requires sequential type assertions
+//nolint:funlen,gocognit,cyclop // Parsing untyped OpenLineage facets requires sequential type assertions
 func (s *LineageStore) extractAssertionsFromFacet(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1571,6 +1571,11 @@ func (s *LineageStore) extractAssertionsFromFacet(
 		var metadata map[string]interface{}
 		if column, ok := assertion["column"].(string); ok && column != "" {
 			metadata = map[string]interface{}{"column": column}
+		}
+
+		// Extract optional severity into metadata
+		if column, ok := assertion["severity"].(string); ok && column != "" {
+			metadata = map[string]interface{}{"severity": column}
 		}
 
 		// NOTE: duration_ms and message columns remain in the test_results schema but are not
