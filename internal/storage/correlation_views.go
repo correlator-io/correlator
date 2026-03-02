@@ -1231,18 +1231,20 @@ func (s *LineageStore) QueryOrchestrationChain(
 }
 
 // queryHealthStats queries database for health statistics.
-// All metrics use DISTINCT dataset_urn counts for accurate correlation rate calculation.
+// All metrics use DISTINCT canonical_urn counts (via resolved_datasets) so that
+// aliased URNs pointing to the same logical dataset are not double-counted.
 func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, error) {
 	query := `
 		WITH failed_tested_datasets AS (
-			-- Distinct datasets with failed/error tests (denominator for correlation rate)
-			SELECT COUNT(DISTINCT dataset_urn) AS total_count
-			FROM test_results
-			WHERE status IN ('failed', 'error')
+			-- Distinct canonical datasets with failed/error tests (denominator for correlation rate)
+			SELECT COUNT(DISTINCT rd.canonical_urn) AS total_count
+			FROM test_results tr
+			JOIN resolved_datasets rd ON tr.dataset_urn = rd.raw_urn
+			WHERE tr.status IN ('failed', 'error')
 		),
 		correlated_failed_datasets AS (
-			-- Distinct datasets with failed tests AND producer output edges (via canonical URN resolution)
-			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			-- Distinct canonical datasets with failed tests AND producer output edges
+			SELECT COUNT(DISTINCT rd.canonical_urn) AS correlated_count
 			FROM test_results tr
 			JOIN resolved_datasets rd ON tr.dataset_urn = rd.raw_urn
 			WHERE tr.status IN ('failed', 'error')
@@ -1253,19 +1255,21 @@ func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, erro
 			)
 		),
 		all_tested_datasets AS (
-			-- Distinct datasets with any test results
-			SELECT COUNT(DISTINCT dataset_urn) AS total_datasets
-			FROM test_results
+			-- Distinct canonical datasets with any test results
+			SELECT COUNT(DISTINCT rd.canonical_urn) AS total_datasets
+			FROM test_results tr
+			JOIN resolved_datasets rd ON tr.dataset_urn = rd.raw_urn
 		),
 		produced_datasets AS (
-			-- Distinct datasets with output edges
-			SELECT COUNT(DISTINCT dataset_urn) AS produced_count
-			FROM lineage_edges
-			WHERE edge_type = 'output'
+			-- Distinct canonical datasets with output edges
+			SELECT COUNT(DISTINCT rd.canonical_urn) AS produced_count
+			FROM lineage_edges le
+			JOIN resolved_datasets rd ON le.dataset_urn = rd.raw_urn
+			WHERE le.edge_type = 'output'
 		),
 		correlated_datasets AS (
-			-- Distinct datasets with both tests (any status) AND output edges (via canonical URN resolution)
-			SELECT COUNT(DISTINCT tr.dataset_urn) AS correlated_count
+			-- Distinct canonical datasets with both tests (any status) AND producer output edges
+			SELECT COUNT(DISTINCT rd.canonical_urn) AS correlated_count
 			FROM test_results tr
 			JOIN resolved_datasets rd ON tr.dataset_urn = rd.raw_urn
 			WHERE EXISTS (

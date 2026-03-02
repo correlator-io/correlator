@@ -80,25 +80,24 @@ type (
 	}
 
 	// healthStats holds correlation health statistics.
-	// All counts are based on DISTINCT dataset URNs, not row counts.
+	// All counts are based on DISTINCT canonical URNs (via resolved_datasets) so that
+	// aliased URNs pointing to the same logical dataset are not double-counted.
 	healthStats struct {
-		// totalFailedTestedDatasets is the count of distinct dataset URNs with failed/error test results.
-		// This is the denominator for correlation rate calculation.
+		// totalFailedTestedDatasets is the count of distinct canonical URNs with failed/error test results.
 		totalFailedTestedDatasets int
 
-		// correlatedFailedTestedDatasets is the count of distinct dataset URNs that have both:
+		// correlatedFailedTestedDatasets is the count of distinct canonical URNs that have both:
 		// 1. Failed/error test results, AND
 		// 2. A producer output edge (lineage_edges with edge_type='output')
-		// This is the numerator for correlation rate calculation.
 		correlatedFailedTestedDatasets int
 
-		// totalDatasets is the count of all distinct dataset URNs with any test results.
+		// totalDatasets is the count of all distinct canonical URNs with any test results.
 		totalDatasets int
 
-		// producedDatasets is the count of distinct dataset URNs with output edges.
+		// producedDatasets is the count of distinct canonical URNs with output edges.
 		producedDatasets int
 
-		// correlatedDatasets is the count of distinct dataset URNs that have both
+		// correlatedDatasets is the count of distinct canonical URNs that have both
 		// test results (any status) AND producer output edges.
 		correlatedDatasets int
 	}
