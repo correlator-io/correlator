@@ -219,7 +219,7 @@ func mapIncidentToSummary(
 		TestStatus:          inc.TestStatus,
 		DatasetURN:          inc.DatasetURN,
 		DatasetName:         inc.DatasetName,
-		Producer:            inc.ProducerName,
+		Producer:            inc.JobProducerName,
 		JobName:             inc.JobName,
 		JobRunID:            inc.RunID,
 		DownstreamCount:     downstreamCounts[inc.RunID],

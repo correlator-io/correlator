@@ -281,12 +281,11 @@ func (s *LineageStore) QueryIncidents(
 
 		err := rows.Scan(
 			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
-			&r.TestExecutedAt, &r.TestDurationMs,
+			&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
 			&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
 			&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
 			&r.JobStartedAt, &r.JobCompletedAt,
-			&r.ProducerName, &r.ProducerVersion,
-			&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
+			&r.JobProducerName,
 			&total,
 		)
 		if err != nil {
@@ -338,12 +337,11 @@ func buildIncidentCorrelationQuery(
 	baseQuery := `
 		SELECT
 			test_result_id, test_name, test_type, test_status, test_message,
-			test_executed_at, test_duration_ms,
+			test_executed_at, test_duration_ms, test_producer_name,
 			dataset_urn, dataset_name, dataset_namespace,
-			run_id, job_name, job_namespace, job_status, job_event_type,
+			job_run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
-			producer_name, producer_version,
-			lineage_edge_id, lineage_edge_type, lineage_created_at,
+			job_producer_name,
 			COUNT(*) OVER() AS total_count
 		FROM incident_correlation_view
 	`
@@ -385,9 +383,9 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 		paramIndex++
 	}
 
-	if filter.ProducerName != nil {
-		conditions = append(conditions, fmt.Sprintf("producer_name = $%d", paramIndex))
-		args = append(args, *filter.ProducerName)
+	if filter.JobProducerName != nil {
+		conditions = append(conditions, fmt.Sprintf("job_producer_name = $%d", paramIndex))
+		args = append(args, *filter.JobProducerName)
 		paramIndex++
 	}
 
@@ -398,7 +396,7 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 	}
 
 	if filter.RunID != nil {
-		conditions = append(conditions, fmt.Sprintf("run_id = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("job_run_id = $%d", paramIndex))
 		args = append(args, *filter.RunID)
 		paramIndex++
 	}
@@ -436,12 +434,11 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 	query := `
 		SELECT
 			test_result_id, test_name, test_type, test_status, test_message,
-			test_executed_at, test_duration_ms,
+			test_executed_at, test_duration_ms, test_producer_name,
 			dataset_urn, dataset_name, dataset_namespace,
-			run_id, job_name, job_namespace, job_status, job_event_type,
+			job_run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
-			producer_name, producer_version,
-			lineage_edge_id, lineage_edge_type, lineage_created_at,
+			job_producer_name,
 			parent_run_id, parent_job_name, parent_job_namespace,
 			parent_job_status, parent_job_completed_at, parent_producer_name,
 			root_parent_run_id, root_parent_job_name, root_parent_job_namespace,
@@ -465,12 +462,11 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
-		&r.TestExecutedAt, &r.TestDurationMs,
+		&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
 		&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
 		&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
 		&r.JobStartedAt, &r.JobCompletedAt,
-		&r.ProducerName, &r.ProducerVersion,
-		&r.LineageEdgeID, &r.LineageEdgeType, &r.LineageCreatedAt,
+		&r.JobProducerName,
 		&parentRunID, &parentJobName, &parentJobNamespace,
 		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
 		&rootParentRunID, &rootParentJobName, &rootParentJobNamespace,

@@ -419,6 +419,7 @@ SELECT
     tr.message              AS test_message,
     tr.executed_at          AS test_executed_at,
     tr.duration_ms          AS test_duration_ms,
+    tr.producer_name        AS test_producer_name,
 
     -- Dataset information (canonical URN from resolved_datasets for cross-tool correlation)
     rd_test.canonical_urn   AS dataset_urn,
@@ -426,15 +427,14 @@ SELECT
     d.namespace             AS dataset_namespace,
 
     -- Correlated job run (producer of the dataset)
-    jr.run_id,
+    jr.run_id               AS job_run_id,
     jr.job_name,
     jr.job_namespace,
     jr.current_state        AS job_status,
     jr.event_type           AS job_event_type,
     jr.started_at           AS job_started_at,
     jr.completed_at         AS job_completed_at,
-    jr.producer_name,
-    jr.producer_version,
+    jr.producer_name        AS job_producer_name,
 
     -- Parent job information (from OpenLineage ParentRunFacet)
     jr.parent_run_id,
@@ -450,12 +450,7 @@ SELECT
     root_jr.job_namespace   AS root_parent_job_namespace,
     root_jr.current_state   AS root_parent_job_status,
     root_jr.completed_at    AS root_parent_job_completed_at,
-    root_jr.producer_name   AS root_parent_producer_name,
-
-    -- Lineage relationship
-    le.id                   AS lineage_edge_id,
-    le.edge_type            AS lineage_edge_type,
-    le.created_at           AS lineage_created_at
+    root_jr.producer_name   AS root_parent_producer_name
 
 FROM test_results tr
     JOIN resolved_datasets rd_test ON tr.dataset_urn = rd_test.raw_urn
@@ -472,11 +467,11 @@ ORDER BY tr.executed_at DESC;
 
 -- UNIQUE index required for CONCURRENTLY refresh
 CREATE UNIQUE INDEX idx_incident_correlation_view_pk
-    ON incident_correlation_view (test_result_id, lineage_edge_id);
+    ON incident_correlation_view (test_result_id, job_run_id);
 
 -- Additional indexes
-CREATE INDEX IF NOT EXISTS idx_incident_correlation_view_run_id
-    ON incident_correlation_view (run_id);
+CREATE INDEX IF NOT EXISTS idx_incident_correlation_view_job_run_id
+    ON incident_correlation_view (job_run_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_correlation_view_dataset_urn
     ON incident_correlation_view (dataset_urn);
@@ -568,11 +563,11 @@ COMMENT ON MATERIALIZED VIEW lineage_impact_analysis IS
 CREATE MATERIALIZED VIEW recent_incidents_summary AS
 SELECT
     -- Job run identification
-    icv.run_id,
+    icv.job_run_id,
     icv.job_name,
     icv.job_namespace,
     icv.job_status,
-    icv.producer_name,
+    icv.job_producer_name   AS producer_name,
 
     -- Incident statistics (per job run)
     COUNT(DISTINCT icv.test_result_id) AS failed_test_count,
@@ -592,7 +587,7 @@ SELECT
     (
         SELECT COUNT(DISTINCT lia.dataset_urn)
         FROM lineage_impact_analysis lia
-        WHERE lia.run_id = icv.run_id
+        WHERE lia.run_id = icv.job_run_id
             AND lia.depth > 0
     ) AS downstream_affected_count
 
@@ -601,17 +596,17 @@ FROM incident_correlation_view icv
 WHERE icv.test_executed_at > NOW() - INTERVAL '7 days'
 
 GROUP BY
-    icv.run_id,
+    icv.job_run_id,
     icv.job_name,
     icv.job_namespace,
     icv.job_status,
-    icv.producer_name
+    icv.job_producer_name
 
 ORDER BY MAX(icv.test_executed_at) DESC;
 
 -- UNIQUE index required for CONCURRENTLY refresh
 CREATE UNIQUE INDEX idx_recent_incidents_summary_pk
-    ON recent_incidents_summary (run_id);
+    ON recent_incidents_summary (job_run_id);
 
 -- Additional indexes
 CREATE INDEX IF NOT EXISTS idx_recent_incidents_summary_failed_test_count

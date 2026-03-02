@@ -166,7 +166,7 @@ func createValidLineageEvent(runID string, eventType string, eventTime time.Time
 
 	return LineageEvent{
 		EventType: eventType,
-		EventTime: eventTime,
+		EventTime: eventTime.Format(time.RFC3339Nano),
 		Run: Run{
 			ID:     runUUID,
 			Facets: map[string]interface{}{}, // Initialize (not nil)
@@ -501,7 +501,7 @@ func TestLineageHandler_BatchAllRejected(t *testing.T) {
 	// Batch: all invalid (missing required fields)
 	now := time.Now()
 	event1 := createValidLineageEvent("run-1", "START", now)
-	event1.EventTime = time.Time{} // Invalid: zero time
+	event1.EventTime = "" // Invalid: empty time
 
 	event2 := createValidLineageEvent("run-2", "START", now)
 	event2.Job.Name = "" // Invalid: missing name

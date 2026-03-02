@@ -1,5 +1,5 @@
 # dbt Dockerfile for Correlator Demo
-# Includes dbt-postgres and dbt-correlator plugin from TestPyPI
+# Includes dbt-postgres and openlineage-dbt (standard OL integration)
 
 FROM python:3.11-slim
 
@@ -12,24 +12,16 @@ WORKDIR /dbt
 
 RUN pip install --upgrade pip
 
-# Install dbt-postgres and correlator-dbt from TestPyPI
-# Package name is correlator-dbt (not dbt-correlator), CLI command is dbt-correlator
-# --pre allows pre-release/dev versions, -i sets TestPyPI as primary index
-# --extra-index-url ensures dependencies not on TestPyPI are fetched from PyPI
+# Install dbt-postgres and openlineage-dbt from PyPI
+# CLI command is dbt-ol (replaces dbt-correlator)
 RUN pip install --no-cache-dir \
     dbt-postgres \
-    && pip install --no-cache-dir --pre \
-    -i https://test.pypi.org/simple/ \
-    --extra-index-url https://pypi.org/simple/ \
-    correlator-dbt
+    openlineage-dbt
 
-# print the version correlator-dbt plugin
-RUN pip show correlator-dbt
-
-# Environment variables for dbt-correlator
-ENV CORRELATOR_URL=""
-ENV OPENLINEAGE_NAMESPACE=""
+# Standard OpenLineage configuration
+# OPENLINEAGE_URL set via docker-compose; OPENLINEAGE_NAMESPACE left unset (uses tool defaults)
+ENV OPENLINEAGE_URL=""
 
 # Default command
-ENTRYPOINT ["dbt"]
+ENTRYPOINT ["dbt-ol"]
 CMD ["--help"]

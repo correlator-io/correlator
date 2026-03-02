@@ -204,7 +204,7 @@ type (
 	//   - SchemaURL validation is a nice-to-have for post-MVP
 	//   - Current implementation prioritizes flexibility over strict validation
 	LineageEvent struct {
-		EventTime time.Time `json:"eventTime"`
+		EventTime string    `json:"eventTime"` // String to accept ISO 8601 with or without timezone
 		EventType string    `json:"eventType"`
 		Producer  string    `json:"producer"`  // Optional, URL format validation deferred to post-MVP
 		SchemaURL string    `json:"schemaURL"` //nolint: tagliatelle // Optional, validation deferred to post-MVP
