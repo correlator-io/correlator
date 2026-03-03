@@ -12,7 +12,6 @@ DROP MATERIALIZED VIEW IF EXISTS incident_correlation_view CASCADE;
 
 -- Drop functions
 DROP FUNCTION IF EXISTS refresh_correlation_views() CASCADE;
-DROP FUNCTION IF EXISTS validate_job_run_state_transition() CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order

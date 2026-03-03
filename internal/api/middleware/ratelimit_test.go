@@ -12,27 +12,27 @@ import (
 	"time"
 )
 
-const testPlugin = "test-plugin"
+const testClient = "test-client"
 
 // TestRateLimiter_GlobalLimitEnforced verifies that the global rate limit
-// is enforced across all requests regardless of plugin ID.
+// is enforced across all requests regardless of client ID.
 func TestRateLimiter_GlobalLimitEnforced(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Create limiter: 10 RPS global, 50 RPS plugin (global is more restrictive)
+	// Create limiter: 10 RPS global, 50 RPS client (global is more restrictive)
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   10,
 		GlobalBurst: 10, // use override value
-		PluginRPS:   50,
+		ClientRPS:   50,
 		UnAuthRPS:   2,
 	})
 	defer rl.Close()
 
-	// Test: Send 11 requests with pluginID, expect 11th to fail
-	// Global limit (10) should be hit before plugin limit (50)
-	pluginID := testPlugin
+	// Test: Send 11 requests with clientID, expect 11th to fail
+	// Global limit (10) should be hit before client limit (50)
+	pluginID := testClient
 	successCount := 0
 
 	for i := 0; i < 11; i++ {
@@ -47,24 +47,24 @@ func TestRateLimiter_GlobalLimitEnforced(t *testing.T) {
 	}
 }
 
-// TestRateLimiter_PluginLimitEnforced verifies that per-plugin rate limits
+// TestRateLimiter_ClientLimitEnforced verifies that per-client rate limits
 // are enforced independently from the global limit.
-func TestRateLimiter_PluginLimitEnforced(t *testing.T) {
+func TestRateLimiter_ClientLimitEnforced(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Create limiter: 100 RPS global, 5 RPS plugin, 2 RPS unauth
+	// Create limiter: 100 RPS global, 5 RPS client, 2 RPS unauth
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   5,
-		PluginBurst: 5, // use override value
+		ClientRPS:   5,
+		ClientBurst: 5, // use override value
 		UnAuthRPS:   2,
 	})
 	defer rl.Close()
 
-	// Test: Send 6 requests with same pluginID, expect 6th to fail
-	pluginID := testPlugin
+	// Test: Send 6 requests with same clientID, expect 6th to fail
+	pluginID := testClient
 	successCount := 0
 
 	for i := 0; i < 6; i++ {
@@ -73,29 +73,29 @@ func TestRateLimiter_PluginLimitEnforced(t *testing.T) {
 		}
 	}
 
-	// Expect exactly 5 to succeed (plugin limit)
+	// Expect exactly 5 to succeed (client limit)
 	if successCount != 5 {
 		t.Errorf("expected 5 successful requests, got %d", successCount)
 	}
 }
 
 // TestRateLimiter_UnauthenticatedLimitEnforced verifies that requests
-// without a plugin ID are rate limited separately.
+// without a client ID are rate limited separately.
 func TestRateLimiter_UnauthenticatedLimitEnforced(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Create limiter: 100 RPS global, 50 RPS plugin, 2 RPS unauth
+	// Create limiter: 100 RPS global, 50 RPS client, 2 RPS unauth
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   50,
+		ClientRPS:   50,
 		UnAuthRPS:   2,
 		UnAuthBurst: 2, // use override value
 	})
 	defer rl.Close()
 
-	// Test: Send 3 requests with empty pluginID, expect 3rd to fail
+	// Test: Send 3 requests with empty clientID, expect 3rd to fail
 	successCount := 0
 
 	for i := 0; i < 3; i++ {
@@ -123,15 +123,15 @@ func TestRateLimiter_BurstCapacityWorks(t *testing.T) {
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   10,
 		GlobalBurst: 10, // use override value
-		PluginRPS:   5,
-		PluginBurst: 5, // use override value
+		ClientRPS:   5,
+		ClientBurst: 5, // use override value
 		UnAuthRPS:   2,
 	})
 	defer rl.Close()
 
-	pluginID := testPlugin
+	pluginID := testClient
 	// Test: Send 10 requests instantly (should all pass due to burst)
-	// Note: Global limit is 10, plugin limit is 5, so we'll hit plugin limit first
+	// Note: Global limit is 10, client limit is 5, so we'll hit client limit first
 	successCount := 0
 
 	for i := 0; i < 10; i++ {
@@ -140,7 +140,7 @@ func TestRateLimiter_BurstCapacityWorks(t *testing.T) {
 		}
 	}
 
-	// Expect 5 to succeed (plugin limit, not global)
+	// Expect 5 to succeed (client limit, not global)
 	if successCount != 5 {
 		t.Errorf("expected 5 successful burst requests, got %d", successCount)
 	}
@@ -151,41 +151,41 @@ func TestRateLimiter_BurstCapacityWorks(t *testing.T) {
 	}
 }
 
-// TestRateLimiter_PluginIsolation verifies that rate limits for different
-// plugins are tracked independently.
-func TestRateLimiter_PluginIsolation(t *testing.T) {
+// TestRateLimiter_ClientIsolation verifies that rate limits for different
+// clients are tracked independently.
+func TestRateLimiter_ClientIsolation(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Create limiter: 100 RPS global, 5 RPS plugin
+	// Create limiter: 100 RPS global, 5 RPS client
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   5,
-		PluginBurst: 5, // use override value
+		ClientRPS:   5,
+		ClientBurst: 5, // use override value
 		UnAuthRPS:   2,
 	})
 	defer rl.Close()
 
-	plugin1 := "plugin-1"
-	plugin2 := "plugin-2"
+	client1 := "client-1"
+	client2 := "client-2"
 
-	// Plugin 1 uses all 5 requests
+	// Client 1 uses all 5 requests
 	for i := 0; i < 5; i++ {
-		if !rl.Allow(plugin1) {
-			t.Errorf("plugin1 request %d should succeed", i+1)
+		if !rl.Allow(client1) {
+			t.Errorf("client1 request %d should succeed", i+1)
 		}
 	}
 
-	// Plugin 1's 6th request fails
-	if rl.Allow(plugin1) {
-		t.Error("plugin1 should be rate limited")
+	// Client 1's 6th request fails
+	if rl.Allow(client1) {
+		t.Error("client1 should be rate limited")
 	}
 
-	// Plugin 2 should still have 5 requests available
+	// Client 2 should still have 5 requests available
 	for i := 0; i < 5; i++ {
-		if !rl.Allow(plugin2) {
-			t.Errorf("plugin2 request %d should succeed", i+1)
+		if !rl.Allow(client2) {
+			t.Errorf("client2 request %d should succeed", i+1)
 		}
 	}
 }
@@ -200,7 +200,7 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 	// Create limiter
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS: 100,
-		PluginRPS: 50,
+		ClientRPS: 50,
 		UnAuthRPS: 10,
 	})
 	defer rl.Close()
@@ -211,11 +211,11 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 
-		go func(pluginID string) {
+		go func(clientID string) {
 			defer wg.Done()
 
 			for j := 0; j < 10; j++ {
-				_ = rl.Allow(pluginID)
+				_ = rl.Allow(clientID)
 			}
 		}(fmt.Sprintf("plugin-%d", i))
 	}
@@ -224,7 +224,7 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 	// If we get here without panic/race, concurrent access is safe
 }
 
-// TestRateLimiter_MemoryCleanup verifies that stale plugin limiters
+// TestRateLimiter_MemoryCleanup verifies that stale client limiters
 // are removed after the idle timeout period.
 func TestRateLimiter_MemoryCleanup(t *testing.T) {
 	if !testing.Short() {
@@ -234,25 +234,25 @@ func TestRateLimiter_MemoryCleanup(t *testing.T) {
 	// Create limiter with short idle timeout for testing
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   50,
+		ClientRPS:   50,
 		UnAuthRPS:   10,
 		IdleTimeout: 100 * time.Millisecond, // Short timeout for test
 	})
 	defer rl.Close()
 
-	// Create plugin limiter by making a request
-	pluginID := "stale-plugin"
-	if !rl.Allow(pluginID) {
+	// Create client limiter by making a request
+	clientID := "stale-plugin"
+	if !rl.Allow(clientID) {
 		t.Fatal("first request should succeed")
 	}
 
-	// Verify plugin limiter exists in map
+	// Verify client limiter exists in map
 	rl.mu.RLock()
-	_, exists := rl.perPlugin[pluginID]
+	_, exists := rl.perClient[clientID]
 	rl.mu.RUnlock()
 
 	if !exists {
-		t.Fatal("plugin limiter should exist after first request")
+		t.Fatal("client limiter should exist after first request")
 	}
 
 	// Wait for idle timeout + buffer
@@ -261,19 +261,19 @@ func TestRateLimiter_MemoryCleanup(t *testing.T) {
 	// Manually trigger cleanup (don't wait for ticker)
 	rl.cleanup()
 
-	// Verify plugin limiter was removed
+	// Verify client limiter was removed
 	rl.mu.RLock()
-	_, exists = rl.perPlugin[pluginID]
+	_, exists = rl.perClient[clientID]
 	rl.mu.RUnlock()
 
 	if exists {
-		t.Error("stale plugin limiter should have been removed after cleanup")
+		t.Error("stale client limiter should have been removed after cleanup")
 	}
 }
 
-// TestRateLimiter_CleanupPreservesActivePlugins verifies that cleanup
-// only removes idle plugins and preserves recently active ones.
-func TestRateLimiter_CleanupPreservesActivePlugins(t *testing.T) {
+// TestRateLimiter_CleanupPreservesActiveClients verifies that cleanup
+// only removes idle clients and preserves recently active ones.
+func TestRateLimiter_CleanupPreservesActiveClients(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -281,47 +281,47 @@ func TestRateLimiter_CleanupPreservesActivePlugins(t *testing.T) {
 	// Create limiter with short idle timeout
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   50,
+		ClientRPS:   50,
 		UnAuthRPS:   10,
 		IdleTimeout: 100 * time.Millisecond,
 	})
 	defer rl.Close()
 
-	stalePlugin := "stale-plugin"
-	activePlugin := "active-plugin"
+	staleClient := "stale-client"
+	activeClient := "active-client"
 
-	// Create both plugin limiters
-	if !rl.Allow(stalePlugin) {
-		t.Fatal("stale plugin first request should succeed")
+	// Create both client limiters
+	if !rl.Allow(staleClient) {
+		t.Fatal("stale client first request should succeed")
 	}
 
-	if !rl.Allow(activePlugin) {
-		t.Fatal("active plugin first request should succeed")
+	if !rl.Allow(activeClient) {
+		t.Fatal("active client first request should succeed")
 	}
 
-	// Wait for stale plugin to exceed idle timeout
+	// Wait for stale client to exceed idle timeout
 	time.Sleep(150 * time.Millisecond)
 
-	// Keep active plugin active (update lastAccess)
-	if !rl.Allow(activePlugin) {
-		t.Fatal("active plugin should still be allowed")
+	// Keep active client active (update lastAccess)
+	if !rl.Allow(activeClient) {
+		t.Fatal("active client should still be allowed")
 	}
 
 	// Trigger cleanup
 	rl.cleanup()
 
-	// Verify stale plugin was removed
+	// Verify stale client was removed
 	rl.mu.RLock()
-	_, staleExists := rl.perPlugin[stalePlugin]
-	_, activeExists := rl.perPlugin[activePlugin]
+	_, staleExists := rl.perClient[staleClient]
+	_, activeExists := rl.perClient[activeClient]
 	rl.mu.RUnlock()
 
 	if staleExists {
-		t.Error("stale plugin should have been removed")
+		t.Error("stale client should have been removed")
 	}
 
 	if !activeExists {
-		t.Error("active plugin should have been preserved")
+		t.Error("active client should have been preserved")
 	}
 }
 
@@ -335,7 +335,7 @@ func TestRateLimitMiddleware_RequestAllowed(t *testing.T) {
 	// Create limiter with high limits (request will not be blocked)
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS: 100,
-		PluginRPS: 50,
+		ClientRPS: 50,
 		UnAuthRPS: 10,
 	})
 	defer rl.Close()
@@ -382,7 +382,7 @@ func TestRateLimitMiddleware_RequestBlocked(t *testing.T) {
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   1,
 		GlobalBurst: 1,
-		PluginRPS:   1,
+		ClientRPS:   1,
 		UnAuthRPS:   1,
 	})
 	defer rl.Close()
@@ -438,7 +438,7 @@ func TestRateLimitMiddleware_RFC7807ErrorFormat(t *testing.T) {
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   1,
 		GlobalBurst: 1,
-		PluginRPS:   1,
+		ClientRPS:   1,
 		UnAuthRPS:   1,
 	})
 	defer rl.Close()
@@ -498,11 +498,11 @@ func TestRateLimitMiddleware_AuthenticatedVsUnauthenticated(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	// Create limiter: high global, low unauth, medium plugin
+	// Create limiter: high global, low unauth, medium client
 	rl := NewInMemoryRateLimiter(&Config{
 		GlobalRPS:   100,
-		PluginRPS:   10,
-		PluginBurst: 10,
+		ClientRPS:   10,
+		ClientBurst: 10,
 		UnAuthRPS:   2,
 		UnAuthBurst: 2,
 	})
@@ -537,14 +537,14 @@ func TestRateLimitMiddleware_AuthenticatedVsUnauthenticated(t *testing.T) {
 	}
 
 	// Test authenticated requests (limit: 10, separate from unauth)
-	pluginCtx := PluginContext{
-		PluginID: "test-plugin",
-		Name:     "Test Plugin",
+	clientCtx := ClientContext{
+		ClientID: "test-plugin",
+		Name:     "Test Client",
 	}
 
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		ctx := SetPluginContext(req.Context(), pluginCtx)
+		ctx := SetClientContext(req.Context(), clientCtx)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
@@ -557,7 +557,7 @@ func TestRateLimitMiddleware_AuthenticatedVsUnauthenticated(t *testing.T) {
 
 	// 11th authenticated request should fail
 	req = httptest.NewRequest(http.MethodGet, "/test", nil)
-	ctx := SetPluginContext(req.Context(), pluginCtx)
+	ctx := SetClientContext(req.Context(), clientCtx)
 	req = req.WithContext(ctx)
 
 	rec = httptest.NewRecorder()

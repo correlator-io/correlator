@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,7 @@ func TestKeyValidation(t *testing.T) {
 	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
-		PluginID:    "dbt-plugin",
+		ClientID:    "dbt-plugin",
 		Name:        "DBT Production Plugin",
 		Permissions: []string{"lineage:write", "health:read"},
 		CreatedAt:   time.Now(),
@@ -57,7 +58,7 @@ func TestKeyValidation(t *testing.T) {
 		inactiveKey := &APIKey{
 			ID:       "api-key-2",
 			Key:      "inactive-key",
-			PluginID: "test-plugin",
+			ClientID: "test-plugin",
 			Active:   false,
 		}
 
@@ -73,7 +74,7 @@ func TestKeyValidation(t *testing.T) {
 		expiredKey := &APIKey{
 			ID:        "api-key-3",
 			Key:       "expired-key",
-			PluginID:  "test-plugin",
+			ClientID:  "test-plugin",
 			Active:    true,
 			ExpiresAt: &pastTime,
 		}
@@ -93,7 +94,7 @@ func TestKeyPermissions(t *testing.T) {
 	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
-		PluginID:    "dbt-plugin",
+		ClientID:    "dbt-plugin",
 		Name:        "DBT Production Plugin",
 		Permissions: []string{"lineage:write", "health:read", "metrics:read"},
 		Active:      true,
@@ -235,50 +236,33 @@ func TestGenerateAPIKey(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	tests := []struct {
-		name     string
-		pluginID string
-		wantErr  bool
-	}{
-		{
-			name:     "valid plugin ID generates key",
-			pluginID: "dbt-plugin",
-			wantErr:  false,
-		},
-		{
-			name:     "empty plugin ID fails",
-			pluginID: "",
-			wantErr:  true,
-		},
+	key, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey() unexpected error: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			key, err := GenerateAPIKey(tt.pluginID)
+	if key == "" {
+		t.Error("GenerateAPIKey() returned empty key")
+	}
 
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.pluginID)
-				}
+	// Key should be at least 32 characters for security
+	if len(key) < 32 {
+		t.Errorf("GenerateAPIKey() key too short: %d characters", len(key))
+	}
 
-				return
-			}
+	// Key should have the correlator prefix
+	if !strings.HasPrefix(key, "correlator_ak_") {
+		t.Errorf("GenerateAPIKey() key missing prefix: %s", key)
+	}
 
-			if err != nil {
-				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.pluginID, err)
+	// Keys should be unique
+	key2, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey() second call unexpected error: %v", err)
+	}
 
-				return
-			}
-
-			if key == "" {
-				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.pluginID)
-			}
-
-			// Key should be at least 32 characters for security
-			if len(key) < 32 {
-				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.pluginID, len(key))
-			}
-		})
+	if key == key2 {
+		t.Error("GenerateAPIKey() returned duplicate keys")
 	}
 }
 

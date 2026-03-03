@@ -33,8 +33,6 @@ var (
 	ErrKeyNotFound = errors.New("API key not found")
 	// ErrKeyNil is returned when a nil API key is provided.
 	ErrKeyNil = errors.New("API key cannot be nil")
-	// ErrPluginIDEmpty is returned when plugin ID is empty during key generation.
-	ErrPluginIDEmpty = errors.New("plugin ID cannot be empty")
 	// ErrKeyStringEmpty is returned when key string is empty during parsing.
 	ErrKeyStringEmpty = errors.New("key string cannot be empty")
 	// ErrInvalidKeyFormat is returned when API key doesn't match expected format.
@@ -49,13 +47,13 @@ type (
 		*sql.DB
 	}
 
-	// APIKey represents an API key with plugin identification and permissions.
+	// APIKey represents an API key with client identification and permissions.
 	// This is a storage domain model - not serialized to JSON directly.
 	// For API responses, create a separate response type in the api package.
 	APIKey struct {
 		ID          string
 		Key         string // bcrypt hash - never expose in API responses
-		PluginID    string
+		ClientID    string
 		Name        string
 		Permissions []string
 		CreatedAt   time.Time
@@ -73,8 +71,8 @@ type (
 		Update(ctx context.Context, apiKey *APIKey) error
 		// Delete removes an API key
 		Delete(ctx context.Context, keyID string) error
-		// ListByPlugin returns all API keys for a specific plugin
-		ListByPlugin(ctx context.Context, pluginID string) ([]*APIKey, error)
+		// ListByClientID returns all API keys for a specific client.
+		ListByClientID(ctx context.Context, clientID string) ([]*APIKey, error)
 		// HealthCheck verifies the storage backend is healthy and ready to serve requests
 		HealthCheck(ctx context.Context) error
 	}
@@ -248,12 +246,8 @@ func ComputeKeyLookupHash(key string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// GenerateAPIKey creates a new secure API key for a plugin.
-func GenerateAPIKey(pluginID string) (string, error) {
-	if pluginID == "" {
-		return "", ErrPluginIDEmpty
-	}
-
+// GenerateAPIKey creates a new secure API key.
+func GenerateAPIKey() (string, error) {
 	// Generate 32 random bytes (256 bits)
 	randomBytes := make([]byte, randomBytesSize)
 

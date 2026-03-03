@@ -48,14 +48,14 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		Active:      true,
@@ -73,7 +73,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 
@@ -107,7 +107,7 @@ func (ts *testServer) postLineageEvents(t *testing.T, events []LineageEvent) *ht
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -125,7 +125,7 @@ func (ts *testServer) postLineageEvent(t *testing.T, event LineageEvent) *httpte
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -604,7 +604,7 @@ func TestLineageHandler_RequestTooLarge(t *testing.T) {
 	largeBody := make([]byte, defaultMaxRequestSize+1)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(largeBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -632,7 +632,7 @@ func TestLineageHandler_MissingAuth(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	// NO X-API-Key header
+	// No Authorization header
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -657,7 +657,7 @@ func TestLineageHandler_InvalidJSON(t *testing.T) {
 	body := []byte(`{"invalid json syntax`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -679,7 +679,7 @@ func TestLineageHandler_EmptyBatch(t *testing.T) {
 	body := []byte(`[]`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -707,7 +707,7 @@ func TestLineageHandler_WrongContentType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "text/plain") // Wrong Content-Type!
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -728,7 +728,7 @@ func TestLineageHandler_EmptyBody(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader([]byte{}))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -751,7 +751,7 @@ func TestLineageHandler_InvalidMethod(t *testing.T) {
 
 	// Try GET (should not match route pattern)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/lineage/batch", nil)
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -862,7 +862,7 @@ func TestLineageHandler_InvalidStateSequence(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -899,7 +899,7 @@ func TestLineageHandler_BackwardTransition(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -935,7 +935,7 @@ func TestLineageHandler_TerminalStateMutation(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/batch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1043,7 +1043,7 @@ func TestSingleEvent_MalformedJSON(t *testing.T) {
 	body := []byte(`{"invalid json`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1067,7 +1067,7 @@ func TestSingleEvent_WrongContentType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1087,7 +1087,7 @@ func TestSingleEvent_EmptyBody(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader([]byte{}))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1111,7 +1111,7 @@ func TestSingleEvent_ArrayPayload(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", ts.apiKey)
+	req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 	rr := httptest.NewRecorder()
 	ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1132,7 +1132,7 @@ func TestSingleEvent_BearerAuth(t *testing.T) {
 	event := createValidLineageEvent("bearer-run", "START", time.Now())
 	runID := event.Run.ID
 
-	// Use Bearer auth (not X-Api-Key) — proves OL client compat
+	// Use Bearer auth — OL client standard
 	rr := ts.postLineageEventWithBearer(t, event)
 
 	assert.Equal(t, http.StatusOK, rr.Code, "Bearer auth should work: %s", rr.Body.String())

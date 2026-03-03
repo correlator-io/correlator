@@ -40,7 +40,7 @@ func TestListIncidents_Integration(t *testing.T) {
 
 	t.Run("ListIncidents_ReturnsIncidents", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -67,7 +67,7 @@ func TestListIncidents_Integration(t *testing.T) {
 
 	t.Run("ListIncidents_WithPagination", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents?limit=5&offset=0", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -89,7 +89,7 @@ func TestListIncidents_Integration(t *testing.T) {
 		// URL-encode the timestamp (contains + for timezone)
 		since := url.QueryEscape(now.Add(-1 * time.Hour).Format(time.RFC3339))
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents?since="+since, nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -110,7 +110,7 @@ func TestListIncidents_Integration(t *testing.T) {
 
 	t.Run("ListIncidents_InvalidLimit", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents?limit=999", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -120,7 +120,7 @@ func TestListIncidents_Integration(t *testing.T) {
 
 	t.Run("ListIncidents_InvalidOffset", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents?offset=-1", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -130,7 +130,7 @@ func TestListIncidents_Integration(t *testing.T) {
 
 	t.Run("ListIncidents_InvalidSince", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents?since=invalid", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -164,7 +164,7 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 	t.Run("GetIncidentDetails_Success", func(t *testing.T) {
 		endpoint := fmt.Sprintf("/api/v1/incidents/%d", testResultID)
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -195,7 +195,7 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 
 	t.Run("GetIncidentDetails_NotFound", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents/999999", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -205,7 +205,7 @@ func TestGetIncidentDetails_Integration(t *testing.T) {
 
 	t.Run("GetIncidentDetails_InvalidID", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents/invalid", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -256,7 +256,7 @@ func TestIncidents_HasCorrelationIssue_Integration(t *testing.T) {
 
 	t.Run("CorrelatedIncident_HasCorrelationIssue_False", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -287,7 +287,7 @@ func TestIncidents_HasCorrelationIssue_Integration(t *testing.T) {
 	t.Run("CorrelatedIncidentDetail_CorrelationStatus_Correlated", func(t *testing.T) {
 		endpoint := fmt.Sprintf("/api/v1/incidents/%d", correlatedTestResultID)
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -370,7 +370,7 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 
 	t.Run("OrphanDataset_DetectedInHealthEndpoint", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -402,7 +402,7 @@ func TestIncidents_OrphanNamespace_Integration(t *testing.T) {
 		// Incidents in orphan namespaces don't appear in incident_correlation_view
 		// because the view requires an output edge for the dataset
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -455,7 +455,7 @@ func TestIncidentsWithDownstream_Integration(t *testing.T) {
 	t.Run("IncidentWithDownstream", func(t *testing.T) {
 		endpoint := fmt.Sprintf("/api/v1/incidents/%d", testResultID)
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)

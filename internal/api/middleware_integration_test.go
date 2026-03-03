@@ -53,14 +53,14 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		Active:      true,
@@ -84,7 +84,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 
@@ -135,14 +135,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	// Create test API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		Active:      true,
@@ -160,14 +160,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 	server := NewServer(config, keyStore, nil, lineageStore, lineageStore)
 
-	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
+	t.Run("Successful Authentication with Bearer Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", testAPIKey)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -198,7 +198,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 
 	t.Run("Invalid API Key Returns 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", "correlator_ak_"+string(make([]byte, 64)))
+		req.Header.Set("Authorization", "Bearer "+"correlator_ak_"+string(make([]byte, 64)))
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -207,14 +207,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Inactive API Key Returns 403", func(t *testing.T) {
-		inactiveKey, err := storage.GenerateAPIKey("inactive-plugin")
+		inactiveKey, err := storage.GenerateAPIKey()
 		require.NoError(t, err)
 
 		err = keyStore.Add(ctx, &storage.APIKey{
 			ID:          "inactive-key-id",
 			Key:         inactiveKey,
-			PluginID:    "inactive-plugin",
-			Name:        "Inactive Plugin",
+			ClientID:    "inactive-client",
+			Name:        "Inactive Client",
 			Permissions: []string{"lineage:write"},
 			CreatedAt:   time.Now(),
 			Active:      false,
@@ -222,7 +222,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", inactiveKey)
+		req.Header.Set("Authorization", "Bearer "+inactiveKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -231,15 +231,15 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Expired API Key Returns 401", func(t *testing.T) {
-		expiredKey, err := storage.GenerateAPIKey("expired-plugin")
+		expiredKey, err := storage.GenerateAPIKey()
 		require.NoError(t, err)
 
 		expiredTime := time.Now().Add(-1 * time.Hour)
 		err = keyStore.Add(ctx, &storage.APIKey{
 			ID:          "expired-key-id",
 			Key:         expiredKey,
-			PluginID:    "expired-plugin",
-			Name:        "Expired Plugin",
+			ClientID:    "expired-client",
+			Name:        "Expired Client",
 			Permissions: []string{"lineage:write"},
 			CreatedAt:   time.Now().Add(-2 * time.Hour),
 			ExpiresAt:   &expiredTime,
@@ -248,7 +248,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", expiredKey)
+		req.Header.Set("Authorization", "Bearer "+expiredKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -350,14 +350,14 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	})
 
 	// Create a test API key for protected endpoint verification
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
@@ -377,14 +377,14 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
 
 	// Create rate limiter with VERY restrictive limits to ensure bypass is working
 	// If bypass didn't work, these limits would be hit immediately
-	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 plugin RPS, 1 unauth RPS
+	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 client RPS, 1 unauth RPS
 
 	t.Cleanup(func() {
 		rateLimiter.Close()
@@ -469,14 +469,14 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 
 	t.Run("Protected Endpoint Still Enforces Rate Limits", func(t *testing.T) {
 		// Verify /api/v1/health/correlation DOES get rate limited (it's protected)
-		// With 2 RPS plugin limit, we should hit rate limit quickly
+		// With 2 RPS client limit, we should hit rate limit quickly
 		successCount := 0
 		rateLimitedCount := 0
 
 		// Send 20 rapid requests with API key
 		for i := 0; i < 20; i++ {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-			req.Header.Set("X-Api-Key", testAPIKey)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 			rr := httptest.NewRecorder()
 			server.httpServer.Handler.ServeHTTP(rr, req)
@@ -529,7 +529,7 @@ func TestReadyEndpoint(t *testing.T) {
 
 	// Create rate limiter with VERY restrictive limits
 	// If bypass didn't work, these limits would be hit immediately
-	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 plugin RPS, 1 unauth RPS
+	rateLimiter := createTestRateLimiter(5, 2, 1) // 5 global RPS, 2 client RPS, 1 unauth RPS
 
 	t.Cleanup(func() {
 		rateLimiter.Close()
@@ -549,7 +549,7 @@ func TestReadyEndpoint(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
@@ -677,15 +677,15 @@ func TestRateLimitingIntegration(t *testing.T) {
 		_ = testcontainers.TerminateContainer(testDB.Container)
 	})
 
-	// Create test API keys for plugin-1 and plugin-2
-	apiKey1, err := storage.GenerateAPIKey("plugin-1")
-	require.NoError(t, err, "Failed to generate API key for plugin-1")
+	// Create test API keys for client-1 and client-2
+	apiKey1, err := storage.GenerateAPIKey()
+	require.NoError(t, err, "Failed to generate API key for client-1")
 
 	apiKeyObj1 := &storage.APIKey{
-		ID:          "plugin-1-key-id",
+		ID:          "client-1-key-id",
 		Key:         apiKey1,
-		PluginID:    "plugin-1",
-		Name:        "Plugin 1",
+		ClientID:    "client-1",
+		Name:        "Client 1",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
@@ -693,16 +693,16 @@ func TestRateLimitingIntegration(t *testing.T) {
 	}
 
 	err = keyStore.Add(ctx, apiKeyObj1)
-	require.NoError(t, err, "Failed to add API key for plugin-1")
+	require.NoError(t, err, "Failed to add API key for client-1")
 
-	apiKey2, err := storage.GenerateAPIKey("plugin-2")
-	require.NoError(t, err, "Failed to generate API key for plugin-2")
+	apiKey2, err := storage.GenerateAPIKey()
+	require.NoError(t, err, "Failed to generate API key for client-2")
 
 	apiKeyObj2 := &storage.APIKey{
-		ID:          "plugin-2-key-id",
+		ID:          "client-2-key-id",
 		Key:         apiKey2,
-		PluginID:    "plugin-2",
-		Name:        "Plugin 2",
+		ClientID:    "client-2",
+		Name:        "Client 2",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
@@ -710,7 +710,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 	}
 
 	err = keyStore.Add(ctx, apiKeyObj2)
-	require.NoError(t, err, "Failed to add API key for plugin-2")
+	require.NoError(t, err, "Failed to add API key for client-2")
 
 	// Create server config
 	serverConfig := &ServerConfig{
@@ -722,14 +722,14 @@ func TestRateLimitingIntegration(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
 
 	// Test 1: Global Rate Limit Enforcement
 	t.Run("Global Rate Limit Enforcement", func(t *testing.T) {
-		// Create limiter: 5 RPS global, 50 RPS plugin (global is bottleneck)
+		// Create limiter: 5 RPS global, 50 RPS client (global is bottleneck)
 		// Use 5 RPS to make limit easier to hit despite bcrypt latency (~50ms/request)
 		rateLimiter := createTestRateLimiter(2, 50, 2)
 
@@ -740,7 +740,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		// Create server with rate limiter
 		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore)
 
-		// Send requests alternating between plugin-1 and plugin-2
+		// Send requests alternating between client-1 and client-2
 		// With 5 RPS global limit and ~50ms bcrypt latency, we expect some rate limiting
 		successCount := 0
 		rateLimitedCount := 0
@@ -770,14 +770,14 @@ func TestRateLimitingIntegration(t *testing.T) {
 			t.Errorf("Expected some requests to be rate limited (global limit), but all %d succeeded", successCount)
 		}
 
-		// Verify both plugins were affected (global limit applies to all)
+		// Verify both clients were affected (global limit applies to all)
 		// We can't test this directly, but the fact that we have rate-limited requests
-		// while alternating between plugins verifies global limiting
+		// while alternating between clients verifies global limiting
 	})
 
-	// Test 2: Per-Plugin Rate Limit Enforcement
-	t.Run("Per-Plugin Rate Limit Enforcement", func(t *testing.T) {
-		// Create limiter: 100 RPS global, 2 RPS plugin (plugin is bottleneck)
+	// Test 2: Per-Client Rate Limit Enforcement
+	t.Run("Per-Client Rate Limit Enforcement", func(t *testing.T) {
+		// Create limiter: 100 RPS global, 2 RPS client (client is bottleneck)
 		// Use 2 RPS to make limit easier to hit despite bcrypt latency (~50ms/request)
 		rateLimiter := createTestRateLimiter(100, 2, 1)
 		defer rateLimiter.Close()
@@ -785,7 +785,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		// Create server with rate limiter
 		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore)
 
-		// Plugin 1: Send requests until rate limited
+		// Client 1: Send requests until rate limited
 		// With 2 RPS limit and ~50ms bcrypt latency, we need more than 2 requests
 		// to exhaust burst capacity (4 tokens = 2 RPS × 2 burst multiplier)
 		successCount := 0
@@ -807,12 +807,12 @@ func TestRateLimitingIntegration(t *testing.T) {
 			t.Errorf("Expected some requests to be rate limited, but all %d succeeded", successCount)
 		}
 
-		// Plugin 2: Should have independent limit
+		// Client 2: Should have independent limit
 		// Reset counters
 		successCount = 0
 		rateLimitedCount = 0
 
-		// Send 10 requests to plugin-2
+		// Send 10 requests to client-2
 		for i := 0; i < 10; i++ {
 			response := makeAuthenticatedRequest(server, apiKey2, "/api/v1/health/correlation")
 			switch response.Code {
@@ -827,15 +827,15 @@ func TestRateLimitingIntegration(t *testing.T) {
 			}
 		}
 
-		// Plugin 2 should also get some rate limited requests (independent limit)
+		// Client 2 should also get some rate limited requests (independent limit)
 		if rateLimitedCount == 0 {
-			t.Errorf("Plugin-2 should have independent rate limit, but all %d requests succeeded", successCount)
+			t.Errorf("Client-2 should have independent rate limit, but all %d requests succeeded", successCount)
 		}
 	})
 
 	// Test 3: Unauthenticated Rate Limit Enforcement
 	t.Run("Unauthenticated Rate Limit Enforcement", func(t *testing.T) {
-		// Create limiter: 100 RPS global, 50 RPS plugin, 1 RPS unauth
+		// Create limiter: 100 RPS global, 50 RPS client, 1 RPS unauth
 		// Very low unauth limit (1 RPS) to test rate limiting of unauthenticated requests
 		rateLimiter := createTestRateLimiter(100, 50, 1)
 		defer rateLimiter.Close()
@@ -872,7 +872,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 	// Test 4: Token Refill After Rate Limit
 	t.Run("Token Refill After Rate Limit", func(t *testing.T) {
-		// Create limiter: 100 RPS global, 2 RPS plugin (very restrictive)
+		// Create limiter: 100 RPS global, 2 RPS client (very restrictive)
 		rateLimiter := createTestRateLimiter(100, 2, 1)
 		defer rateLimiter.Close()
 
@@ -921,7 +921,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 // Middleware chain order (from server.go):
 //  1. CorrelationID()      - Generate correlation ID for all responses
 //  2. Recovery()           - Catch panics in all downstream middleware
-//  3. AuthenticatePlugin() - Identify plugin (sets PluginContext)
+//  3. Authenticate()       - Identify client (sets ClientContext)
 //  4. RateLimit()          - Block before expensive operations
 //  5. RequestLogger()      - Log only legitimate requests
 //  6. CORS()               - Lightweight header manipulation
@@ -959,14 +959,14 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	})
 
 	// Create test API key for authenticated requests
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
@@ -977,14 +977,14 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to add API key")
 
 	// Create inactive API key for authorization failure tests
-	inactiveAPIKey, err := storage.GenerateAPIKey("inactive-plugin")
+	inactiveAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate inactive API key")
 
 	inactiveKey := &storage.APIKey{
 		ID:          "inactive-key-id",
 		Key:         inactiveAPIKey,
-		PluginID:    "inactive-plugin",
-		Name:        "Inactive Plugin",
+		ClientID:    "inactive-client",
+		Name:        "Inactive Client",
 		Permissions: []string{"lineage:write"},
 		CreatedAt:   time.Now(),
 		ExpiresAt:   nil,
@@ -1008,7 +1008,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     1048576, // 1 MB
 	}
@@ -1020,7 +1020,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {
 		// Make authenticated request to /api/v1/health/correlation
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", testAPIKey)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1040,7 +1040,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	t.Run("Authentication Failure Has Correlation ID And CORS", func(t *testing.T) {
 		// Make request with missing API key
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		// No X-Api-Key header set
+		// No Authorization header set
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1060,13 +1060,13 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	// Test Case 3: Rate Limiting Has Correlation ID
 	t.Run("Rate Limiting Has Correlation ID", func(t *testing.T) {
 		// Exhaust rate limit by sending multiple rapid requests
-		// Rate limiter configured with 2 RPS per plugin, burst = 4
+		// Rate limiter configured with 2 RPS per client, burst = 4
 		// Send requests until we hit the rate limit
 		var rateLimitedResponse *httptest.ResponseRecorder
 
 		for i := 0; i < 10; i++ {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-			req.Header.Set("X-Api-Key", testAPIKey)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 			rr := httptest.NewRecorder()
 			server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1106,18 +1106,18 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 //
 // Parameters:
 //   - globalRPS: Global rate limit (requests per second)
-//   - pluginRPS: Per-plugin rate limit (requests per second)
+//   - clientRPS: Per-client rate limit (requests per second)
 //   - unauthRPS: Unauthenticated rate limit (requests per second)
 //
 // Burst capacity is automatically computed as 2 × rate for all tiers.
-func createTestRateLimiter(globalRPS, pluginRPS, unauthRPS int) *middleware.InMemoryRateLimiter {
+func createTestRateLimiter(globalRPS, clientRPS, unauthRPS int) *middleware.InMemoryRateLimiter {
 	config := &middleware.Config{
 		GlobalRPS: globalRPS,
-		PluginRPS: pluginRPS,
+		ClientRPS: clientRPS,
 		UnAuthRPS: unauthRPS,
 		// Burst values left as 0 to use auto-computed defaults (2 × rate)
 		GlobalBurst: 0,
-		PluginBurst: 0,
+		ClientBurst: 0,
 		UnAuthBurst: 0,
 	}
 
@@ -1136,9 +1136,9 @@ func createTestRateLimiter(globalRPS, pluginRPS, unauthRPS int) *middleware.InMe
 func makeAuthenticatedRequest(server *Server, apiKey, path string) *httptest.ResponseRecorder { //nolint:unparam
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 
-	// Add API key header if provided (supports authenticated requests)
+	// Add Authorization header if provided (supports authenticated requests)
 	if apiKey != "" {
-		req.Header.Set("X-Api-Key", apiKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	rr := httptest.NewRecorder()

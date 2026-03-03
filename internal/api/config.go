@@ -86,7 +86,7 @@ func LoadServerConfig() *ServerConfig {
 		CORSAllowedHeaders: config.ParseCommaSeparatedList(
 			config.GetEnvStr(
 				"CORRELATOR_CORS_ALLOWED_HEADERS",
-				"Content-Type,Authorization,X-Correlation-ID,X-API-Key",
+				"Content-Type,Authorization,X-Correlation-ID",
 			),
 		),
 		CORSMaxAge: config.GetEnvInt("CORRELATOR_CORS_MAX_AGE", defaultCORSMaxAge),

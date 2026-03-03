@@ -65,29 +65,19 @@ var (
 	ErrAPIKeyInactive = errors.New("API key inactive")
 )
 
-// extractAPIKey extracts the API key from request headers.
-// It checks the X-Api-Key header first (primary), then falls back to
-// Authorization: Bearer header (secondary).
+// extractAPIKey extracts the API key from the Authorization: Bearer header.
+// This is the standard header sent by OpenLineage clients.
 //
 // Returns (key, true) if found and valid, ("", false) otherwise.
 //
 // Security considerations:
 // - Rejects keys containing newlines (header injection prevention)
 // - Trims whitespace from keys
-// - Case-sensitive "Bearer " prefix check
-// - X-Api-Key takes precedence over Authorization header.
+// - Case-sensitive "Bearer " prefix check.
 func extractAPIKey(r *http.Request) (string, bool) {
-	// Primary: Check X-Api-Key header
-	if apiKey := r.Header.Get("X-Api-Key"); apiKey != "" {
-		return validateAPIKey(apiKey)
-	}
-
-	// Secondary: Check Authorization: Bearer header
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
-		// Check for "Bearer " prefix (note the space)
 		if strings.HasPrefix(authHeader, "Bearer ") {
-			// Extract token after "Bearer "
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 
 			return validateAPIKey(token)
@@ -198,7 +188,7 @@ func authenticateRequest(
 	if !foundKey.Active {
 		logger.Error("authentication failed: key inactive",
 			slog.String("key_id", foundKey.ID),
-			slog.String("plugin_id", foundKey.PluginID),
+			slog.String("client_id", foundKey.ClientID),
 			slog.String("correlation_id", GetCorrelationID(ctx)),
 			slog.String("failure_type", "key_inactive"),
 		)
@@ -212,7 +202,7 @@ func authenticateRequest(
 	if foundKey.ExpiresAt != nil && time.Now().After(*foundKey.ExpiresAt) {
 		logger.Error("authentication failed: key expired",
 			slog.String("key_id", foundKey.ID),
-			slog.String("plugin_id", foundKey.PluginID),
+			slog.String("client_id", foundKey.ClientID),
 			slog.Time("expired_at", *foundKey.ExpiresAt),
 			slog.String("correlation_id", GetCorrelationID(ctx)),
 			slog.String("failure_type", "key_expired"),
@@ -227,23 +217,23 @@ func authenticateRequest(
 	return foundKey, nil
 }
 
-// AuthenticatePlugin creates an authentication middleware that validates API keys
-// and enriches request context with plugin information.
+// Authenticate creates an authentication middleware that validates API keys
+// and enriches request context with client information.
 //
 // The middleware:
-// - Extracts API keys from X-Api-Key (primary) or Authorization: Bearer (fallback) headers
+// - Extracts API keys from the Authorization: Bearer header
 // - Validates API key format and authenticity
 // - Checks active status and expiration
-// - Enriches request context with PluginContext
+// - Enriches request context with ClientContext
 // - Returns RFC 7807 compliant error responses on failure
 //
 // Example usage:
 //
 //	store := storage.NewPersistentKeyStore(db)
 //	logger := slog.Default()
-//	authMiddleware := middleware.AuthenticatePlugin(store, logger)
+//	authMiddleware := middleware.Authenticate(store, logger)
 //	handler = authMiddleware(handler)
-func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
+func Authenticate(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if this path bypasses authentication (public endpoints)
@@ -274,20 +264,20 @@ func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(htt
 				return
 			}
 
-			// Enrich context with plugin information
-			pluginCtx := PluginContext{
-				PluginID:    authenticated.PluginID,
+			// Enrich context with client information
+			clientCtx := ClientContext{
+				ClientID:    authenticated.ClientID,
 				Name:        authenticated.Name,
 				Permissions: authenticated.Permissions,
 				KeyID:       authenticated.ID,
 				AuthTime:    time.Now(),
 			}
-			ctx := SetPluginContext(r.Context(), pluginCtx)
+			ctx := SetClientContext(r.Context(), clientCtx)
 
 			// Log successful authentication
 			logger.Info("API key authenticated",
-				slog.String("plugin_id", pluginCtx.PluginID),
-				slog.String("key_id", pluginCtx.KeyID),
+				slog.String("client_id", clientCtx.ClientID),
+				slog.String("key_id", clientCtx.KeyID),
 				slog.String("key", storage.MaskKey(authenticated.Key)),
 				slog.Duration("auth_latency", time.Since(authStart)),
 				slog.String("correlation_id", GetCorrelationID(r.Context())),

@@ -12,9 +12,9 @@ import (
 
 const (
 	burstCapacityMultiplier    int     = 2
-	maxPlugins                 int     = 100
+	maxClients                 int     = 100
 	defaultGlobalRPS           int     = 100
-	defaultPluginRPS           int     = 50
+	defaultClientRPS           int     = 50
 	defaultUnAuthRPS           int     = 10
 	thresholdMultiplier        float64 = 0.8
 	thresholdPercentage        int     = 80
@@ -34,45 +34,45 @@ type (
 		// Allow checks if a request should be allowed based on rate limits.
 		// Returns true if allowed, false if rate limited.
 		//
-		// For authenticated requests, pluginID identifies the plugin.
-		// For unauthenticated requests, pluginID is empty string.
-		Allow(pluginID string) bool
+		// For authenticated requests, clientID identifies the client.
+		// For unauthenticated requests, clientID is empty string.
+		Allow(clientID string) bool
 	}
 
 	// InMemoryRateLimiter implements RateLimiter using golang.org/x/time/rate.
 	//
 	// Provides three-tier rate limiting:
 	// 1. Global limit (applied to all requests)
-	// 2. Per-plugin limit (applied to authenticated requests)
-	// 3. Unauthenticated limit (applied to requests without plugin ID)
+	// 2. Per-client limit (applied to authenticated requests)
+	// 3. Unauthenticated limit (applied to requests without client ID)
 	//
 	// Uses token bucket algorithm with configurable burst capacity.
 	// Burst capacity allows temporary bursts above the sustained rate.
 	//
 	// Memory cleanup runs periodically to prevent unbounded growth.
-	// Plugins idle longer than IdleTimeout are removed.
+	// Clients idle longer than IdleTimeout are removed.
 	//
 	// Suitable for single-node MVP deployments. For distributed systems,
 	// use RedisRateLimiter.
 	InMemoryRateLimiter struct {
 		global          *rate.Limiter
-		perPlugin       map[string]*pluginLimiter
+		perClient       map[string]*clientLimiter
 		unauthenticated *rate.Limiter
 		mu              sync.RWMutex
 		cleanupTicker   *time.Ticker
 		done            chan struct{}
 
-		// Configuration (stored for creating new plugin limiters and cleanup)
-		pluginRPS       int
-		pluginBurst     int
+		// Configuration (stored for creating new client limiters and cleanup)
+		clientRPS       int
+		clientBurst     int
 		cleanupInterval time.Duration
 		idleTimeout     time.Duration
-		maxPlugins      int
+		maxClients      int
 	}
 
-	// pluginLimiter tracks rate limit state for a single plugin.
+	// clientLimiter tracks rate limit state for a single client.
 	// Includes last access time for memory cleanup.
-	pluginLimiter struct {
+	clientLimiter struct {
 		limiter    *rate.Limiter
 		lastAccess time.Time
 		mu         sync.Mutex
@@ -92,27 +92,27 @@ type (
 //
 //	rl := NewInMemoryRateLimiter(&Config{
 //	    GlobalRPS: 100,
-//	    PluginRPS: 50,
+//	    ClientRPS: 50,
 //	    UnAuthRPS: 10,
 //	})
 //	defer rl.Close()
 func NewInMemoryRateLimiter(config *Config) *InMemoryRateLimiter {
 	// Compute burst capacities (use override if provided, otherwise 2 × rate)
 	globalBurst := computeBurstCapacity(config.GlobalRPS, config.GlobalBurst)
-	pluginBurst := computeBurstCapacity(config.PluginRPS, config.PluginBurst)
+	clientBurst := computeBurstCapacity(config.ClientRPS, config.ClientBurst)
 	unauthBurst := computeBurstCapacity(config.UnAuthRPS, config.UnAuthBurst)
 
 	// Create rate limiter with three-tier limits
 	rl := &InMemoryRateLimiter{
 		global:          rate.NewLimiter(rate.Limit(config.GlobalRPS), globalBurst),
-		perPlugin:       make(map[string]*pluginLimiter),
+		perClient:       make(map[string]*clientLimiter),
 		unauthenticated: rate.NewLimiter(rate.Limit(config.UnAuthRPS), unauthBurst),
 		done:            make(chan struct{}),
-		pluginRPS:       config.PluginRPS,
-		pluginBurst:     pluginBurst,
+		clientRPS:       config.ClientRPS,
+		clientBurst:     clientBurst,
 		cleanupInterval: config.CleanupInterval,
 		idleTimeout:     config.IdleTimeout,
-		maxPlugins:      config.MaxPlugins,
+		maxClients:      config.MaxClients,
 	}
 
 	// Start background cleanup goroutine
@@ -152,51 +152,51 @@ func computeBurstCapacity(rate, burstOverride int) int {
 //
 // Rate limiting is enforced in three tiers:
 // 1. Global limit (all requests)
-// 2. Per-plugin limit (authenticated) OR unauthenticated limit
+// 2. Per-client limit (authenticated) OR unauthenticated limit
 //
 // Parameters:
-//   - pluginID: empty string for unauthenticated requests, plugin ID otherwise
-func (rl *InMemoryRateLimiter) Allow(pluginID string) bool {
+//   - clientID: empty string for unauthenticated requests, client ID otherwise
+func (rl *InMemoryRateLimiter) Allow(clientID string) bool {
 	// Tier 1: Check global limit first (fail fast)
 	if !rl.global.Allow() {
 		return false
 	}
 
-	// Tier 2: Check plugin-specific or unauthenticated limit
-	if pluginID == "" {
+	// Tier 2: Check client-specific or unauthenticated limit
+	if clientID == "" {
 		// Unauthenticated request
 		return rl.unauthenticated.Allow()
 	}
 
-	// Authenticated request - get or create plugin limiter
+	// Authenticated request - get or create client limiter
 	rl.mu.RLock()
-	pl, ok := rl.perPlugin[pluginID]
+	cl, ok := rl.perClient[clientID]
 	rl.mu.RUnlock()
 
 	if !ok {
-		// Lazy initialization: create limiter for this plugin
+		// Lazy initialization: create limiter for this client
 		rl.mu.Lock()
 		// Double-check after acquiring write lock (avoid race)
-		if pl, ok = rl.perPlugin[pluginID]; !ok {
-			pl = &pluginLimiter{
-				limiter:    rate.NewLimiter(rate.Limit(rl.pluginRPS), rl.pluginBurst),
+		if cl, ok = rl.perClient[clientID]; !ok {
+			cl = &clientLimiter{
+				limiter:    rate.NewLimiter(rate.Limit(rl.clientRPS), rl.clientBurst),
 				lastAccess: time.Now(),
 			}
 
-			rl.perPlugin[pluginID] = pl
+			rl.perClient[clientID] = cl
 
-			// Operational monitoring: warn when approaching max plugins limit
-			// This helps operators detect plugin ID proliferation before hitting hard limits
+			// Operational monitoring: warn when approaching max clients limit
+			// This helps operators detect client ID proliferation before hitting hard limits
 			// In later phases, lets add open telemetry metrics to track this
-			currentCount := len(rl.perPlugin)
-			threshold := int(float64(rl.maxPlugins) * thresholdMultiplier) // 80% threshold
+			currentCount := len(rl.perClient)
+			threshold := int(float64(rl.maxClients) * thresholdMultiplier) // 80% threshold
 
 			if currentCount >= threshold {
-				slog.Warn("rate limiter approaching max plugins limit",
-					"current_plugins", currentCount,
-					"max_plugins", rl.maxPlugins,
+				slog.Warn("rate limiter approaching max clients limit",
+					"current_clients", currentCount,
+					"max_clients", rl.maxClients,
 					"threshold_percent", thresholdPercentage,
-					"recommendation", "investigate potential plugin ID proliferation or increase max_plugins limit")
+					"recommendation", "investigate potential client ID proliferation or increase max_clients limit")
 			}
 		}
 
@@ -204,12 +204,12 @@ func (rl *InMemoryRateLimiter) Allow(pluginID string) bool {
 	}
 
 	// Update last access time (for cleanup)
-	pl.mu.Lock()
-	pl.lastAccess = time.Now()
-	pl.mu.Unlock()
+	cl.mu.Lock()
+	cl.lastAccess = time.Now()
+	cl.mu.Unlock()
 
-	// Check plugin-specific limit
-	return pl.limiter.Allow()
+	// Check client-specific limit
+	return cl.limiter.Allow()
 }
 
 // Close stops the cleanup goroutine and releases resources.
@@ -231,7 +231,7 @@ func (rl *InMemoryRateLimiter) Close() {
 }
 
 // startCleanup starts a background goroutine that periodically removes
-// stale plugin limiters to prevent memory leaks.
+// stale client limiters to prevent memory leaks.
 //
 // Cleanup runs every 5 minutes and removes limiters that haven't been
 // accessed in the last hour.
@@ -256,7 +256,7 @@ func (rl *InMemoryRateLimiter) startCleanup() {
 	}()
 }
 
-// cleanup removes plugin limiters that haven't been accessed recently.
+// cleanup removes client limiters that haven't been accessed recently.
 func (rl *InMemoryRateLimiter) cleanup() {
 	// Use config value if set, otherwise use default
 	idleTimeout := rl.idleTimeout
@@ -269,13 +269,13 @@ func (rl *InMemoryRateLimiter) cleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	for pluginID, pl := range rl.perPlugin {
-		pl.mu.Lock()
-		lastAccess := pl.lastAccess
-		pl.mu.Unlock()
+	for clientID, cl := range rl.perClient {
+		cl.mu.Lock()
+		lastAccess := cl.lastAccess
+		cl.mu.Unlock()
 
 		if now.Sub(lastAccess) > idleTimeout {
-			delete(rl.perPlugin, pluginID)
+			delete(rl.perClient, clientID)
 		}
 	}
 }
@@ -284,14 +284,14 @@ func (rl *InMemoryRateLimiter) cleanup() {
 //
 // Rate limiting is applied in three tiers:
 //  1. Global limit (all requests)
-//  2. Per-plugin limit (authenticated requests with PluginContext)
-//  3. Unauthenticated limit (requests without PluginContext)
+//  2. Per-client limit (authenticated requests with ClientContext)
+//  3. Unauthenticated limit (requests without ClientContext)
 //
 // When a request exceeds the rate limit, the middleware returns a 429 (Too Many Requests)
 // response with RFC 7807 error format.
 //
 // The middleware must be placed after authentication middleware in the chain to access
-// PluginContext for per-plugin rate limiting.
+// ClientContext for per-client rate limiting.
 //
 // Parameters:
 //   - limiter: RateLimiter implementation (InMemoryRateLimiter or DistributedRateLimiter)
@@ -300,7 +300,7 @@ func (rl *InMemoryRateLimiter) cleanup() {
 //
 //	rateLimiter := NewInMemoryRateLimiter(&Config{
 //	    GlobalRPS: 100,
-//	    PluginRPS: 50,
+//	    ClientRPS: 50,
 //	    UnAuthRPS: 10,
 //	})
 //	defer rateLimiter.Close()
@@ -318,16 +318,16 @@ func RateLimit(limiter RateLimiter, logger *slog.Logger) func(http.Handler) http
 				return
 			}
 
-			// Extract plugin ID from context (set by authentication middleware)
-			// If PluginContext exists, use plugin ID for per-plugin rate limiting
-			// If PluginContext is nil, use empty string for unauthenticated rate limiting
-			pluginID := ""
-			if pluginCtx, ok := GetPluginContext(r.Context()); ok {
-				pluginID = pluginCtx.PluginID
+			// Extract client ID from context (set by authentication middleware)
+			// If ClientContext exists, use client ID for per-client rate limiting
+			// If ClientContext is nil, use empty string for unauthenticated rate limiting
+			clientID := ""
+			if clientCtx, ok := GetClientContext(r.Context()); ok {
+				clientID = clientCtx.ClientID
 			}
 
 			// Check rate limit
-			if !limiter.Allow(pluginID) {
+			if !limiter.Allow(clientID) {
 				// Get correlation ID for error response
 				correlationID := GetCorrelationID(r.Context())
 

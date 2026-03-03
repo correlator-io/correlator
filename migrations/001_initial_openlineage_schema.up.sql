@@ -355,7 +355,7 @@ CREATE TABLE api_keys (
     key_hash VARCHAR(60) NOT NULL UNIQUE,
     key_lookup_hash VARCHAR(64) NOT NULL,
 
-    plugin_id VARCHAR(100) NOT NULL,
+    client_id VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
 
     permissions JSONB DEFAULT '[]'::jsonb NOT NULL,
@@ -368,7 +368,7 @@ CREATE TABLE api_keys (
 );
 
 -- Indexes for api_keys
-CREATE INDEX idx_api_keys_plugin_id ON api_keys(plugin_id) WHERE active = TRUE;
+CREATE INDEX idx_api_keys_client_id ON api_keys(client_id) WHERE active = TRUE;
 CREATE INDEX idx_api_keys_active ON api_keys(active, expires_at);
 CREATE INDEX idx_api_keys_hash_lookup ON api_keys(key_hash) WHERE active = TRUE;
 CREATE UNIQUE INDEX idx_api_keys_lookup_hash_unique ON api_keys(key_lookup_hash) WHERE active = TRUE;
@@ -390,7 +390,7 @@ CREATE TABLE api_key_audit_log (
     operation VARCHAR(50) NOT NULL CHECK (operation IN ('created', 'updated', 'deleted', 'validated', 'validation_failed')),
 
     masked_key VARCHAR(100),
-    plugin_id VARCHAR(100),
+    client_id VARCHAR(100),
 
     metadata JSONB DEFAULT '{}'::jsonb,
 

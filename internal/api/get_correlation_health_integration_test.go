@@ -25,7 +25,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 	t.Run("CorrelationHealth_EmptyState", func(t *testing.T) {
 		// Test with no data - should return healthy (rate 1.0)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -59,7 +59,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		require.NoError(t, err, "Failed to refresh views")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -92,7 +92,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		require.NoError(t, err, "Failed to refresh views")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
@@ -148,7 +148,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 		require.NoError(t, err, "Failed to refresh views")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", ts.apiKey)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
 
 		rr := httptest.NewRecorder()
 		ts.server.httpServer.Handler.ServeHTTP(rr, req)
