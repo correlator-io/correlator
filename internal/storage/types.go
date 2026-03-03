@@ -33,8 +33,6 @@ var (
 	ErrKeyNotFound = errors.New("API key not found")
 	// ErrKeyNil is returned when a nil API key is provided.
 	ErrKeyNil = errors.New("API key cannot be nil")
-	// ErrClientIDEmpty is returned when client ID is empty during key generation.
-	ErrClientIDEmpty = errors.New("client ID cannot be empty")
 	// ErrKeyStringEmpty is returned when key string is empty during parsing.
 	ErrKeyStringEmpty = errors.New("key string cannot be empty")
 	// ErrInvalidKeyFormat is returned when API key doesn't match expected format.
@@ -248,12 +246,8 @@ func ComputeKeyLookupHash(key string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// GenerateAPIKey creates a new secure API key for a client.
-func GenerateAPIKey(clientID string) (string, error) {
-	if clientID == "" {
-		return "", ErrClientIDEmpty
-	}
-
+// GenerateAPIKey creates a new secure API key.
+func GenerateAPIKey() (string, error) {
 	// Generate 32 random bytes (256 bits)
 	randomBytes := make([]byte, randomBytesSize)
 

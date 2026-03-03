@@ -20,6 +20,8 @@ const (
 var (
 	// ErrNoDatabaseConnection is returned when the PersistentKeyStore has a nil Connection.
 	ErrNoDatabaseConnection = errors.New("database connection not initialized")
+	// ErrClientIDEmpty is returned when client ID is empty in a query.
+	ErrClientIDEmpty = errors.New("client ID cannot be empty")
 )
 
 // PersistentKeyStore implements APIKeyStore interface with PostgreSQL backend.

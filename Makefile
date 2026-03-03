@@ -414,7 +414,7 @@ run:
 		fi; \
 		$(MAKE) ensure-postgres || exit 1; \
 		echo "🏃 Starting development server..."; \
-		go run ./cmd/correlator; \
+		go run ./cmd/correlator start; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "test" ]; then \
 		$(MAKE) run-test; \
 	elif [ "$(filter-out $@,$(MAKECMDGOALS))" = "test unit" ]; then \

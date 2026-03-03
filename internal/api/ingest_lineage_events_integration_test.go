@@ -48,7 +48,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{

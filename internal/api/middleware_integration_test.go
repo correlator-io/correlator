@@ -53,7 +53,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 	require.NoError(t, err, "Failed to create lineage store")
 
 	// Create and register API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{
@@ -135,7 +135,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	// Create test API key
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	err = keyStore.Add(ctx, &storage.APIKey{
@@ -207,7 +207,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Inactive API Key Returns 403", func(t *testing.T) {
-		inactiveKey, err := storage.GenerateAPIKey("inactive-plugin")
+		inactiveKey, err := storage.GenerateAPIKey()
 		require.NoError(t, err)
 
 		err = keyStore.Add(ctx, &storage.APIKey{
@@ -231,7 +231,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 	})
 
 	t.Run("Expired API Key Returns 401", func(t *testing.T) {
-		expiredKey, err := storage.GenerateAPIKey("expired-plugin")
+		expiredKey, err := storage.GenerateAPIKey()
 		require.NoError(t, err)
 
 		expiredTime := time.Now().Add(-1 * time.Hour)
@@ -350,7 +350,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	})
 
 	// Create a test API key for protected endpoint verification
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
@@ -678,7 +678,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 	})
 
 	// Create test API keys for client-1 and client-2
-	apiKey1, err := storage.GenerateAPIKey("plugin-1")
+	apiKey1, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key for client-1")
 
 	apiKeyObj1 := &storage.APIKey{
@@ -695,7 +695,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 	err = keyStore.Add(ctx, apiKeyObj1)
 	require.NoError(t, err, "Failed to add API key for client-1")
 
-	apiKey2, err := storage.GenerateAPIKey("plugin-2")
+	apiKey2, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key for client-2")
 
 	apiKeyObj2 := &storage.APIKey{
@@ -959,7 +959,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	})
 
 	// Create test API key for authenticated requests
-	testAPIKey, err := storage.GenerateAPIKey("test-plugin")
+	testAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate API key")
 
 	apiKey := &storage.APIKey{
@@ -977,7 +977,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to add API key")
 
 	// Create inactive API key for authorization failure tests
-	inactiveAPIKey, err := storage.GenerateAPIKey("inactive-plugin")
+	inactiveAPIKey, err := storage.GenerateAPIKey()
 	require.NoError(t, err, "Failed to generate inactive API key")
 
 	inactiveKey := &storage.APIKey{

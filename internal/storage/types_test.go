@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -235,50 +236,33 @@ func TestGenerateAPIKey(t *testing.T) {
 		t.Skip("skipping unit test in non-short mode")
 	}
 
-	tests := []struct {
-		name     string
-		clientID string
-		wantErr  bool
-	}{
-		{
-			name:     "valid client ID generates key",
-			clientID: "dbt-plugin",
-			wantErr:  false,
-		},
-		{
-			name:     "empty client ID fails",
-			clientID: "",
-			wantErr:  true,
-		},
+	key, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey() unexpected error: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			key, err := GenerateAPIKey(tt.clientID)
+	if key == "" {
+		t.Error("GenerateAPIKey() returned empty key")
+	}
 
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.clientID)
-				}
+	// Key should be at least 32 characters for security
+	if len(key) < 32 {
+		t.Errorf("GenerateAPIKey() key too short: %d characters", len(key))
+	}
 
-				return
-			}
+	// Key should have the correlator prefix
+	if !strings.HasPrefix(key, "correlator_ak_") {
+		t.Errorf("GenerateAPIKey() key missing prefix: %s", key)
+	}
 
-			if err != nil {
-				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.clientID, err)
+	// Keys should be unique
+	key2, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey() second call unexpected error: %v", err)
+	}
 
-				return
-			}
-
-			if key == "" {
-				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.clientID)
-			}
-
-			// Key should be at least 32 characters for security
-			if len(key) < 32 {
-				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.clientID, len(key))
-			}
-		})
+	if key == key2 {
+		t.Error("GenerateAPIKey() returned duplicate keys")
 	}
 }
 
