@@ -12,7 +12,7 @@ type InMemoryKeyStore struct {
 	keys map[string]*APIKey
 	// keysByID maps key IDs to Key structs for ID-based operations
 	keysByID map[string]*APIKey
-	// keysByClient maps plugin IDs to slices of Key structs for client filtering
+	// keysByClient maps client IDs to slices of Key structs for client filtering
 	keysByClient map[string][]*APIKey
 	mutex        sync.RWMutex
 }
@@ -95,7 +95,7 @@ func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 		return ErrKeyNotFound
 	}
 
-	// Remove from client map (old plugin)
+	// Remove from client map (old client)
 	s.removeFromClientMap(existingKey.ClientID, existingKey.ID)
 
 	// Remove from key string map if key changed
@@ -110,7 +110,7 @@ func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 	s.keys[keyCopy.Key] = &keyCopy
 	s.keysByID[keyCopy.ID] = &keyCopy
 
-	// Add to client map (new plugin)
+	// Add to client map (new client)
 	s.keysByClient[keyCopy.ClientID] = append(s.keysByClient[keyCopy.ClientID], &keyCopy)
 
 	return nil

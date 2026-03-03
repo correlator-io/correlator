@@ -38,8 +38,7 @@ var openLineageSchemaURLPattern = regexp.MustCompile(`^https://openlineage\.io/s
 // Validation strategy follows ADR 001: semantic validation (unmarshal + business rules)
 // rather than formal JSON schema validation due to OpenLineage schema complexity.
 //
-// Performance: ~5µs per event validation (232K events/sec throughput)
-// See: docs/adr/001-openlineage-validation-strategy.md.
+// Performance: ~5µs per event validation (232K events/sec throughput).
 type Validator struct{}
 
 // NewValidator creates a new Validator instance.

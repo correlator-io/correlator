@@ -32,13 +32,13 @@ make build
 # Ingest OpenLineage events (single event - standard OL API)
 curl -X POST http://localhost:8080/api/v1/lineage \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
+  -H "Authorization: Bearer your-api-key" \
   -d @event.json
 
 # Ingest batch events
 curl -X POST http://localhost:8080/api/v1/lineage/batch \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
+  -H "Authorization: Bearer your-api-key" \
   -d @events.json
 ```
 
@@ -150,9 +150,6 @@ The current version is in early development stage, so expect possible API change
 
 - **Development**: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Local setup, testing, architecture
 - **Contributing**: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) - Contribution guidelines
-- **OpenLineage**: [docs/OPENLINEAGE.md](docs/OPENLINEAGE.md) - Event format and validation
-- **API Reference**: [docs/api/openapi.yaml](docs/api/openapi.yaml) - OpenAPI specification
-- **Migrations**: [docs/MIGRATIONS.md](docs/MIGRATIONS.md) - Database schema management
 
 ---
 

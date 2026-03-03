@@ -10,7 +10,7 @@ info:
 
     ## Authentication
 
-    Protected endpoints require API key authentication via `X-Api-Key` header.
+    Protected endpoints require API key authentication via `Authorization: Bearer` header.
     Public health endpoints (`/ping`, `/ready`, `/health`) do not require authentication.
 
     ## Base URLs
@@ -29,7 +29,7 @@ tags:
   - name: Health Probes
     description: Kubernetes liveness/readiness probes (public, no auth required)
   - name: OpenLineage Ingestion
-    description: Plugin integration endpoint for OpenLineage event ingestion
+    description: OpenLineage event ingestion endpoint
   - name: Correlation Queries
     description: Incident list and detail endpoints for UI
   - name: Correlation Health
@@ -380,13 +380,11 @@ paths:
 components:
   securitySchemes:
     ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-Api-Key
+      type: http
+      scheme: bearer
       description: |
-        API key authentication. Supports two header formats:
-        - `X-Api-Key: <key>` (primary)
-        - `Authorization: Bearer <key>` (fallback, compatible with standard OL clients)
+        API key authentication via `Authorization: Bearer <key>` header.
+        Compatible with standard OpenLineage clients configured with OPENLINEAGE_API_KEY.
 
   schemas:
     # Health Check Schemas
