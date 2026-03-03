@@ -9,6 +9,7 @@
 *.dylib
 bin
 build
+correlator
 
 # Test binary, built with `go test -c`
 *.test
