@@ -266,8 +266,8 @@ CREATE TABLE test_results (
 CREATE INDEX idx_test_results_run_correlation ON test_results(run_id, status) WHERE status IN ('failed', 'error');
 CREATE INDEX idx_test_results_dataset_lookup ON test_results(dataset_urn, executed_at DESC);
 
--- UNIQUE constraint for UPSERT behavior (prevents duplicate test results with same name, dataset, and execution time)
-CREATE UNIQUE INDEX idx_test_results_upsert_key ON test_results(test_name, dataset_urn, executed_at);
+-- UNIQUE constraint for UPSERT behavior (one test result per test name + dataset + job run)
+CREATE UNIQUE INDEX idx_test_results_upsert_key ON test_results(test_name, dataset_urn, run_id);
 
 -- Comments
 COMMENT ON TABLE test_results IS 'Data quality test outcomes with job run correlation for incident analysis';

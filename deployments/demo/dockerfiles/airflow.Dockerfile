@@ -36,6 +36,11 @@ RUN pip install --no-cache-dir "openlineage-integration-common[great_expectation
 # adds lineage_root_parent_id macro needed for DAG-level parent run correlation.
 RUN pip install --no-cache-dir --upgrade "apache-airflow-providers-openlineage>=2.4.0"
 
+# Force-upgrade protobuf AFTER all other installs. GE 0.15.34 downgrades protobuf
+# to 4.x, but dbt-core 1.11+ uses MessageToJson(always_print_fields_with_no_presence=...)
+# which requires protobuf >= 5.26.0. Must be the last pip install to avoid being reverted.
+RUN pip install --no-cache-dir "protobuf>=5.26.0,<6"
+
 # OpenLineage configuration is mounted at runtime via openlineage.yml
 # See: deployments/demo/airflow/openlineage.yml
 ENV OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
