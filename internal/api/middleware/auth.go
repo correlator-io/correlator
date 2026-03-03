@@ -65,29 +65,19 @@ var (
 	ErrAPIKeyInactive = errors.New("API key inactive")
 )
 
-// extractAPIKey extracts the API key from request headers.
-// It checks the X-Api-Key header first (primary), then falls back to
-// Authorization: Bearer header (secondary).
+// extractAPIKey extracts the API key from the Authorization: Bearer header.
+// This is the standard header sent by OpenLineage clients.
 //
 // Returns (key, true) if found and valid, ("", false) otherwise.
 //
 // Security considerations:
 // - Rejects keys containing newlines (header injection prevention)
 // - Trims whitespace from keys
-// - Case-sensitive "Bearer " prefix check
-// - X-Api-Key takes precedence over Authorization header.
+// - Case-sensitive "Bearer " prefix check.
 func extractAPIKey(r *http.Request) (string, bool) {
-	// Primary: Check X-Api-Key header
-	if apiKey := r.Header.Get("X-Api-Key"); apiKey != "" {
-		return validateAPIKey(apiKey)
-	}
-
-	// Secondary: Check Authorization: Bearer header
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
-		// Check for "Bearer " prefix (note the space)
 		if strings.HasPrefix(authHeader, "Bearer ") {
-			// Extract token after "Bearer "
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 
 			return validateAPIKey(token)
@@ -231,7 +221,7 @@ func authenticateRequest(
 // and enriches request context with client information.
 //
 // The middleware:
-// - Extracts API keys from Authorization: Bearer (primary) or X-Api-Key (fallback) headers
+// - Extracts API keys from the Authorization: Bearer header
 // - Validates API key format and authenticity
 // - Checks active status and expiration
 // - Enriches request context with ClientContext

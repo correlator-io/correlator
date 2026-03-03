@@ -84,7 +84,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 
@@ -160,14 +160,14 @@ func TestAuthenticationIntegration(t *testing.T) {
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 	server := NewServer(config, keyStore, nil, lineageStore, lineageStore)
 
-	t.Run("Successful Authentication with X-Api-Key Header", func(t *testing.T) {
+	t.Run("Successful Authentication with Bearer Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", testAPIKey)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -198,7 +198,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 
 	t.Run("Invalid API Key Returns 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", "correlator_ak_"+string(make([]byte, 64)))
+		req.Header.Set("Authorization", "Bearer "+"correlator_ak_"+string(make([]byte, 64)))
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -222,7 +222,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", inactiveKey)
+		req.Header.Set("Authorization", "Bearer "+inactiveKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -248,7 +248,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", expiredKey)
+		req.Header.Set("Authorization", "Bearer "+expiredKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -377,7 +377,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
@@ -476,7 +476,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		// Send 20 rapid requests with API key
 		for i := 0; i < 20; i++ {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-			req.Header.Set("X-Api-Key", testAPIKey)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 			rr := httptest.NewRecorder()
 			server.httpServer.Handler.ServeHTTP(rr, req)
@@ -549,7 +549,7 @@ func TestReadyEndpoint(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
@@ -722,7 +722,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     defaultMaxRequestSize, // 1 MB
 	}
@@ -1008,7 +1008,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		LogLevel:           slog.LevelInfo,
 		CORSAllowedOrigins: []string{"*"},
 		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID", "X-API-Key"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 		MaxRequestSize:     1048576, // 1 MB
 	}
@@ -1020,7 +1020,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {
 		// Make authenticated request to /api/v1/health/correlation
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		req.Header.Set("X-Api-Key", testAPIKey)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1040,7 +1040,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	t.Run("Authentication Failure Has Correlation ID And CORS", func(t *testing.T) {
 		// Make request with missing API key
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-		// No X-Api-Key header set
+		// No Authorization header set
 
 		rr := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1066,7 +1066,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 
 		for i := 0; i < 10; i++ {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
-			req.Header.Set("X-Api-Key", testAPIKey)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 			rr := httptest.NewRecorder()
 			server.httpServer.Handler.ServeHTTP(rr, req)
@@ -1136,9 +1136,9 @@ func createTestRateLimiter(globalRPS, clientRPS, unauthRPS int) *middleware.InMe
 func makeAuthenticatedRequest(server *Server, apiKey, path string) *httptest.ResponseRecorder { //nolint:unparam
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 
-	// Add API key header if provided (supports authenticated requests)
+	// Add Authorization header if provided (supports authenticated requests)
 	if apiKey != "" {
-		req.Header.Set("X-Api-Key", apiKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	rr := httptest.NewRecorder()

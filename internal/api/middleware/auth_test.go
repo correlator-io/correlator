@@ -16,30 +16,8 @@ import (
 
 const testKey = "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 
-// TestExtractAPIKey_XAPIKeyHeader verifies that extractAPIKey correctly extracts.
-// API key from the X-Api-Key header (primary header).
-func TestExtractAPIKey_XAPIKeyHeader(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("X-Api-Key", "correlator_ak_test123456789")
-
-	apiKey, found := extractAPIKey(req)
-
-	if !found {
-		t.Fatal("extractAPIKey should return true when X-Api-Key header is present")
-	}
-
-	expected := "correlator_ak_test123456789"
-	if apiKey != expected { // pragma: allowlist secret
-		t.Errorf("Expected API key %q, got %q", expected, apiKey)
-	}
-}
-
-// TestExtractAPIKey_AuthorizationHeader verifies that extractAPIKey correctly extracts.
-// API key from the Authorization: Bearer header (secondary/fallback header).
+// TestExtractAPIKey_AuthorizationHeader verifies that extractAPIKey correctly extracts
+// API key from the Authorization: Bearer header (primary header for OL clients).
 func TestExtractAPIKey_AuthorizationHeader(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -60,32 +38,8 @@ func TestExtractAPIKey_AuthorizationHeader(t *testing.T) {
 	}
 }
 
-// TestExtractAPIKey_BothHeaders verifies that X-Api-Key takes precedence.
-// when both X-Api-Key and Authorization headers are present.
-func TestExtractAPIKey_BothHeaders(t *testing.T) {
-	if !testing.Short() {
-		t.Skip("skipping unit test in non-short mode")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("X-Api-Key", "correlator_ak_primary")
-	req.Header.Set("Authorization", "Bearer correlator_ak_secondary")
-
-	apiKey, found := extractAPIKey(req)
-
-	if !found {
-		t.Fatal("extractAPIKey should return true when headers are present")
-	}
-
-	// X-Api-Key should take precedence
-	expected := "correlator_ak_primary"
-	if apiKey != expected { // pragma: allowlist secret
-		t.Errorf("X-Api-Key should take precedence. Expected %q, got %q", expected, apiKey)
-	}
-}
-
-// TestExtractAPIKey_NoHeaders verifies that extractAPIKey returns false.
-// when neither X-Api-Key nor Authorization header is present.
+// TestExtractAPIKey_NoHeaders verifies that extractAPIKey returns false
+// when Authorization header is not present.
 func TestExtractAPIKey_NoHeaders(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
@@ -167,23 +121,23 @@ func TestExtractAPIKey_HeaderInjection(t *testing.T) {
 		header string
 	}{
 		{
-			name:   "Newline in X-Api-Key",
-			header: "correlator_ak_test\nInjected-Header: malicious",
+			name:   "Newline in Bearer token",
+			header: "Bearer correlator_ak_test\nInjected",
 		},
 		{
-			name:   "Carriage return in X-Api-Key",
-			header: "correlator_ak_test\rInjected-Header: malicious",
+			name:   "Carriage return in Bearer token",
+			header: "Bearer correlator_ak_test\rInjected",
 		},
 		{
-			name:   "CRLF in X-Api-Key",
-			header: "correlator_ak_test\r\nInjected-Header: malicious",
+			name:   "CRLF in Bearer token",
+			header: "Bearer correlator_ak_test\r\nInjected",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req.Header.Set("X-Api-Key", tc.header)
+			req.Header.Set("Authorization", tc.header)
 
 			apiKey, found := extractAPIKey(req)
 
@@ -212,26 +166,26 @@ func TestExtractAPIKey_WhitespaceHandling(t *testing.T) {
 		found    bool
 	}{
 		{
-			name:     "Leading whitespace in X-Api-Key",
-			header:   "  correlator_ak_test123456789",
+			name:     "Leading whitespace in Bearer token",
+			header:   "Bearer   correlator_ak_test123456789",
 			expected: "correlator_ak_test123456789",
 			found:    true,
 		},
 		{
-			name:     "Trailing whitespace in X-Api-Key",
-			header:   "correlator_ak_test123456789  ",
+			name:     "Trailing whitespace in Bearer token",
+			header:   "Bearer correlator_ak_test123456789  ",
 			expected: "correlator_ak_test123456789",
 			found:    true,
 		},
 		{
 			name:     "Leading and trailing whitespace",
-			header:   "  correlator_ak_test123456789  ",
+			header:   "Bearer   correlator_ak_test123456789  ",
 			expected: "correlator_ak_test123456789",
 			found:    true,
 		},
 		{
 			name:     "Only whitespace",
-			header:   "   ",
+			header:   "Bearer    ",
 			expected: "",
 			found:    false,
 		},
@@ -240,7 +194,7 @@ func TestExtractAPIKey_WhitespaceHandling(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req.Header.Set("X-Api-Key", tc.header)
+			req.Header.Set("Authorization", tc.header)
 
 			apiKey, found := extractAPIKey(req)
 
@@ -267,11 +221,6 @@ func TestExtractAPIKey_EmptyHeaders(t *testing.T) {
 		headerName  string
 		headerValue string
 	}{
-		{
-			name:        "Empty X-Api-Key",
-			headerName:  "X-Api-Key",
-			headerValue: "",
-		},
 		{
 			name:        "Empty Authorization",
 			headerName:  "Authorization",
@@ -639,7 +588,7 @@ func TestAuthenticationMiddleware_HappyPath(t *testing.T) {
 
 	// Create request with valid API key
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("X-Api-Key", validKey)
+	req.Header.Set("Authorization", "Bearer "+validKey)
 
 	rec := httptest.NewRecorder()
 
@@ -738,7 +687,7 @@ func TestAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	// testKey is added to the request headers, but does not exist in the store
-	req.Header.Set("X-Api-Key", testKey)
+	req.Header.Set("Authorization", "Bearer "+testKey)
 
 	rec := httptest.NewRecorder()
 
@@ -790,7 +739,7 @@ func TestAuthenticationMiddleware_InactiveKey(t *testing.T) {
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("X-Api-Key", testKey)
+	req.Header.Set("Authorization", "Bearer "+testKey)
 
 	rec := httptest.NewRecorder()
 
