@@ -13,7 +13,7 @@ func TestKeyValidation(t *testing.T) {
 	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
-		PluginID:    "dbt-plugin",
+		ClientID:    "dbt-plugin",
 		Name:        "DBT Production Plugin",
 		Permissions: []string{"lineage:write", "health:read"},
 		CreatedAt:   time.Now(),
@@ -57,7 +57,7 @@ func TestKeyValidation(t *testing.T) {
 		inactiveKey := &APIKey{
 			ID:       "api-key-2",
 			Key:      "inactive-key",
-			PluginID: "test-plugin",
+			ClientID: "test-plugin",
 			Active:   false,
 		}
 
@@ -73,7 +73,7 @@ func TestKeyValidation(t *testing.T) {
 		expiredKey := &APIKey{
 			ID:        "api-key-3",
 			Key:       "expired-key",
-			PluginID:  "test-plugin",
+			ClientID:  "test-plugin",
 			Active:    true,
 			ExpiresAt: &pastTime,
 		}
@@ -93,7 +93,7 @@ func TestKeyPermissions(t *testing.T) {
 	apiKey := &APIKey{
 		ID:          "api-key-1",
 		Key:         "test-key-123",
-		PluginID:    "dbt-plugin",
+		ClientID:    "dbt-plugin",
 		Name:        "DBT Production Plugin",
 		Permissions: []string{"lineage:write", "health:read", "metrics:read"},
 		Active:      true,
@@ -237,46 +237,46 @@ func TestGenerateAPIKey(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		pluginID string
+		clientID string
 		wantErr  bool
 	}{
 		{
-			name:     "valid plugin ID generates key",
-			pluginID: "dbt-plugin",
+			name:     "valid client ID generates key",
+			clientID: "dbt-plugin",
 			wantErr:  false,
 		},
 		{
-			name:     "empty plugin ID fails",
-			pluginID: "",
+			name:     "empty client ID fails",
+			clientID: "",
 			wantErr:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, err := GenerateAPIKey(tt.pluginID)
+			key, err := GenerateAPIKey(tt.clientID)
 
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.pluginID)
+					t.Errorf("GenerateAPIKey(%q) expected error, got nil", tt.clientID)
 				}
 
 				return
 			}
 
 			if err != nil {
-				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.pluginID, err)
+				t.Errorf("GenerateAPIKey(%q) unexpected error: %v", tt.clientID, err)
 
 				return
 			}
 
 			if key == "" {
-				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.pluginID)
+				t.Errorf("GenerateAPIKey(%q) returned empty key", tt.clientID)
 			}
 
 			// Key should be at least 32 characters for security
 			if len(key) < 32 {
-				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.pluginID, len(key))
+				t.Errorf("GenerateAPIKey(%q) key too short: %d characters", tt.clientID, len(key))
 			}
 		})
 	}

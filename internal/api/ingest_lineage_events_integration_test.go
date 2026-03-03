@@ -54,8 +54,8 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 	err = keyStore.Add(ctx, &storage.APIKey{
 		ID:          "test-key-id",
 		Key:         testAPIKey,
-		PluginID:    "test-plugin",
-		Name:        "Test Plugin",
+		ClientID:    "test-client",
+		Name:        "Test Client",
 		Permissions: []string{"lineage:write", "lineage:read"},
 		CreatedAt:   time.Now(),
 		Active:      true,

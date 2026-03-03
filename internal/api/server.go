@@ -83,9 +83,9 @@ func NewServer(
 
 	// Log middleware configuration
 	if apiKeyStore != nil { // pragma: allowlist secret
-		logger.Info("Plugin authentication middleware enabled")
+		logger.Info("API key authentication middleware enabled")
 	} else {
-		logger.Warn("APIKeyStore not configured - plugin authentication middleware disabled")
+		logger.Warn("APIKeyStore not configured - API key authentication middleware disabled")
 	}
 
 	if rateLimiter != nil {
@@ -101,14 +101,14 @@ func NewServer(
 	// Middleware executes in the order listed (top-to-bottom):
 	//   1. CorrelationID - generate correlation ID for all responses
 	//   2. Recovery - catch panics in all downstream middleware
-	//   3. Plugin Auth - identify plugin and set PluginContext (optional)
+	//   3. Auth - identify client and set ClientContext (optional)
 	//   4. RateLimit - block requests before expensive operations (optional)
 	//   5. RequestLogger - log only legitimate requests (not rate-limited spam)
 	//   6. CORS - lightweight header manipulation
 	handler := middleware.Apply(mux,
 		middleware.WithCorrelationID(),
 		middleware.WithRecovery(logger),
-		middleware.WithAuthPlugin(apiKeyStore, logger),
+		middleware.WithAuth(apiKeyStore, logger),
 		middleware.WithRateLimit(rateLimiter, logger),
 		middleware.WithRequestLogger(logger),
 		middleware.WithCORS(cfg.ToCORSConfig()),

@@ -372,8 +372,8 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 	testAPIKey := &storage.APIKey{
 		ID:          "test-key-123",
 		Key:         parsedKey,
-		PluginID:    "dbt-plugin-v1",
-		Name:        "dbt Core Plugin",
+		ClientID:    "dbt-ol-v1",
+		Name:        "dbt ol",
 		Permissions: []string{"lineage:write", "metrics:read"},
 		Active:      true,
 		ExpiresAt:   nil,
@@ -399,8 +399,8 @@ func TestAuthenticateRequest_ValidKey(t *testing.T) {
 		t.Errorf("Expected ID %q, got %q", testAPIKey.ID, apiKey.ID)
 	}
 
-	if apiKey.PluginID != testAPIKey.PluginID {
-		t.Errorf("Expected PluginID %q, got %q", testAPIKey.PluginID, apiKey.PluginID)
+	if apiKey.ClientID != testAPIKey.ClientID {
+		t.Errorf("Expected ClientID %q, got %q", testAPIKey.ClientID, apiKey.ClientID)
 	}
 }
 
@@ -505,8 +505,8 @@ func TestAuthenticateRequest_InactiveKey(t *testing.T) {
 	testAPIKey := &storage.APIKey{
 		ID:          inactiveKeyID,
 		Key:         inactiveTestKey,
-		PluginID:    "inactive-plugin",
-		Name:        "Inactive Plugin",
+		ClientID:    "inactive-plugin",
+		Name:        "Inactive Client",
 		Active:      true,
 		Permissions: []string{},
 	}
@@ -556,8 +556,8 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 	testAPIKey := &storage.APIKey{
 		ID:          expiredKeyID,
 		Key:         expiredTestKey,
-		PluginID:    "expired-plugin",
-		Name:        "Expired Plugin",
+		ClientID:    "expired-client",
+		Name:        "Expired Client",
 		Active:      true,
 		Permissions: []string{},
 		ExpiresAt:   &pastTime, // Key has expired
@@ -585,8 +585,8 @@ func TestAuthenticateRequest_ExpiredKey(t *testing.T) {
 	}
 }
 
-// TestPluginAuthenticationMiddleware_HappyPath verifies successful authentication flow through middleware.
-func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
+// TestAuthenticationMiddleware_HappyPath verifies successful authentication flow through middleware.
+func TestAuthenticationMiddleware_HappyPath(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -604,8 +604,8 @@ func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
 	expectedAPIKey := &storage.APIKey{
 		ID:          "key-123",
 		Key:         parsedKey,
-		PluginID:    "dbt-plugin-v1",
-		Name:        "dbt Core Plugin",
+		ClientID:    "dbt-ol-v1",
+		Name:        "dbt ol",
 		Permissions: []string{"lineage:write", "metrics:read"},
 		Active:      true,
 		ExpiresAt:   nil,
@@ -621,20 +621,20 @@ func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
 
 	logger := slog.New(slog.DiscardHandler)
 
-	// Handler that checks plugin context
-	var capturedContext PluginContext
+	// Handler that checks client context
+	var capturedContext ClientContext
 
 	var contextFound bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedContext, contextFound = GetPluginContext(r.Context())
+		capturedContext, contextFound = GetClientContext(r.Context())
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("authenticated"))
 	})
 
 	// Create middleware
-	middleware := AuthenticatePlugin(store, logger)
+	middleware := Authenticate(store, logger)
 	wrappedHandler := middleware(handler)
 
 	// Create request with valid API key
@@ -651,13 +651,13 @@ func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", rec.Code)
 	}
 
-	// Verify plugin context was set
+	// Verify client context was set
 	if !contextFound {
-		t.Fatal("Plugin context was not set in request context")
+		t.Fatal("Client context was not set in request context")
 	}
 
-	if capturedContext.PluginID != expectedAPIKey.PluginID {
-		t.Errorf("Expected PluginID %q, got %q", expectedAPIKey.PluginID, capturedContext.PluginID)
+	if capturedContext.ClientID != expectedAPIKey.ClientID {
+		t.Errorf("Expected ClientID %q, got %q", expectedAPIKey.ClientID, capturedContext.ClientID)
 	}
 
 	if capturedContext.Name != expectedAPIKey.Name {
@@ -677,8 +677,8 @@ func TestPluginAuthenticationMiddleware_HappyPath(t *testing.T) {
 	}
 }
 
-// TestPluginAuthenticationMiddleware_MissingAPIKey verifies 401 response when API key is missing.
-func TestPluginAuthenticationMiddleware_MissingAPIKey(t *testing.T) {
+// TestAuthenticationMiddleware_MissingAPIKey verifies 401 response when API key is missing.
+func TestAuthenticationMiddleware_MissingAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -690,7 +690,7 @@ func TestPluginAuthenticationMiddleware_MissingAPIKey(t *testing.T) {
 		t.Error("Handler should not be called when API key is missing")
 	})
 
-	middleware := AuthenticatePlugin(store, logger)
+	middleware := Authenticate(store, logger)
 	wrappedHandler := middleware(handler)
 
 	// testKey is not added to the request headers
@@ -718,8 +718,8 @@ func TestPluginAuthenticationMiddleware_MissingAPIKey(t *testing.T) {
 	}
 }
 
-// TestPluginAuthenticationMiddleware_InvalidAPIKey verifies 401 response for invalid API key.
-func TestPluginAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
+// TestAuthenticationMiddleware_InvalidAPIKey verifies 401 response for invalid API key.
+func TestAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -733,7 +733,7 @@ func TestPluginAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
 		t.Error("Handler should not be called for invalid API key")
 	})
 
-	middleware := AuthenticatePlugin(store, logger)
+	middleware := Authenticate(store, logger)
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -749,8 +749,8 @@ func TestPluginAuthenticationMiddleware_InvalidAPIKey(t *testing.T) {
 	}
 }
 
-// TestPluginAuthenticationMiddleware_InactiveKey verifies 403 response for inactive API key.
-func TestPluginAuthenticationMiddleware_InactiveKey(t *testing.T) {
+// TestAuthenticationMiddleware_InactiveKey verifies 403 response for inactive API key.
+func TestAuthenticationMiddleware_InactiveKey(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -762,8 +762,8 @@ func TestPluginAuthenticationMiddleware_InactiveKey(t *testing.T) {
 	inactiveKey := &storage.APIKey{
 		ID:          "key-inactive",
 		Key:         testKey,
-		PluginID:    "inactive-plugin",
-		Name:        "Inactive Plugin",
+		ClientID:    "inactive-client",
+		Name:        "Inactive Client",
 		Active:      true,
 		Permissions: []string{},
 	}
@@ -786,7 +786,7 @@ func TestPluginAuthenticationMiddleware_InactiveKey(t *testing.T) {
 		t.Error("Handler should not be called for inactive API key")
 	})
 
-	middleware := AuthenticatePlugin(store, logger)
+	middleware := Authenticate(store, logger)
 	wrappedHandler := middleware(handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -801,8 +801,8 @@ func TestPluginAuthenticationMiddleware_InactiveKey(t *testing.T) {
 	}
 }
 
-// TestPluginAuthenticationMiddleware_CorrelationIDInError verifies correlation ID is included in error responses.
-func TestPluginAuthenticationMiddleware_CorrelationIDInError(t *testing.T) {
+// TestAuthenticationMiddleware_CorrelationIDInError verifies correlation ID is included in error responses.
+func TestAuthenticationMiddleware_CorrelationIDInError(t *testing.T) {
 	if !testing.Short() {
 		t.Skip("skipping unit test in non-short mode")
 	}
@@ -814,7 +814,7 @@ func TestPluginAuthenticationMiddleware_CorrelationIDInError(t *testing.T) {
 		t.Error("Handler should not be called")
 	})
 
-	middleware := AuthenticatePlugin(store, logger)
+	middleware := Authenticate(store, logger)
 	wrappedHandler := middleware(handler)
 
 	// Add correlation ID middleware first

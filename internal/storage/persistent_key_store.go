@@ -78,7 +78,7 @@ func (s *PersistentKeyStore) FindByKey(ctx context.Context, key string) (*APIKey
 	// Query by lookup_hash for O(1) performance
 	// Authentication layer will check active status and return appropriate error
 	query := `
-		SELECT id, key_hash, plugin_id, name, permissions, created_at, expires_at, active, updated_at
+		SELECT id, key_hash, client_id, name, permissions, created_at, expires_at, active, updated_at
 		FROM api_keys
 		WHERE key_lookup_hash = $1
 		LIMIT 1
@@ -93,7 +93,7 @@ func (s *PersistentKeyStore) FindByKey(ctx context.Context, key string) (*APIKey
 	err := s.conn.QueryRowContext(ctx, query, lookupHash).Scan(
 		&apiKey.ID,
 		&apiKey.Key, // This is actually the hash, we'll use it for comparison
-		&apiKey.PluginID,
+		&apiKey.ClientID,
 		&apiKey.Name,
 		&permissionsJSON,
 		&apiKey.CreatedAt,
@@ -117,7 +117,7 @@ func (s *PersistentKeyStore) FindByKey(ctx context.Context, key string) (*APIKey
 		// Hash collision (extremely unlikely) or tampered lookup_hash
 		s.logger.Warn("key lookup hash matched but bcrypt verification failed",
 			slog.String("key_id", apiKey.ID),
-			slog.String("plugin_id", apiKey.PluginID),
+			slog.String("client_id", apiKey.ClientID),
 		)
 
 		return nil, false
@@ -163,7 +163,7 @@ func (s *PersistentKeyStore) Add(ctx context.Context, apiKey *APIKey) error {
 
 	// Insert API key into database with both hashes
 	query := `
-		INSERT INTO api_keys (id, key_hash, key_lookup_hash, plugin_id, name, permissions, created_at, expires_at, active)
+		INSERT INTO api_keys (id, key_hash, key_lookup_hash, client_id, name, permissions, created_at, expires_at, active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
@@ -173,7 +173,7 @@ func (s *PersistentKeyStore) Add(ctx context.Context, apiKey *APIKey) error {
 		apiKey.ID,
 		keyHash,
 		lookupHash,
-		apiKey.PluginID,
+		apiKey.ClientID,
 		apiKey.Name,
 		permissionsJSON,
 		apiKey.CreatedAt,
@@ -308,23 +308,23 @@ func (s *PersistentKeyStore) Delete(ctx context.Context, keyID string) error {
 	return nil
 }
 
-// ListByPlugin returns all active API keys for a specific plugin.
-// Uses the idx_api_keys_plugin_id index for optimal query performance.
-func (s *PersistentKeyStore) ListByPlugin(ctx context.Context, pluginID string) ([]*APIKey, error) {
+// ListByClientID returns all active API keys for a specific client.
+// Uses the idx_api_keys_client_id index for optimal query performance.
+func (s *PersistentKeyStore) ListByClientID(ctx context.Context, clientID string) ([]*APIKey, error) {
 	// Validate input
-	if pluginID == "" {
-		return nil, ErrPluginIDEmpty
+	if clientID == "" {
+		return nil, ErrClientIDEmpty
 	}
 
-	// Query active keys for the specified plugin
+	// Query active keys for the specified client
 	query := `
-		SELECT id, key_hash, plugin_id, name, permissions, created_at, expires_at, active, updated_at
+		SELECT id, key_hash, client_id, name, permissions, created_at, expires_at, active, updated_at
 		FROM api_keys
-		WHERE plugin_id = $1 AND active = TRUE
+		WHERE client_id = $1 AND active = TRUE
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.conn.QueryContext(ctx, query, pluginID)
+	rows, err := s.conn.QueryContext(ctx, query, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query API keys: %w", err)
 	}
@@ -346,7 +346,7 @@ func (s *PersistentKeyStore) ListByPlugin(ctx context.Context, pluginID string) 
 		err := rows.Scan(
 			&apiKey.ID,
 			&apiKey.Key, // This is actually the hash, mask it before returning
-			&apiKey.PluginID,
+			&apiKey.ClientID,
 			&apiKey.Name,
 			&permissionsJSON,
 			&apiKey.CreatedAt,
@@ -417,11 +417,11 @@ func (s *PersistentKeyStore) logAudit(
 	}
 
 	query := `
-		INSERT INTO api_key_audit_log (api_key_id, operation, masked_key, plugin_id, metadata)
+		INSERT INTO api_key_audit_log (api_key_id, operation, masked_key, client_id, metadata)
 		VALUES ($1, $2, $3, $4, $5)
 	`
 
-	_, err = s.conn.ExecContext(ctx, query, apiKey.ID, operation, maskedKey, apiKey.PluginID, metadataJSON)
+	_, err = s.conn.ExecContext(ctx, query, apiKey.ID, operation, maskedKey, apiKey.ClientID, metadataJSON)
 	if err != nil {
 		return fmt.Errorf("failed to insert audit log: %w", err)
 	}

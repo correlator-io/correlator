@@ -18,8 +18,8 @@ func TestInMemoryKeyStore(t *testing.T) {
 	testKey := &APIKey{
 		ID:          "key-1",
 		Key:         "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-		PluginID:    "dbt-plugin",
-		Name:        "DBT Production Plugin",
+		ClientID:    "dbt-ol",
+		Name:        "DBT-OL Production",
 		Permissions: []string{"lineage:write", "health:read"},
 		CreatedAt:   time.Now(),
 		Active:      true,
@@ -42,8 +42,8 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("FindByKey() ID = %v, want %v", found.ID, testKey.ID)
 		}
 
-		if found.PluginID != testKey.PluginID {
-			t.Errorf("FindByKey() PluginID = %v, want %v", found.PluginID, testKey.PluginID)
+		if found.ClientID != testKey.ClientID {
+			t.Errorf("FindByKey() ClientID = %v, want %v", found.ClientID, testKey.ClientID)
 		}
 	})
 
@@ -72,7 +72,7 @@ func TestInMemoryKeyStore(t *testing.T) {
 		updatedKey := &APIKey{
 			ID:          testKey.ID,
 			Key:         testKey.Key,
-			PluginID:    testKey.PluginID,
+			ClientID:    testKey.ClientID,
 			Name:        "Updated DBT Plugin",
 			Permissions: []string{"lineage:write", "health:read", "metrics:read"},
 			CreatedAt:   testKey.CreatedAt,
@@ -135,27 +135,27 @@ func TestInMemoryKeyStore(t *testing.T) {
 		}
 	})
 
-	t.Run("list by plugin", func(t *testing.T) {
+	t.Run("list by client ID", func(t *testing.T) {
 		store := NewInMemoryKeyStore()
-		// Add multiple keys for different plugins
+		// Add multiple keys for different clients
 		key1 := &APIKey{
 			ID:       "key-1",
 			Key:      "correlator_ak_1111111111111111111111111111111111111111111111111111111111111111",
-			PluginID: "dbt-plugin",
+			ClientID: "dbt-ol",
 			Name:     "DBT Key 1",
 			Active:   true,
 		}
 		key2 := &APIKey{
 			ID:       "key-2",
 			Key:      "correlator_ak_2222222222222222222222222222222222222222222222222222222222222222",
-			PluginID: "dbt-plugin",
+			ClientID: "dbt-ol",
 			Name:     "DBT Key 2",
 			Active:   true,
 		}
 		key3 := &APIKey{
 			ID:       "key-3",
 			Key:      "correlator_ak_3333333333333333333333333333333333333333333333333333333333333333",
-			PluginID: "airflow-plugin",
+			ClientID: "airflow-ol",
 			Name:     "Airflow Key 1",
 			Active:   true,
 		}
@@ -175,32 +175,32 @@ func TestInMemoryKeyStore(t *testing.T) {
 			t.Errorf("Add() unexpected error: %v", err)
 		}
 
-		dbtKeys, err := store.ListByPlugin(ctx, "dbt-plugin")
+		dbtKeys, err := store.ListByClientID(ctx, "dbt-ol")
 		if err != nil {
-			t.Errorf("ListByPlugin() unexpected error: %v", err)
+			t.Errorf("ListByClientID() unexpected error: %v", err)
 		}
 
 		if len(dbtKeys) != 2 {
-			t.Errorf("ListByPlugin() returned %d keys, want 2", len(dbtKeys))
+			t.Errorf("ListByClientID() returned %d keys, want 2", len(dbtKeys))
 		}
 
-		airflowKeys, err := store.ListByPlugin(ctx, "airflow-plugin")
+		airflowKeys, err := store.ListByClientID(ctx, "airflow-ol")
 		if err != nil {
-			t.Errorf("ListByPlugin() unexpected error: %v", err)
+			t.Errorf("ListByClientID() unexpected error: %v", err)
 		}
 
 		if len(airflowKeys) != 1 {
-			t.Errorf("ListByPlugin() returned %d keys, want 1", len(airflowKeys))
+			t.Errorf("ListByClientID() returned %d keys, want 1", len(airflowKeys))
 		}
 
-		// Test non-existent plugin
-		nonKeys, err := store.ListByPlugin(ctx, "non-existent-plugin")
+		// Test non-existent client
+		nonKeys, err := store.ListByClientID(ctx, "non-existent-client")
 		if err != nil {
-			t.Errorf("ListByPlugin() unexpected error: %v", err)
+			t.Errorf("ListByClientID() unexpected error: %v", err)
 		}
 
 		if len(nonKeys) != 0 {
-			t.Errorf("ListByPlugin() returned %d keys for non-existent plugin, want 0", len(nonKeys))
+			t.Errorf("ListByClientID() returned %d keys for non-existent client, want 0", len(nonKeys))
 		}
 	})
 }
@@ -224,7 +224,7 @@ func TestInMemoryKeyStoreConcurrency(t *testing.T) {
 				key := &APIKey{
 					ID:       fmt.Sprintf("key-%d", id),
 					Key:      fmt.Sprintf("correlator_ak_%064d", id), // 64 digit number padded with zeros
-					PluginID: "test-plugin",
+					ClientID: "test-client",
 					Name:     fmt.Sprintf("Test Key %d", id),
 					Active:   true,
 				}
@@ -267,7 +267,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 		key := &APIKey{
 			ID:       "key-1",
 			Key:      "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			PluginID: "test-plugin",
+			ClientID: "test-client",
 			Name:     "Test Key",
 			Active:   true,
 		}
@@ -289,7 +289,7 @@ func TestInMemoryKeyStoreErrors(t *testing.T) {
 		key := &APIKey{
 			ID:       "non-existent-key",
 			Key:      "correlator_ak_9999999999999999999999999999999999999999999999999999999999999999",
-			PluginID: "test-plugin",
+			ClientID: "test-client",
 			Name:     "Non-existent Key",
 			Active:   true,
 		}

@@ -198,7 +198,7 @@ func authenticateRequest(
 	if !foundKey.Active {
 		logger.Error("authentication failed: key inactive",
 			slog.String("key_id", foundKey.ID),
-			slog.String("plugin_id", foundKey.PluginID),
+			slog.String("client_id", foundKey.ClientID),
 			slog.String("correlation_id", GetCorrelationID(ctx)),
 			slog.String("failure_type", "key_inactive"),
 		)
@@ -212,7 +212,7 @@ func authenticateRequest(
 	if foundKey.ExpiresAt != nil && time.Now().After(*foundKey.ExpiresAt) {
 		logger.Error("authentication failed: key expired",
 			slog.String("key_id", foundKey.ID),
-			slog.String("plugin_id", foundKey.PluginID),
+			slog.String("client_id", foundKey.ClientID),
 			slog.Time("expired_at", *foundKey.ExpiresAt),
 			slog.String("correlation_id", GetCorrelationID(ctx)),
 			slog.String("failure_type", "key_expired"),
@@ -227,23 +227,23 @@ func authenticateRequest(
 	return foundKey, nil
 }
 
-// AuthenticatePlugin creates an authentication middleware that validates API keys
-// and enriches request context with plugin information.
+// Authenticate creates an authentication middleware that validates API keys
+// and enriches request context with client information.
 //
 // The middleware:
-// - Extracts API keys from X-Api-Key (primary) or Authorization: Bearer (fallback) headers
+// - Extracts API keys from Authorization: Bearer (primary) or X-Api-Key (fallback) headers
 // - Validates API key format and authenticity
 // - Checks active status and expiration
-// - Enriches request context with PluginContext
+// - Enriches request context with ClientContext
 // - Returns RFC 7807 compliant error responses on failure
 //
 // Example usage:
 //
 //	store := storage.NewPersistentKeyStore(db)
 //	logger := slog.Default()
-//	authMiddleware := middleware.AuthenticatePlugin(store, logger)
+//	authMiddleware := middleware.Authenticate(store, logger)
 //	handler = authMiddleware(handler)
-func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
+func Authenticate(store storage.APIKeyStore, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if this path bypasses authentication (public endpoints)
@@ -274,20 +274,20 @@ func AuthenticatePlugin(store storage.APIKeyStore, logger *slog.Logger) func(htt
 				return
 			}
 
-			// Enrich context with plugin information
-			pluginCtx := PluginContext{
-				PluginID:    authenticated.PluginID,
+			// Enrich context with client information
+			clientCtx := ClientContext{
+				ClientID:    authenticated.ClientID,
 				Name:        authenticated.Name,
 				Permissions: authenticated.Permissions,
 				KeyID:       authenticated.ID,
 				AuthTime:    time.Now(),
 			}
-			ctx := SetPluginContext(r.Context(), pluginCtx)
+			ctx := SetClientContext(r.Context(), clientCtx)
 
 			// Log successful authentication
 			logger.Info("API key authenticated",
-				slog.String("plugin_id", pluginCtx.PluginID),
-				slog.String("key_id", pluginCtx.KeyID),
+				slog.String("client_id", clientCtx.ClientID),
+				slog.String("key_id", clientCtx.KeyID),
 				slog.String("key", storage.MaskKey(authenticated.Key)),
 				slog.Duration("auth_latency", time.Since(authStart)),
 				slog.String("correlation_id", GetCorrelationID(r.Context())),

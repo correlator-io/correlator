@@ -12,10 +12,9 @@ type InMemoryKeyStore struct {
 	keys map[string]*APIKey
 	// keysByID maps key IDs to Key structs for ID-based operations
 	keysByID map[string]*APIKey
-	// keysByPlugin maps plugin IDs to slices of Key structs for plugin filtering
-	keysByPlugin map[string][]*APIKey
-	// mutex protects concurrent access to all maps
-	mutex sync.RWMutex
+	// keysByClient maps plugin IDs to slices of Key structs for client filtering
+	keysByClient map[string][]*APIKey
+	mutex        sync.RWMutex
 }
 
 // NewInMemoryKeyStore creates a new thread-safe in-memory key store.
@@ -23,7 +22,7 @@ func NewInMemoryKeyStore() *InMemoryKeyStore {
 	return &InMemoryKeyStore{
 		keys:         make(map[string]*APIKey),
 		keysByID:     make(map[string]*APIKey),
-		keysByPlugin: make(map[string][]*APIKey),
+		keysByClient: make(map[string][]*APIKey),
 	}
 }
 
@@ -75,8 +74,8 @@ func (s *InMemoryKeyStore) Add(_ context.Context, apiKey *APIKey) error {
 	s.keys[keyCopy.Key] = &keyCopy
 	s.keysByID[keyCopy.ID] = &keyCopy
 
-	// Add to plugin map
-	s.keysByPlugin[keyCopy.PluginID] = append(s.keysByPlugin[keyCopy.PluginID], &keyCopy)
+	// Add to client map
+	s.keysByClient[keyCopy.ClientID] = append(s.keysByClient[keyCopy.ClientID], &keyCopy)
 
 	return nil
 }
@@ -96,8 +95,8 @@ func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 		return ErrKeyNotFound
 	}
 
-	// Remove from plugin map (old plugin)
-	s.removeFromPluginMap(existingKey.PluginID, existingKey.ID)
+	// Remove from client map (old plugin)
+	s.removeFromClientMap(existingKey.ClientID, existingKey.ID)
 
 	// Remove from key string map if key changed
 	if existingKey.Key != apiKey.Key {
@@ -111,8 +110,8 @@ func (s *InMemoryKeyStore) Update(_ context.Context, apiKey *APIKey) error {
 	s.keys[keyCopy.Key] = &keyCopy
 	s.keysByID[keyCopy.ID] = &keyCopy
 
-	// Add to plugin map (new plugin)
-	s.keysByPlugin[keyCopy.PluginID] = append(s.keysByPlugin[keyCopy.PluginID], &keyCopy)
+	// Add to client map (new plugin)
+	s.keysByClient[keyCopy.ClientID] = append(s.keysByClient[keyCopy.ClientID], &keyCopy)
 
 	return nil
 }
@@ -137,14 +136,14 @@ func (s *InMemoryKeyStore) Delete(_ context.Context, keyID string) error {
 	return nil
 }
 
-// ListByPlugin returns all API keys for a specific plugin.
-func (s *InMemoryKeyStore) ListByPlugin(_ context.Context, pluginID string) ([]*APIKey, error) {
+// ListByClientID returns all API keys for a specific client.
+func (s *InMemoryKeyStore) ListByClientID(_ context.Context, clientID string) ([]*APIKey, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	keys, exists := s.keysByPlugin[pluginID]
+	keys, exists := s.keysByClient[clientID]
 	if !exists {
-		return []*APIKey{}, nil // Return empty slice for non-existent plugins
+		return []*APIKey{}, nil // Return empty slice for non-existent clients
 	}
 
 	// Return copies to prevent external modification
@@ -157,21 +156,21 @@ func (s *InMemoryKeyStore) ListByPlugin(_ context.Context, pluginID string) ([]*
 	return result, nil
 }
 
-// removeFromPluginMap removes a key from the plugin map by key ID.
+// removeFromClientMap removes a key from the client map by key ID.
 // Caller must hold write lock.
-func (s *InMemoryKeyStore) removeFromPluginMap(pluginID, keyID string) {
-	keys := s.keysByPlugin[pluginID]
+func (s *InMemoryKeyStore) removeFromClientMap(clientID, keyID string) {
+	keys := s.keysByClient[clientID]
 	for i, key := range keys {
 		if key.ID == keyID {
 			// Remove element at index i
-			s.keysByPlugin[pluginID] = append(keys[:i], keys[i+1:]...)
+			s.keysByClient[clientID] = append(keys[:i], keys[i+1:]...)
 
 			break
 		}
 	}
 
-	// Clean up empty plugin entries
-	if len(s.keysByPlugin[pluginID]) == 0 {
-		delete(s.keysByPlugin, pluginID)
+	// Clean up empty client entries
+	if len(s.keysByClient[clientID]) == 0 {
+		delete(s.keysByClient, clientID)
 	}
 }

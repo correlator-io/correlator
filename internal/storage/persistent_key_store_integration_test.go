@@ -133,7 +133,7 @@ func TestPersistentKeyStoreAdd(t *testing.T) {
 			apiKey: &APIKey{
 				ID:          "test-key-1",
 				Key:         "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-				PluginID:    "dbt-plugin",
+				ClientID:    "dbt-client",
 				Name:        "Test Key 1",
 				Permissions: []string{"lineage:read", "lineage:write"},
 				CreatedAt:   time.Now(),
@@ -146,7 +146,7 @@ func TestPersistentKeyStoreAdd(t *testing.T) {
 			apiKey: &APIKey{
 				ID:          "test-key-2",
 				Key:         "correlator_ak_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-				PluginID:    "airflow-plugin",
+				ClientID:    "airflow-client",
 				Name:        "Test Key 2",
 				Permissions: []string{"lineage:read"},
 				CreatedAt:   time.Now(),
@@ -162,7 +162,7 @@ func TestPersistentKeyStoreAdd(t *testing.T) {
 			apiKey: &APIKey{
 				ID:          "test-key-3",
 				Key:         "correlator_ak_1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef", // Same as test-key-1
-				PluginID:    "dbt-plugin",
+				ClientID:    "dbt-client",
 				Name:        "Duplicate Key",
 				Permissions: []string{"lineage:read"},
 				CreatedAt:   time.Now(),
@@ -220,7 +220,7 @@ func TestPersistentKeyStoreFindByKey(t *testing.T) {
 	testKey := &APIKey{
 		ID:          "find-test-1",
 		Key:         "correlator_ak_findtest1234567890abcdef1234567890abcdef1234567890abcdef1234", // pragma: allowlist secret
-		PluginID:    "test-plugin",
+		ClientID:    "test-client",
 		Name:        "Find Test Key",
 		Permissions: []string{"lineage:read"},
 		CreatedAt:   time.Now(),
@@ -300,7 +300,7 @@ func TestPersistentKeyStoreUpdate(t *testing.T) {
 	testKey := &APIKey{
 		ID:          "update-test-1",
 		Key:         "correlator_ak_updatetest1234567890abcdef1234567890abcdef1234567890abcde1",
-		PluginID:    "test-plugin",
+		ClientID:    "test-client",
 		Name:        "Original Name",
 		Permissions: []string{"lineage:read"},
 		CreatedAt:   time.Now(),
@@ -321,7 +321,7 @@ func TestPersistentKeyStoreUpdate(t *testing.T) {
 			apiKey: &APIKey{
 				ID:          "update-test-1",
 				Key:         testKey.Key,
-				PluginID:    "test-plugin",
+				ClientID:    "test-client",
 				Name:        "Updated Name",
 				Permissions: []string{"lineage:read"},
 				Active:      true,
@@ -333,7 +333,7 @@ func TestPersistentKeyStoreUpdate(t *testing.T) {
 			apiKey: &APIKey{
 				ID:          "update-test-1",
 				Key:         testKey.Key,
-				PluginID:    "test-plugin",
+				ClientID:    "test-client",
 				Name:        "Updated Name",
 				Permissions: []string{"lineage:read", "lineage:write", "admin"},
 				Active:      true,
@@ -345,7 +345,7 @@ func TestPersistentKeyStoreUpdate(t *testing.T) {
 			apiKey: &APIKey{
 				ID:       "update-test-1",
 				Key:      testKey.Key,
-				PluginID: "test-plugin",
+				ClientID: "test-client",
 				Name:     "Updated Name",
 				Active:   false,
 			},
@@ -356,7 +356,7 @@ func TestPersistentKeyStoreUpdate(t *testing.T) {
 			apiKey: &APIKey{
 				ID:       "non-existent",
 				Key:      "correlator_ak_nonexistent1234567890abcdef1234567890abcdef1234567890abcde1", // pragma: allowlist secret
-				PluginID: "test-plugin",
+				ClientID: "test-client",
 				Name:     "Ghost Key",
 				Active:   true,
 			},
@@ -407,7 +407,7 @@ func TestPersistentKeyStoreDelete(t *testing.T) {
 	testKey := &APIKey{
 		ID:          "delete-test-1",
 		Key:         "correlator_ak_deletetest1234567890abcdef1234567890abcdef1234567890abcde1",
-		PluginID:    "test-plugin",
+		ClientID:    "test-client",
 		Name:        "To Be Deleted",
 		Permissions: []string{"lineage:read"},
 		CreatedAt:   time.Now(),
@@ -473,7 +473,7 @@ func TestPersistentKeyStoreDelete(t *testing.T) {
 	}
 }
 
-func TestPersistentKeyStoreListByPlugin(t *testing.T) {
+func TestPersistentKeyStoreListByClientID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -495,12 +495,12 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 		_ = store.Close()
 	}()
 
-	// Setup: Add multiple test keys for different plugins
+	// Setup: Add multiple test keys for different clients
 	testKeys := []*APIKey{
 		{
 			ID:          "list-test-1",
 			Key:         "correlator_ak_listtest1234567890abcdef1234567890abcdef1234567890abcdef121",
-			PluginID:    "dbt-plugin",
+			ClientID:    "dbt-client",
 			Name:        "DBT Key 1",
 			Permissions: []string{"lineage:read"},
 			Active:      true,
@@ -508,7 +508,7 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 		{
 			ID:          "list-test-2",
 			Key:         "correlator_ak_listtest1234567890abcdef1234567890abcdef1234567890abcdef122",
-			PluginID:    "dbt-plugin",
+			ClientID:    "dbt-client",
 			Name:        "DBT Key 2",
 			Permissions: []string{"lineage:read", "lineage:write"},
 			Active:      true,
@@ -516,7 +516,7 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 		{
 			ID:          "list-test-3",
 			Key:         "correlator_ak_listtest1234567890abcdef1234567890abcdef1234567890abcdef123",
-			PluginID:    "airflow-plugin",
+			ClientID:    "airflow-client",
 			Name:        "Airflow Key 1",
 			Permissions: []string{"lineage:read"},
 			Active:      true,
@@ -524,7 +524,7 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 		{
 			ID:          "list-test-4",
 			Key:         "correlator_ak_listtest1234567890abcdef1234567890abcdef1234567890abcdef124",
-			PluginID:    "dbt-plugin",
+			ClientID:    "dbt-client",
 			Name:        "DBT Key 3 (Inactive)",
 			Permissions: []string{"lineage:read"},
 			Active:      false,
@@ -539,31 +539,31 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		pluginID  string
+		clientID  string
 		wantCount int
 		expectErr bool
 	}{
 		{
 			name:      "lists all active keys for dbt-plugin",
-			pluginID:  "dbt-plugin",
+			clientID:  "dbt-client",
 			wantCount: 2, // Only active keys
 			expectErr: false,
 		},
 		{
 			name:      "lists all active keys for airflow-plugin",
-			pluginID:  "airflow-plugin",
+			clientID:  "airflow-client",
 			wantCount: 1,
 			expectErr: false,
 		},
 		{
-			name:      "returns empty list for plugin with no keys",
-			pluginID:  "non-existent-plugin",
+			name:      "returns empty list for client with no keys",
+			clientID:  "non-existent-client",
 			wantCount: 0,
 			expectErr: false,
 		},
 		{
-			name:      "fails with empty plugin ID",
-			pluginID:  "",
+			name:      "fails with empty client ID",
+			clientID:  "",
 			wantCount: 0,
 			expectErr: true,
 		},
@@ -571,19 +571,19 @@ func TestPersistentKeyStoreListByPlugin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keys, err := store.ListByPlugin(ctx, tt.pluginID)
+			keys, err := store.ListByClientID(ctx, tt.clientID)
 
 			if tt.expectErr {
 				if err == nil {
-					t.Error("ListByPlugin() expected error, got nil")
+					t.Error("ListByClientID() expected error, got nil")
 				}
 			} else {
 				if err != nil {
-					t.Errorf("ListByPlugin() unexpected error: %v", err)
+					t.Errorf("ListByClientID() unexpected error: %v", err)
 				}
 
 				if len(keys) != tt.wantCount {
-					t.Errorf("ListByPlugin() returned %d keys, want %d", len(keys), tt.wantCount)
+					t.Errorf("ListByClientID() returned %d keys, want %d", len(keys), tt.wantCount)
 				}
 			}
 		})
@@ -630,7 +630,7 @@ func TestPersistentKeyStoreFindByKey_Performance(t *testing.T) {
 		apiKey := &APIKey{
 			ID:          generateTestKeyID(i),
 			Key:         key,
-			PluginID:    "perf-plugin",
+			ClientID:    "perf-client",
 			Name:        generateTestKeyName(i),
 			Permissions: []string{"lineage:read"},
 			CreatedAt:   time.Now(),

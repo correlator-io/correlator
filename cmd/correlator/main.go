@@ -85,8 +85,8 @@ func main() {
 	logger.Info("Rate limiter initialized",
 		slog.Int("global_rps", middlewareConfig.GlobalRPS),
 		slog.Int("global_burst", middlewareConfig.GlobalBurst),
-		slog.Int("plugin_rps", middlewareConfig.PluginRPS),
-		slog.Int("plugin_burst", middlewareConfig.PluginBurst),
+		slog.Int("client_rps", middlewareConfig.ClientRPS),
+		slog.Int("client_burst", middlewareConfig.ClientBurst),
 		slog.Int("unauth_rps", middlewareConfig.UnAuthRPS),
 		slog.Int("unauth_burst", middlewareConfig.UnAuthBurst),
 	)
@@ -117,11 +117,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		logger.Info("Plugin authentication enabled",
+		logger.Info("API key authentication enabled",
 			slog.String("database_url", storageConfig.MaskDatabaseURL()),
 		)
 	} else {
-		logger.Warn("Plugin authentication disabled",
+		logger.Warn("API key authentication disabled",
 			slog.String("security", "Only use in trusted networks (localhost, VPN, internal)"),
 			slog.String("note", "Set CORRELATOR_AUTH_ENABLED=true to enable API key authentication"),
 		)
