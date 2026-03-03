@@ -1612,7 +1612,8 @@ func (s *LineageStore) extractAssertionsFromFacet(
 // Behavior:
 //   - Uses existing transaction (same as event storage for atomicity)
 //   - Skips validation (facet data is already semi-validated)
-//   - UPSERT on (test_name, dataset_urn, executed_at)
+//   - UPSERT on (test_name, dataset_urn, run_id) — one result per test per job run
+//   - On conflict, updates with latest event data (COMPLETE overwrites START)
 func (s *LineageStore) storeTestResult(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1643,14 +1644,14 @@ func (s *LineageStore) storeTestResult(
 			producer_name,
 			producer_version
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT (test_name, dataset_urn, executed_at)
+		ON CONFLICT (test_name, dataset_urn, run_id)
 		DO UPDATE SET
 			test_type = EXCLUDED.test_type,
-			run_id = EXCLUDED.run_id,
 			status = EXCLUDED.status,
 			message = EXCLUDED.message,
 			metadata = EXCLUDED.metadata,
 			facets = EXCLUDED.facets,
+			executed_at = EXCLUDED.executed_at,
 			duration_ms = EXCLUDED.duration_ms,
 			producer_name = EXCLUDED.producer_name,
 			producer_version = EXCLUDED.producer_version,
