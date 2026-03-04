@@ -83,7 +83,7 @@ func TestGenerateDatasetURN_Kafka(t *testing.T) {
 
 	urn := GenerateDatasetURN("kafka://broker:9092", "user-events")
 
-	expected := "kafka://broker:9092/user-events"
+	expected := "kafka://broker/user-events"
 	if urn != expected {
 		t.Errorf("GenerateDatasetURN() = %q, expected %q", urn, expected)
 	}
@@ -96,7 +96,7 @@ func TestGenerateDatasetURN_HDFS(t *testing.T) {
 
 	urn := GenerateDatasetURN("hdfs://namenode:8020", "/data/warehouse/orders")
 
-	expected := "hdfs://namenode:8020//data/warehouse/orders"
+	expected := "hdfs://namenode//data/warehouse/orders"
 	if urn != expected {
 		t.Errorf("GenerateDatasetURN() = %q, expected %q", urn, expected)
 	}

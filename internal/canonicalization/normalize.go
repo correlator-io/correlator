@@ -10,17 +10,18 @@ const (
 )
 
 // NormalizeNamespace normalizes namespace URIs to prevent correlation failures
-// when different tools use different driver schemes or include default ports
+// when different tools use different driver schemes or include ports
 // inconsistently.
 //
 // Normalization rules:
 //  1. Scheme standardization:
 //     - postgres:// → postgresql:// (SQLAlchemy/JDBC standard, most common)
 //     - s3a://, s3n:// → s3:// (Spark/Hadoop → AWS standard)
-//  2. Default port removal:
-//     - postgresql://:5432 → postgresql:// (prevents duplicates)
-//     - mysql://:3306 → mysql://
-//     - mongodb://:27017 → mongodb://
+//  2. Port removal:
+//     - All ports are stripped from URL-like namespaces.
+//     - GE (openlineage-integration-common) uses Python's url.hostname which
+//     strips all ports unconditionally, while dbt and Airflow always include
+//     ports. Stripping all ports ensures cross-tool consistency.
 //  3. Non-URL namespaces (bigquery, kafka) pass through unchanged
 //
 // Rationale:
@@ -43,6 +44,7 @@ const (
 //
 // Examples:
 //   - NormalizeNamespace("postgres://prod-db:5432") → "postgresql://prod-db"
+//   - NormalizeNamespace("postgres://prod-db:5433") → "postgresql://prod-db"
 //   - NormalizeNamespace("s3a://bucket") → "s3://bucket"
 //   - NormalizeNamespace("bigquery") → "bigquery" (passthrough)
 //
@@ -67,8 +69,8 @@ func NormalizeNamespace(namespace string) string {
 	// 1. Normalize scheme (lowercase + standardization)
 	normalizedScheme := normalizeScheme(scheme)
 
-	// 2. Remove default ports if present
-	remainder = removeDefaultPort(normalizedScheme, remainder)
+	// 2. Remove port if present
+	remainder = removePort(remainder)
 
 	return normalizedScheme + "://" + remainder
 }
@@ -85,46 +87,45 @@ func normalizeScheme(scheme string) string {
 	}
 }
 
-// removeDefaultPort removes default ports from the remainder of the URL.
+// removePort strips the port from the host portion of a URL remainder.
+// GE uses Python's url.hostname which strips all ports unconditionally,
+// while dbt and Airflow always include ports. Stripping all ports aligns
+// namespaces across tools.
+//
 // Examples:
-//   - "db:5432/mydb" → "db/mydb" (postgresql default)
-//   - "db:5433/mydb" → "db:5433/mydb" (non-default, preserved)
-//   - "user@db:5432" → "user@db" (with username)
-func removeDefaultPort(scheme, remainder string) string {
-	// Map of default ports by scheme
-	defaults := map[string]string{
-		"postgresql": ":5432",
-		"mysql":      ":3306",
-		"mongodb":    ":27017",
-		"redis":      ":6379",
+//   - "db:5432/mydb" → "db/mydb"
+//   - "db:5433/mydb" → "db/mydb"
+//   - "user@db:5432" → "user@db"
+//   - "db" → "db" (no port, unchanged)
+func removePort(remainder string) string {
+	// Find the host portion (after the last @ if credentials exist)
+	hostStart := strings.LastIndex(remainder, "@")
+
+	var prefix, hostAndRest string
+	if hostStart >= 0 {
+		prefix = remainder[:hostStart+1] // includes @
+		hostAndRest = remainder[hostStart+1:]
+	} else {
+		prefix = ""
+		hostAndRest = remainder
 	}
 
-	defaultPort, exists := defaults[scheme]
-	if !exists {
-		return remainder // No default port defined for this scheme
+	// Split host from path/query: first occurrence of / or ?
+	pathIdx := strings.IndexAny(hostAndRest, "/?")
+
+	var host, suffix string
+	if pathIdx >= 0 {
+		host = hostAndRest[:pathIdx]
+		suffix = hostAndRest[pathIdx:]
+	} else {
+		host = hostAndRest
+		suffix = ""
 	}
 
-	// Handle different URL patterns:
-	// 1. "db:5432" (no path) → "db"
-	// 2. "db:5432/" (trailing slash) → "db/"
-	// 3. "db:5432/path" (with path) → "db/path"
-	// 4. "user@db:5432" (with username) → "user@db"
-	// 5. "user:pass@db:5432/path" (full URL) → "user:pass@db/path"
-
-	// Replace ":5432/" with "/" (preserves path)
-	if strings.Contains(remainder, defaultPort+"/") {
-		return strings.Replace(remainder, defaultPort+"/", "/", 1)
+	// Strip port from host (last :digits segment)
+	if colonIdx := strings.LastIndex(host, ":"); colonIdx >= 0 {
+		host = host[:colonIdx]
 	}
 
-	// Replace ":5432?" with "?" (preserves query params)
-	if strings.Contains(remainder, defaultPort+"?") {
-		return strings.Replace(remainder, defaultPort+"?", "?", 1)
-	}
-
-	// Remove trailing ":5432" if it's at the end
-	if strings.HasSuffix(remainder, defaultPort) {
-		return strings.TrimSuffix(remainder, defaultPort)
-	}
-
-	return remainder
+	return prefix + host + suffix
 }
