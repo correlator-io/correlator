@@ -127,22 +127,27 @@ func NewServer(
 	return server
 }
 
-// Start starts the HTTP server and blocks until shutdown.
-// It handles graceful shutdown on SIGINT and SIGTERM signals.
-func (s *Server) Start() error {
-	if err := s.config.Validate(); err != nil {
-		return fmt.Errorf("invalid server configuration: %w", err)
-	}
-
-	// Record server start time for uptime calculation
+// ListenAndServe starts the HTTP server in a background goroutine and returns
+// an error channel. The server runs until Shutdown is called or a fatal error
+// occurs (e.g., port already in use).
+//
+// Callers should select on the returned channel and call Shutdown for cleanup.
+// This method is non-blocking — it returns immediately after starting the server.
+//
+// Usage:
+//
+//	serverErrors := server.ListenAndServe()
+//	select {
+//	case err := <-serverErrors:
+//	    // fatal server error (port in use, etc.)
+//	case <-stopSignal:
+//	    server.Shutdown(ctx)
+//	}
+func (s *Server) ListenAndServe() <-chan error {
 	s.startTime = time.Now()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
 	serverErrors := make(chan error, 1)
 
-	// Start server in a goroutine
 	go func() {
 		s.logger.Info("Starting Correlator API server",
 			slog.String("address", s.config.Address()),
@@ -161,34 +166,25 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	// Block until we receive a signal or server error
-	select {
-	case err := <-serverErrors:
-		return err
-	case sig := <-stop:
-		s.logger.Info("Received shutdown signal",
-			slog.String("signal", sig.String()),
-		)
-
-		return s.shutdown()
-	}
+	return serverErrors
 }
 
-// shutdown gracefully shuts down the server.
-func (s *Server) shutdown() error {
-	// Create context with timeout for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
-	defer cancel()
-
-	s.logger.Info("Initiating server shutdown",
-		slog.Duration("shutdown_timeout", s.config.ShutdownTimeout),
-	)
+// Shutdown gracefully shuts down the HTTP server and closes all dependencies.
+// The provided context controls the shutdown deadline. If the context expires
+// before shutdown completes, in-flight requests are forcibly terminated.
+//
+// Shutdown order:
+//  1. HTTP server drain (stop accepting new connections, finish in-flight requests)
+//  2. Close API key store
+//  3. Close rate limiter
+//  4. Close ingestion store
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.logger.Info("Initiating server shutdown")
 
 	// Attempt graceful shutdown of HTTP server
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("Server shutdown failed",
 			slog.String("error", err.Error()),
-			slog.Duration("shutdown_timeout", s.config.ShutdownTimeout),
 		)
 
 		return fmt.Errorf("server shutdown failed: %w", err)
@@ -204,6 +200,36 @@ func (s *Server) shutdown() error {
 	s.logger.Info("Server shutdown completed successfully")
 
 	return nil
+}
+
+// Start starts the HTTP server and blocks until shutdown signal (SIGINT/SIGTERM).
+// This is a convenience wrapper around ListenAndServe + Shutdown for simple
+// single-subsystem deployments. When running multiple subsystems (e.g., HTTP + Kafka),
+// use ListenAndServe and Shutdown directly with shared signal handling.
+func (s *Server) Start() error {
+	if err := s.config.Validate(); err != nil {
+		return fmt.Errorf("invalid server configuration: %w", err)
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	serverErrors := s.ListenAndServe()
+
+	// Block until we receive a signal or server error
+	select {
+	case err := <-serverErrors:
+		return err
+	case sig := <-stop:
+		s.logger.Info("Received shutdown signal",
+			slog.String("signal", sig.String()),
+		)
+
+		ctx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
+		defer cancel()
+
+		return s.Shutdown(ctx)
+	}
 }
 
 // closeDependency attempts to close a server dependency that implements io.Closer.

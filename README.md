@@ -55,7 +55,7 @@ export OPENLINEAGE_API_KEY=your-api-key
 
 Correlator receives OpenLineage events and builds correlation views:
 
-1. **Ingest** - Receives OpenLineage events via HTTP API
+1. **Ingest** - Receives OpenLineage events via HTTP API or Kafka
 2. **Canonicalize** - Normalizes dataset URNs for consistent matching
 3. **Store** - Persists events with idempotency handling
 4. **Correlate** - Builds materialized views linking tests → datasets → jobs
@@ -117,12 +117,16 @@ See `.correlator.yaml.example` for a full configuration template.
 
 ### Environment Variables
 
-| Variable                      | Description                          | Default            |
-|-------------------------------|--------------------------------------|--------------------|
-| `CORRELATOR_CONFIG_PATH`      | Path to YAML config file             | `.correlator.yaml` |
-| `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication        | `false`            |
-| `CORRELATOR_SERVER_PORT`      | HTTP server port                     | `8080`             |
-| `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error) | `info`             |
+| Variable                      | Description                                | Default               |
+|-------------------------------|--------------------------------------------|-----------------------|
+| `CORRELATOR_CONFIG_PATH`      | Path to YAML config file                   | `.correlator.yaml`    |
+| `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication              | `false`               |
+| `CORRELATOR_SERVER_PORT`      | HTTP server port                           | `8080`                |
+| `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error)       | `info`                |
+| `CORRELATOR_KAFKA_ENABLED`    | Enable Kafka consumer for OL events        | `false`               |
+| `CORRELATOR_KAFKA_BROKERS`    | Comma-separated Kafka broker addresses     | (required if enabled) |
+| `CORRELATOR_KAFKA_TOPIC`      | Kafka topic to consume from                | `openlineage.events`  |
+| `CORRELATOR_KAFKA_GROUP`      | Kafka consumer group ID                    | `correlator`          |
 
 See `.env.example` for all available configuration options.
 
