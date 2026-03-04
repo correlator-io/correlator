@@ -43,7 +43,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 
 	// Setup database with migrations
 	testDB := config.SetupTestDatabase(ctx, t)
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create stores
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -119,7 +119,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	testDB := config.SetupTestDatabase(ctx, t)
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
 	require.NoError(t, err, "Failed to create key store")
@@ -333,7 +333,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -518,7 +518,7 @@ func TestReadyEndpoint(t *testing.T) {
 	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -661,7 +661,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
@@ -942,7 +942,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	testDB := config.SetupTestDatabase(ctx, t)
 
 	// Wrap in storage.Connection
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create key store
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)
