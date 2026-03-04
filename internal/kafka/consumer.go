@@ -195,8 +195,9 @@ func (c *Consumer) processMessage(ctx context.Context, msg kafkago.Message) {
 	c.commitMessage(ctx, msg)
 }
 
-// commitMessage commits the message offset. Errors are logged but do not
-// stop the consumer — the message will be redelivered on restart (at-least-once).
+// commitMessage commits the message offset. If the commit fails, the error is
+// logged but does not stop the consumer — the offset remains uncommitted, so
+// the message will be redelivered on restart (at-least-once).
 func (c *Consumer) commitMessage(ctx context.Context, msg kafkago.Message) {
 	if err := c.reader.CommitMessages(ctx, msg); err != nil {
 		c.logger.Error("Failed to commit Kafka offset",
