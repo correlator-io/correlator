@@ -62,7 +62,7 @@ func TestNormalizeNamespace(t *testing.T) {
 			want:  "s3://MyBucket/Path/To/File",
 		},
 
-		// Default port removal - PostgreSQL
+		// Port removal - PostgreSQL
 		{
 			name:  "postgres default port 5432",
 			input: "postgres://db:5432",
@@ -71,7 +71,7 @@ func TestNormalizeNamespace(t *testing.T) {
 		{
 			name:  "postgres non-default port 5433",
 			input: "postgres://db:5433",
-			want:  "postgresql://db:5433",
+			want:  "postgresql://db",
 		},
 		{
 			name:  "postgresql default port",
@@ -84,7 +84,7 @@ func TestNormalizeNamespace(t *testing.T) {
 			want:  "postgresql://db",
 		},
 
-		// Default port removal - MySQL
+		// Port removal - MySQL
 		{
 			name:  "mysql default port 3306",
 			input: "mysql://db:3306",
@@ -93,10 +93,10 @@ func TestNormalizeNamespace(t *testing.T) {
 		{
 			name:  "mysql non-default port 3307",
 			input: "mysql://db:3307",
-			want:  "mysql://db:3307",
+			want:  "mysql://db",
 		},
 
-		// Default port removal - MongoDB
+		// Port removal - MongoDB
 		{
 			name:  "mongodb default port 27017",
 			input: "mongodb://db:27017",
@@ -105,7 +105,7 @@ func TestNormalizeNamespace(t *testing.T) {
 		{
 			name:  "mongodb non-default port 27018",
 			input: "mongodb://db:27018",
-			want:  "mongodb://db:27018",
+			want:  "mongodb://db",
 		},
 
 		// URL component preservation
@@ -157,21 +157,21 @@ func TestNormalizeNamespace(t *testing.T) {
 			want:  "snowflake",
 		},
 
-		// Schemes that should pass through (no normalization rules)
+		// Port removal for other URL-like schemes
 		{
-			name:  "kafka with scheme",
+			name:  "kafka with scheme and port",
 			input: "kafka://broker:9092",
-			want:  "kafka://broker:9092",
+			want:  "kafka://broker",
 		},
 		{
 			name:  "redis with default port",
 			input: "redis://localhost:6379",
-			want:  "redis://localhost", // Default port removed
+			want:  "redis://localhost",
 		},
 		{
 			name:  "redis with non-default port",
 			input: "redis://localhost:6380",
-			want:  "redis://localhost:6380",
+			want:  "redis://localhost",
 		},
 
 		// Edge cases

@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -13,6 +16,8 @@ import (
 	"github.com/correlator-io/correlator/internal/api"
 	"github.com/correlator-io/correlator/internal/api/middleware"
 	"github.com/correlator-io/correlator/internal/config"
+	"github.com/correlator-io/correlator/internal/ingestion"
+	"github.com/correlator-io/correlator/internal/kafka"
 	"github.com/correlator-io/correlator/internal/storage"
 )
 
@@ -21,11 +26,18 @@ const (
 	initTimeout = 30 * time.Second
 )
 
-//nolint:funlen // start command sets up dependencies sequentially, extracting would reduce clarity
 func runStart(args []string) {
+	if err := start(args); err != nil {
+		fmt.Fprintf(os.Stderr, "correlator: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+//nolint:funlen,gocognit,cyclop // Sequential dependency setup — splitting would add indirection without clarity.
+func start(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	host := fs.String("host", "", "override CORRELATOR_HOST")
-	port := fs.Int("port", 0, "override CORRELATOR_PORT")
+	host := fs.String("host", "", "override CORRELATOR_SERVER_HOST")
+	port := fs.Int("port", 0, "override CORRELATOR_SERVER_PORT")
 
 	_ = fs.Parse(args)
 
@@ -38,6 +50,10 @@ func runStart(args []string) {
 
 	if *port != 0 {
 		serverConfig.Port = *port
+	}
+
+	if err := serverConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid server configuration: %w", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -63,7 +79,7 @@ func runStart(args []string) {
 	// Load rate limiter configuration
 	middlewareConfig := middleware.LoadConfig()
 
-	// Create rate limiter instance (graceful shutdown handled by server.shutdown())
+	// Create rate limiter instance (graceful shutdown handled by server.Shutdown())
 	rateLimiter := middleware.NewInMemoryRateLimiter(middlewareConfig)
 
 	logger.Info("Rate limiter initialized",
@@ -80,13 +96,10 @@ func runStart(args []string) {
 
 	dbConn, err := storage.NewConnection(storageConfig)
 	if err != nil {
-		logger.Error("Failed to connect to database", slog.String("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("database connection: %w", err)
 	}
 
-	defer func() {
-		_ = dbConn.Close() // Ensure connection closes on normal shutdown
-	}()
+	defer func() { _ = dbConn.Close() }()
 
 	var apiKeyStore storage.APIKeyStore
 
@@ -94,11 +107,7 @@ func runStart(args []string) {
 	if authEnabled {
 		apiKeyStore, err = storage.NewPersistentKeyStore(dbConn)
 		if err != nil {
-			logger.Error("Failed to connect to persistent key store", slog.String("error", err.Error()))
-
-			_ = dbConn.Close()
-			//nolint:gocritic // Explicit cleanup before os.Exit is intentional (defer won't run)
-			os.Exit(1)
+			return fmt.Errorf("persistent key store: %w", err)
 		}
 
 		logger.Info("API key authentication enabled",
@@ -138,12 +147,10 @@ func runStart(args []string) {
 		storage.WithViewRefreshDelay(storageConfig.ViewRefreshDelay),
 	)
 	if err != nil {
-		logger.Error("Failed to connect to lineage store", slog.String("error", err.Error()))
-		// Close database connection before exit (defer won't run with os.Exit)
-		_ = dbConn.Close()
-		// Fail-fast: exit immediately to prevent the server creation process from panicking. LineageStore is required!
-		os.Exit(1)
+		return fmt.Errorf("lineage store: %w", err)
 	}
+
+	defer func() { _ = lineageStore.Close() }()
 
 	logger.Info("Lineage store initialized",
 		slog.String("database_url", storageConfig.MaskDatabaseURL()),
@@ -157,31 +164,88 @@ func runStart(args []string) {
 
 	// Initialize resolved_datasets lookup table (must run before serving traffic)
 	initCtx, initCancel := context.WithTimeout(context.Background(), initTimeout)
+	defer initCancel()
 
 	if err := lineageStore.InitResolvedDatasets(initCtx); err != nil {
-		initCancel()
-
-		logger.Error("Failed to initialize resolved_datasets", slog.String("error", err.Error()))
-
-		_ = lineageStore.Close()
-		_ = dbConn.Close()
-
-		os.Exit(1)
+		return fmt.Errorf("resolved datasets initialization: %w", err)
 	}
 
-	initCancel()
-
 	logger.Info("Resolved datasets lookup table initialized")
+
+	// Load Kafka consumer configuration (optional — disabled by default)
+	kafkaConfig := kafka.LoadConfig()
+	if err := kafkaConfig.Validate(); err != nil {
+		return fmt.Errorf("kafka configuration: %w", err)
+	}
+
+	// Create shared validator for all transports (thread-safe, no mutable state)
+	validator := ingestion.NewValidator()
+
+	// Create Kafka consumer (if enabled)
+	var consumer *kafka.Consumer
+
+	if kafkaConfig.Enabled {
+		consumer = kafka.NewConsumer(kafkaConfig, lineageStore, validator, logger)
+
+		logger.Info("Kafka consumer configured",
+			slog.Any("brokers", kafkaConfig.Brokers),
+			slog.String("topic", kafkaConfig.Topic),
+			slog.String("group_id", kafkaConfig.GroupID),
+		)
+	} else {
+		logger.Info("Kafka consumer disabled (set CORRELATOR_KAFKA_ENABLED=true to enable)")
+	}
 
 	// lineageStore implements both ingestion.Store and correlation.Store interfaces
 	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore)
 
-	if err := server.Start(); err != nil {
-		logger.Error("Server failed to start",
-			slog.String("error", err.Error()),
-		)
-		os.Exit(1)
+	// --- Signal handling: orchestrate all subsystems ---
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Start subsystems (non-blocking)
+	// A nil channel blocks forever on select — disabled subsystems are simply silent.
+	var consumerErrors <-chan error
+	if consumer != nil {
+		consumerErrors = consumer.Start(ctx)
+	}
+
+	serverErrors := server.ListenAndServe()
+
+	// Block until shutdown signal or fatal subsystem error
+	select {
+	case err := <-consumerErrors:
+		return fmt.Errorf("kafka consumer failed: %w", err)
+	case err := <-serverErrors:
+		return fmt.Errorf("server failed: %w", err)
+	case sig := <-stop:
+		logger.Info("Received shutdown signal", slog.String("signal", sig.String()))
+	}
+
+	// Ordered shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), serverConfig.ShutdownTimeout)
+	defer shutdownCancel()
+
+	// 1. Cancel context (stops Kafka consumer loop)
+	cancel()
+
+	// 2. Kafka consumer drain (wait for in-flight message)
+	if consumer != nil {
+		if err := consumer.Close(); err != nil {
+			logger.Error("Kafka consumer shutdown failed", slog.String("error", err.Error()))
+		}
+	}
+
+	// 3. HTTP server drain + dependency cleanup
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown failed", slog.String("error", err.Error()))
 	}
 
 	logger.Info("Correlator service stopped")
+
+	return nil
 }

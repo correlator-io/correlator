@@ -38,7 +38,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 
 	// Setup database with migrations (uses shared helper from config package)
 	testDB := config.SetupTestDatabase(ctx, t)
-	storageConn := &storage.Connection{DB: testDB.Connection}
+	storageConn := storage.WrapConnection(testDB.Connection)
 
 	// Create stores
 	keyStore, err := storage.NewPersistentKeyStore(storageConn)

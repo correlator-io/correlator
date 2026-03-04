@@ -147,6 +147,13 @@ func (c *Connection) HealthCheck(ctx context.Context) error { //nolint: contextc
 	return c.PingContext(ctx)
 }
 
+// WrapConnection wraps an existing *sql.DB into a Connection.
+// This is primarily used by integration tests that create database connections
+// via testcontainers and need to pass them to NewLineageStore.
+func WrapConnection(db *sql.DB) *Connection {
+	return &Connection{db}
+}
+
 // Close closes the database connection pool gracefully.
 // This method is safe to call multiple times.
 func (c *Connection) Close() error {
