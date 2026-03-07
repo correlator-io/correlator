@@ -179,12 +179,14 @@ export interface ApiDatasetMatch {
   dataset_urn: string;
   confidence: number;
   match_reason: string;
+  producer?: string;
 }
 
 export interface ApiOrphanDataset {
   dataset_urn: string;
   test_count: number;
   last_seen: string;
+  producer?: string;
   likely_match: ApiDatasetMatch | null;
 }
 
@@ -224,14 +226,10 @@ function normalizeTimestamp(ts: string | null | undefined): string | null {
 
 /**
  * Normalize producer field from API format to frontend format.
- * API returns "correlator-dbt", "correlator-airflow", etc.
+ * API returns standard OpenLineage producer names: "dbt", "airflow", "great_expectations".
  * Frontend expects "dbt", "airflow", "great_expectations", "unknown".
  */
 function normalizeProducer(apiProducer: string): Producer {
-  // Strip "correlator-" prefix if present
-  const normalized = apiProducer.replace(/^correlator-/, "");
-
-  // Map to known producer types
   const producerMap: Record<string, Producer> = {
     dbt: "dbt",
     airflow: "airflow",
@@ -239,7 +237,7 @@ function normalizeProducer(apiProducer: string): Producer {
     ge: "great_expectations", // alias
   };
 
-  return producerMap[normalized] ?? "unknown";
+  return producerMap[apiProducer] ?? "unknown";
 }
 
 function transformIncident(api: ApiIncidentSummary): Incident {
@@ -327,6 +325,7 @@ function transformDatasetMatch(api: ApiDatasetMatch): DatasetMatch {
     datasetUrn: api.dataset_urn,
     confidence: api.confidence,
     matchReason: api.match_reason as DatasetMatch["matchReason"],
+    producer: normalizeProducer(api.producer ?? ""),
   };
 }
 
@@ -335,6 +334,7 @@ function transformOrphanDataset(api: ApiOrphanDataset): OrphanDataset {
     datasetUrn: api.dataset_urn,
     testCount: api.test_count,
     lastSeen: api.last_seen,
+    producer: normalizeProducer(api.producer ?? ""),
     likelyMatch: api.likely_match ? transformDatasetMatch(api.likely_match) : null,
   };
 }

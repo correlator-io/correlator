@@ -115,6 +115,7 @@ func TestGetCorrelationHealth_Integration(t *testing.T) {
 				foundOrphan = true
 
 				assert.GreaterOrEqual(t, o.TestCount, 1)
+				assert.Equal(t, "great_expectations", o.Producer, "Orphan producer should be GE")
 
 				break
 			}
@@ -218,8 +219,8 @@ func setupCorrelatedTestData(
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (
 			test_name, test_type, dataset_urn, run_id, status, message,
-			executed_at, duration_ms
-		) VALUES ($1, $2, $3, $4, 'failed', 'Found 3 null values', $5, 150)
+			executed_at, duration_ms, producer_name
+		) VALUES ($1, $2, $3, $4, 'failed', 'Found 3 null values', $5, 150, 'dbt')
 	`, "not_null_test_"+uuid.New().String()[:8], "not_null", datasetURN, runID, now)
 	require.NoError(t, err, "Failed to insert test result")
 }
@@ -256,8 +257,8 @@ func setupOrphanTestData(
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (
 			test_name, test_type, dataset_urn, run_id, status, message,
-			executed_at, duration_ms
-		) VALUES ($1, $2, $3, $4, 'failed', 'Found nulls', $5, 100)
+			executed_at, duration_ms, producer_name
+		) VALUES ($1, $2, $3, $4, 'failed', 'Found nulls', $5, 100, 'great_expectations')
 	`, "orphan_test_"+uuid.New().String()[:8], "not_null", datasetURN, runID, now)
 	require.NoError(t, err, "Failed to insert test result")
 }

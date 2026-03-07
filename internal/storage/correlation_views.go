@@ -882,11 +882,12 @@ func (s *LineageStore) queryTestedDatasetsWithoutProducer(ctx context.Context) (
 			SELECT
 				tr.dataset_urn,
 				COUNT(*) AS test_count,
-				MAX(tr.executed_at) AS last_seen
+				MAX(tr.executed_at) AS last_seen,
+				MAX(tr.producer_name) AS producer_name
 			FROM test_results tr
 			GROUP BY tr.dataset_urn
 		)
-		SELECT td.dataset_urn, td.test_count, td.last_seen
+		SELECT td.dataset_urn, td.test_count, td.last_seen, COALESCE(td.producer_name, '')
 		FROM tested_datasets td
 		JOIN resolved_datasets rd ON td.dataset_urn = rd.raw_urn
 		WHERE rd.canonical_urn NOT IN (SELECT canonical_urn FROM produced_canonical)
@@ -909,7 +910,7 @@ func (s *LineageStore) queryTestedDatasetsWithoutProducer(ctx context.Context) (
 	for rows.Next() {
 		var o correlation.OrphanDataset
 
-		if err := rows.Scan(&o.DatasetURN, &o.TestCount, &o.LastSeen); err != nil {
+		if err := rows.Scan(&o.DatasetURN, &o.TestCount, &o.LastSeen, &o.Producer); err != nil {
 			s.logger.Error("Failed to scan orphan dataset row", slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
@@ -929,12 +930,15 @@ func (s *LineageStore) queryTestedDatasetsWithoutProducer(ctx context.Context) (
 
 // buildTableNameToProducedURNIndex queries produced datasets and indexes them by extracted table name.
 // Results are ordered for deterministic first-match-wins behavior.
-func (s *LineageStore) buildTableNameToProducedURNIndex(ctx context.Context) (map[string]string, error) {
+func (s *LineageStore) buildTableNameToProducedURNIndex(ctx context.Context) (map[string]producedDatasetInfo, error) {
 	query := `
-		SELECT DISTINCT dataset_urn
-		FROM lineage_edges
-		WHERE edge_type = 'output'
-		ORDER BY dataset_urn
+		SELECT DISTINCT ON (le.dataset_urn)
+			le.dataset_urn,
+			COALESCE(jr.producer_name, '')
+		FROM lineage_edges le
+		LEFT JOIN job_runs jr ON le.run_id = jr.run_id
+		WHERE le.edge_type = 'output'
+		ORDER BY le.dataset_urn
 	`
 
 	rows, err := s.conn.QueryContext(ctx, query)
@@ -948,22 +952,21 @@ func (s *LineageStore) buildTableNameToProducedURNIndex(ctx context.Context) (ma
 		_ = rows.Close()
 	}()
 
-	tableNameToProduced := make(map[string]string)
+	tableNameToProduced := make(map[string]producedDatasetInfo)
 
 	for rows.Next() {
-		var producedURN string
+		var info producedDatasetInfo
 
-		if err := rows.Scan(&producedURN); err != nil {
+		if err := rows.Scan(&info.datasetURN, &info.producer); err != nil {
 			s.logger.Error("Failed to scan produced dataset row", slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
 		}
 
-		tableName := canonicalization.ExtractTableName(producedURN)
+		tableName := canonicalization.ExtractTableName(info.datasetURN)
 		if tableName != "" {
-			// First match wins (deterministic ordering from query)
 			if _, exists := tableNameToProduced[tableName]; !exists {
-				tableNameToProduced[tableName] = producedURN
+				tableNameToProduced[tableName] = info
 			}
 		}
 	}
@@ -1071,7 +1074,7 @@ func (s *LineageStore) findTrueOrphans(ctx context.Context) ([]correlation.Orpha
 // findUnresolvedOrphanDatasets returns true orphan datasets enriched with likely matches.
 func (s *LineageStore) findUnresolvedOrphanDatasets(
 	ctx context.Context,
-	tableNameToProducedURNIndex map[string]string,
+	tableNameToProducedURNIndex map[string]producedDatasetInfo,
 ) ([]correlation.OrphanDataset, error) {
 	// Query orphan datasets (datasets with test results but no output edges)
 	orphans, err := s.queryTestedDatasetsWithoutProducer(ctx)
@@ -1090,11 +1093,12 @@ func (s *LineageStore) findUnresolvedOrphanDatasets(
 		// Try to find likely match by table name
 		orphanTableName := canonicalization.ExtractTableName(o.DatasetURN)
 		if orphanTableName != "" {
-			if producedURN, found := tableNameToProducedURNIndex[orphanTableName]; found {
+			if info, found := tableNameToProducedURNIndex[orphanTableName]; found {
 				o.LikelyMatch = &correlation.DatasetMatch{
-					DatasetURN:  producedURN,
+					DatasetURN:  info.datasetURN,
 					Confidence:  1.0,
 					MatchReason: "exact_table_name",
+					Producer:    info.producer,
 				}
 			}
 		}

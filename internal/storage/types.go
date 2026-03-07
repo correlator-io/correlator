@@ -105,6 +105,12 @@ type (
 		raw       string
 		canonical string
 	}
+
+	// producedDatasetInfo holds a produced dataset URN and its producer name.
+	producedDatasetInfo struct {
+		datasetURN string
+		producer   string
+	}
 )
 
 // NewConnection returns a new Database Connection.

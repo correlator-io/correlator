@@ -70,6 +70,30 @@ export function truncate(str: string, maxLength: number): string {
 }
 
 // ============================================================
+// Health Page Formatting Utilities
+// ============================================================
+
+/**
+ * Format a match reason for display on the health page.
+ *
+ * Examples:
+ * - ("exact_table_name", "postgresql://demo/marts.customers") → 'Same table name "customers"'
+ * - ("fuzzy_match", ...) → "Similar name pattern"
+ */
+export function formatMatchReason(reason: string, canonicalUrn: string): string {
+  switch (reason) {
+    case "exact_table_name": {
+      const tableName = canonicalUrn.split(/[/.]/).pop() || "table";
+      return `Same table name "${tableName}"`;
+    }
+    case "fuzzy_match":
+      return "Similar name pattern";
+    default:
+      return "Structural match";
+  }
+}
+
+// ============================================================
 // Incident Formatting Utilities
 // ============================================================
 
