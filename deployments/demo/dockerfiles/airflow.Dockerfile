@@ -32,20 +32,28 @@ RUN pip install --no-cache-dir dbt-postgres openlineage-dbt
 RUN pip install --no-cache-dir "openlineage-integration-common[great_expectations]==1.39.0"
 
 # Upgrade the OL provider separately — the Airflow base image pins 2.3.0 via
-# constraints.txt, which the bulk install above doesn't override. Version 2.4.0+
+# constraints.txt, which the bulk install above doesn't override. Version 2.4.0
 # adds lineage_root_parent_id macro needed for DAG-level parent run correlation.
-RUN pip install --no-cache-dir --upgrade "apache-airflow-providers-openlineage>=2.4.0"
+# PINNED to 2.4.0: later versions (2.5+) require openlineage-python features
+# (e.g. job_dependencies_run in facet_v2) not present in 1.39.0, and we must
+# keep openlineage-python==1.39.0 for GE compatibility (OL >= 1.40 drops GE support).
+RUN pip install --no-cache-dir --upgrade "apache-airflow-providers-openlineage==2.4.0"
+
+# confluent-kafka is required by the OL Python client Kafka transport.
+# Ships with pre-built wheels including librdkafka — no system deps needed.
+RUN pip install --no-cache-dir confluent-kafka
 
 # Force-upgrade protobuf AFTER all other installs. GE 0.15.34 downgrades protobuf
 # to 4.x, but dbt-core 1.11+ uses MessageToJson(always_print_fields_with_no_presence=...)
 # which requires protobuf >= 5.26.0. Must be the last pip install to avoid being reverted.
 RUN pip install --no-cache-dir "protobuf>=5.26.0,<6"
 
-# OpenLineage configuration is mounted at runtime via openlineage.yml
-# See: deployments/demo/airflow/openlineage.yml
+# OpenLineage configuration — dual transport design:
+# - openlineage.yml: Kafka transport (Airflow OL provider reads at scheduler startup)
+# - openlineage-http.yml: HTTP transport (dbt-ol BashOperators override OPENLINEAGE_CONFIG)
+# Both files are mounted at runtime via docker-compose volumes.
 ENV OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
 
-# Standard OpenLineage configuration
-# OPENLINEAGE_URL is the base URL for the OL HTTP transport (used by dbt-ol, GE OL action)
+# OPENLINEAGE_URL is read directly by GE's OpenLineageValidationAction (ignores OPENLINEAGE_CONFIG)
 # OPENLINEAGE_NAMESPACE is intentionally NOT set — each tool uses its own default
 ENV OPENLINEAGE_URL=http://demo-correlator:8080

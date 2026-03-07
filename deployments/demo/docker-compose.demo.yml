@@ -6,6 +6,12 @@
 #   Correlator API:    8081 (dev: 8080)
 #   Correlator UI:     3001 (dev: 3000)
 #   Airflow Webserver: 8082 (avoids conflict with API)
+#   Kafka:             9092 (broker, host access)
+#
+# Dual Transport Design:
+#   Airflow task events  → Kafka (openlineage.yml with Kafka transport)
+#   dbt-ol events        → HTTP  (BashOperator overrides OPENLINEAGE_CONFIG to openlineage-http.yml)
+#   GE events            → HTTP  (BashOperators override OPENLINEAGE_CONFIG to openlineage-http.yml)
 #
 # PostgreSQL Schemas:
 #   public:     Demo data (Jaffle Shop)
@@ -60,6 +66,51 @@ services:
       - demo-network
 
   # =============================================================================
+  # Kafka (KRaft mode, single broker)
+  # =============================================================================
+  demo-kafka:
+    image: confluentinc/confluent-local:7.6.0
+    container_name: demo-kafka
+    environment:
+      # PLAINTEXT (29092): inter-container traffic, bound to all interfaces
+      # PLAINTEXT_HOST (9092): host access, advertised as localhost
+      # Default PLAINTEXT listener binds to localhost — must override to 0.0.0.0 for Docker networking
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://demo-kafka:29092,PLAINTEXT_HOST://localhost:9092
+    ports:
+      - "9092:9092"   # Kafka broker (host access)
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - demo-network
+
+  # Pre-create the OpenLineage events topic so the Correlator consumer group
+  # gets a partition assigned on first join. Without this, the consumer joins
+  # before the topic exists, gets 0 partitions via range assignment, and never
+  # rebalances when the topic is auto-created by the first producer.
+  demo-kafka-init:
+    image: confluentinc/confluent-local:7.6.0
+    container_name: demo-kafka-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        kafka-topics --bootstrap-server demo-kafka:29092 \
+          --create --if-not-exists \
+          --topic openlineage.events \
+          --partitions 1 \
+          --replication-factor 1
+    depends_on:
+      demo-kafka:
+        condition: service_healthy
+    networks:
+      - demo-network
+
+  # =============================================================================
   # Correlator Stack (built from source)
   # =============================================================================
 
@@ -98,6 +149,10 @@ services:
       - CORRELATOR_SERVER_LOG_LEVEL=debug
       - CORRELATOR_AUTH_ENABLED=false
       - CORRELATOR_CONFIG_PATH=/config/.correlator.yaml
+      # Kafka consumer configuration
+      - CORRELATOR_KAFKA_ENABLED=true
+      - CORRELATOR_KAFKA_BROKERS=demo-kafka:29092
+      - CORRELATOR_KAFKA_TOPIC=openlineage.events
     ports:
       - "8081:8080"   # API (demo port)
       - "9091:9090"   # Metrics (demo port)
@@ -107,6 +162,8 @@ services:
       demo-postgres:
         condition: service_healthy
       demo-correlator-migrator:
+        condition: service_completed_successfully
+      demo-kafka-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
@@ -196,6 +253,7 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/openlineage.yml:/opt/airflow/openlineage.yml:ro
+      - ./airflow/openlineage-http.yml:/opt/airflow/openlineage-http.yml:ro
     depends_on:
       demo-postgres:
         condition: service_healthy
@@ -223,8 +281,9 @@ services:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://correlator:correlator_dev_password@demo-postgres:5432/demo?options=-csearch_path%3Dairflow
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
+      # Airflow OL provider reads this at scheduler startup → Kafka transport
       - OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml
-      # Standard OpenLineage configuration
+      # Fallback for tools that read OPENLINEAGE_URL directly (GE)
       - OPENLINEAGE_URL=http://demo-correlator:8080
       # Namespaces like airflow://demo will fail because the OL integration does not use rsplit()
       # - OPENLINEAGE_NAMESPACE=airflow
@@ -233,10 +292,13 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/openlineage.yml:/opt/airflow/openlineage.yml:ro
+      - ./airflow/openlineage-http.yml:/opt/airflow/openlineage-http.yml:ro
       - ./dbt:/dbt
       - ./great-expectations:/ge
     depends_on:
       demo-airflow-webserver:
+        condition: service_healthy
+      demo-kafka:
         condition: service_healthy
     networks:
       - demo-network

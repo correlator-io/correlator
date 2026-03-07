@@ -26,6 +26,7 @@ That's it! The demo will:
 | Correlator API | http://localhost:8081 | -                                    |
 | Airflow UI     | http://localhost:8082 | admin / admin                        |
 | PostgreSQL     | localhost:5433        | correlator / correlator_dev_password |
+| Kafka          | localhost:9092        | -                                    |
 
 ## Port Mapping
 
@@ -35,8 +36,9 @@ That's it! The demo will:
 | Correlator API    | 8080     | 8081      | +1                       |
 | Correlator UI     | 3000     | 3001      | +1                       |
 | Airflow Webserver | 8080     | 8082      | +2 (avoids API conflict) |
+| Kafka             | -        | 9092      | Standard broker port     |
 
-**Mental model:** Demo ports are Dev ports + 1 (Airflow is +2 to avoid API conflict)
+**Mental model:** Demo ports are Dev ports + 1 (Airflow is +2 to avoid API conflict). Kafka has no dev equivalent.
 
 ## Commands
 
@@ -149,7 +151,8 @@ deployments/demo/
 ├── airflow/
 │   ├── dags/                    # Airflow DAGs
 │   │   └── demo_pipeline.py     # Main demo DAG
-│   └── openlineage.yml          # Standard OL HTTP transport config
+│   ├── openlineage.yml          # OL Kafka transport (Airflow task events)
+│   └── openlineage-http.yml     # OL HTTP transport (dbt-ol, GE fallback)
 └── great-expectations/          # GE project
     └── checkpoints/
         └── demo_checkpoint.py   # Validation checkpoint
@@ -230,11 +233,34 @@ make start demo
 
 All tools use **standard OpenLineage integrations** from PyPI:
 
-| Tool    | Package                                        | Transport                          |
-|---------|------------------------------------------------|------------------------------------|
-| dbt     | `openlineage-dbt` (`dbt-ol` CLI)               | HTTP via `OPENLINEAGE_URL` env var |
-| Airflow | `apache-airflow-providers-openlineage`          | HTTP via `openlineage.yml` config  |
-| GE      | `openlineage-integration-common[great_expectations]` | HTTP via `OPENLINEAGE_URL` env var |
+| Tool    | Package                                              | Transport                                      |
+|---------|------------------------------------------------------|------------------------------------------------|
+| Airflow | `apache-airflow-providers-openlineage`               | **Kafka** via `openlineage.yml` config         |
+| dbt     | `openlineage-dbt` (`dbt-ol` CLI)                     | **HTTP** via `openlineage-http.yml` override   |
+| GE      | `openlineage-integration-common[great_expectations]`  | **HTTP** via `OPENLINEAGE_URL` env var         |
+
+### Dual Transport Design
+
+The demo uses both Kafka and HTTP ingestion paths to prove they correlate correctly:
+
+```
+Airflow OL provider ──→ Kafka (openlineage.events topic) ──→ Correlator Kafka consumer
+dbt-ol              ──→ HTTP  (POST /api/v1/lineage)      ──→ Correlator API server
+GE OL action        ──→ HTTP  (POST /api/v1/lineage)      ──→ Correlator API server
+```
+
+**How it works:**
+
+- The Airflow scheduler reads `OPENLINEAGE_CONFIG=/opt/airflow/openlineage.yml` at startup,
+  which configures the Kafka transport. All Airflow task lifecycle events go through Kafka.
+- dbt-ol and GE run as BashOperators inside the scheduler container. Each BashOperator
+  overrides `OPENLINEAGE_CONFIG` to `/opt/airflow/openlineage-http.yml`, which configures
+  the HTTP transport. This ensures dbt/GE events go through the HTTP API.
+- GE's `OpenLineageValidationAction` reads `OPENLINEAGE_URL` directly (ignoring
+  `OPENLINEAGE_CONFIG`), so it always uses HTTP regardless. The config override is a
+  safety net.
+- Correlator consumes from both paths: the API server handles HTTP, and the Kafka consumer
+  reads from the `openlineage.events` topic. Both feed into the same storage pipeline.
 
 ## Credentials
 
