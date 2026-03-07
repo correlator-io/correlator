@@ -1,8 +1,8 @@
 // New components for dataset pattern aliasing
 export { HealthStatusHeader } from "./health-status-header";
 export { SuggestedPatternCard } from "./suggested-pattern-card";
-export { OrphanDatasetCard } from "./orphan-dataset-card";
 export { OrphanDatasetList } from "./orphan-dataset-list";
+export { OrphanDatasetNoMatch } from "./orphan-dataset-no-match";
 
 // Shared components
 export { YamlConfigBlock } from "./yaml-config-block";

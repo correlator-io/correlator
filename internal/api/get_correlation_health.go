@@ -62,6 +62,7 @@ func mapHealthToResponse(health *correlation.Health) CorrelationHealthResponse {
 			DatasetURN: o.DatasetURN,
 			TestCount:  o.TestCount,
 			LastSeen:   o.LastSeen,
+			Producer:   o.Producer,
 		}
 
 		if o.LikelyMatch != nil {
@@ -69,6 +70,7 @@ func mapHealthToResponse(health *correlation.Health) CorrelationHealthResponse {
 				DatasetURN:  o.LikelyMatch.DatasetURN,
 				Confidence:  o.LikelyMatch.Confidence,
 				MatchReason: o.LikelyMatch.MatchReason,
+				Producer:    o.LikelyMatch.Producer,
 			}
 		}
 

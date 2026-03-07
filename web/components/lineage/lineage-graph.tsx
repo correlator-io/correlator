@@ -11,7 +11,6 @@ import {
   Controls,
   ConnectionMode,
   MarkerType,
-  Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { VerticalDatasetNode } from "./vertical-dataset-node";

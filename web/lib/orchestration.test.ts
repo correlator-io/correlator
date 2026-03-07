@@ -4,7 +4,7 @@ import { buildOrchestrationChain } from "./orchestration";
 describe("buildOrchestrationChain", () => {
   const baseJob = {
     name: "model.jaffle_shop_demo.stg_orders",
-    namespace: "dbt://demo",
+    namespace: "dbt",
     runId: "019c628f-d07e-7000-8000-000000000007",
     producer: "dbt" as const,
     status: "RUNNING",
@@ -37,7 +37,7 @@ describe("buildOrchestrationChain", () => {
     });
     expect(result[1]).toEqual({
       name: "model.jaffle_shop_demo.stg_orders",
-      namespace: "dbt://demo",
+      namespace: "dbt",
       runId: "019c628f-d07e-7000-8000-000000000007",
       producer: "dbt",
       status: "RUNNING",
@@ -76,14 +76,14 @@ describe("buildOrchestrationChain", () => {
       orchestration: [
         {
           name: "demo_pipeline",
-          namespace: "airflow://demo",
+          namespace: "airflow",
           runId: "019c628f-d07e-7000-8000-000000000009",
           producer: "airflow",
           status: "FAIL",
         },
         {
           name: "jaffle_shop_demo.run",
-          namespace: "dbt://demo",
+          namespace: "dbt",
           runId: "019c628f-d07e-7000-8000-000000000008",
           producer: "dbt",
           status: "COMPLETE",
@@ -107,14 +107,14 @@ describe("buildOrchestrationChain", () => {
       orchestration: [
         {
           name: "demo_pipeline",
-          namespace: "airflow://demo",
+          namespace: "airflow",
           runId: "019c628f-d07e-7000-8000-000000000009",
           producer: "airflow",
           status: "FAIL",
         },
         {
           name: "jaffle_shop_demo.run",
-          namespace: "dbt://demo",
+          namespace: "dbt",
           runId: "019c628f-d07e-7000-8000-000000000008",
           producer: "dbt",
           status: "COMPLETE",
