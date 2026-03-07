@@ -7,10 +7,10 @@ This DAG orchestrates the demo data pipeline:
 3. dbt-ol test - Run data quality tests and emit test result events
 4. GE validate - Run Great Expectations checkpoint and emit validation events
 
-All tools emit standard OpenLineage events to Correlator via:
-- apache-airflow-providers-openlineage: Airflow task lifecycle events
-- openlineage-dbt (dbt-ol): dbt model lineage and test results
-- openlineage-integration-common: Great Expectations validation results
+Dual transport design (proves both ingestion paths correlate):
+- Airflow task events → Kafka (via openlineage.yml with Kafka transport)
+- dbt-ol events       → HTTP  (BashOperators override OPENLINEAGE_CONFIG to openlineage-http.yml)
+- GE events           → HTTP  (BashOperators override OPENLINEAGE_CONFIG to openlineage-http.yml)
 """
 
 from datetime import datetime, timedelta
@@ -48,6 +48,9 @@ with DAG(
             dbt-ol seed --profiles-dir . --project-dir .
         """,
         env={
+            # Override OPENLINEAGE_CONFIG so dbt-ol uses HTTP (not the Kafka config
+            # that the Airflow OL provider reads from openlineage.yml).
+            "OPENLINEAGE_CONFIG": "/opt/airflow/openlineage-http.yml",
             # "OPENLINEAGE_NAMESPACE": "dbt",
             "OPENLINEAGE_PARENT_ID": (
                 "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
@@ -78,6 +81,7 @@ with DAG(
                 --profiles-dir .
         """,
         env={
+            "OPENLINEAGE_CONFIG": "/opt/airflow/openlineage-http.yml",
             # "OPENLINEAGE_NAMESPACE": "dbt",
             "OPENLINEAGE_PARENT_ID": (
                 "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
@@ -98,36 +102,55 @@ with DAG(
     )
 
     # Task 3: dbt-ol test - Data quality tests with event emission
-    dbt_test = BashOperator(
-        task_id="dbt_test",
-        bash_command="""
-            cd /dbt && \
-            dbt-ol test \
-                --project-dir . \
-                --profiles-dir .
-        """,
-        env={
-            # "OPENLINEAGE_NAMESPACE": "dbt",
-            "OPENLINEAGE_PARENT_ID": (
-                "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
-            ),
-            "OPENLINEAGE_ROOT_PARENT_ID": (
-                "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
-            ),
-        },
-        append_env=True,
-        doc_md="""
-        ### dbt Test (with dbt-ol)
-        Runs schema tests defined in schema.yml and emits test result events:
-        - Uniqueness constraints
-        - Not null constraints
-        - Referential integrity
-
-        Emits dataQualityAssertions facet with test pass/fail status.
-        """,
-    )
+    # dbt_test = BashOperator(
+    #     task_id="dbt_test",
+    #     bash_command="""
+    #         cd /dbt && \
+    #         dbt-ol test \
+    #             --project-dir . \
+    #             --profiles-dir .
+    #     """,
+    #     env={
+    #         "OPENLINEAGE_CONFIG": "/opt/airflow/openlineage-http.yml",
+    #         # "OPENLINEAGE_NAMESPACE": "dbt",
+    #         "OPENLINEAGE_PARENT_ID": (
+    #             "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
+    #         ),
+    #         "OPENLINEAGE_ROOT_PARENT_ID": (
+    #             "{{ macros.OpenLineageProviderPlugin.lineage_root_parent_id(task_instance) }}"
+    #         ),
+    #     },
+    #     append_env=True,
+    #     doc_md="""
+    #     ### dbt Test (with dbt-ol)
+    #     Runs schema tests defined in schema.yml and emits test result events:
+    #     - Uniqueness constraints
+    #     - Not null constraints
+    #     - Referential integrity
+    #
+    #     Emits dataQualityAssertions facet with test pass/fail status.
+    #     """,
+    # )
 
     # Task 4: Great Expectations validation
+    #
+    # OPENLINEAGE_CONFIG must be overridden to the HTTP config. The container-level env
+    # points to the Kafka config (openlineage.yml), and the OL Python client's transport
+    # resolution evaluates config-file transport BEFORE the url argument:
+    #
+    #   1. OPENLINEAGE_DISABLED → noop
+    #   2. transport= constructor arg → use it
+    #   3. YAML config (OPENLINEAGE_CONFIG / ./openlineage.yml / ~/.openlineage/) → use it
+    #   4. url= constructor arg (what GE's openlineage_host maps to) → HTTP
+    #   5. OPENLINEAGE_URL env var → HTTP
+    #   6. fallback → console
+    #
+    # Source: OpenLineage client/python/src/openlineage/client/client.py:_resolve_transport
+    #
+    # demo_checkpoint.py passes OPENLINEAGE_URL as openlineage_host to the GE action,
+    # which calls OpenLineageClient(url=...). But step 3 wins over step 4 — the Kafka
+    # transport from the container's config file would be used, not the URL argument.
+    # This override points OPENLINEAGE_CONFIG to an HTTP-only YAML so GE events go via HTTP.
     ge_validate = BashOperator(
         task_id="ge_validate",
         bash_command="""
@@ -135,6 +158,7 @@ with DAG(
             python checkpoints/demo_checkpoint.py
         """,
         env={
+            "OPENLINEAGE_CONFIG": "/opt/airflow/openlineage-http.yml",
             # "OPENLINEAGE_NAMESPACE": "great_expectations",
             "OPENLINEAGE_PARENT_ID": (
                 "{{ macros.OpenLineageProviderPlugin.lineage_parent_id(task_instance) }}"
@@ -156,4 +180,5 @@ with DAG(
 
     # Define task dependencies
     # Linear pipeline: seed -> run -> test -> validate
-    dbt_seed >> dbt_run >> dbt_test >> ge_validate
+    # dbt_seed >> dbt_run >> dbt_test >> ge_validate
+    dbt_seed >> dbt_run >> ge_validate

@@ -1,11 +1,15 @@
-# OpenLineage configuration for Airflow OL provider
-# Ref: https://openlineage.io/docs/client/python#http
+# OpenLineage configuration for Airflow OL provider — Kafka transport
+# Ref: https://openlineage.io/docs/client/python#kafka
 #
-# The standard HTTP transport posts events to Correlator's OL-compatible endpoint.
-# Place this file in the Airflow home directory and set OPENLINEAGE_CONFIG env var.
+# The Airflow OL provider reads this file at scheduler startup via OPENLINEAGE_CONFIG.
+# Airflow task lifecycle events (START, RUNNING, COMPLETE, FAIL) are sent to Kafka.
+#
+# dbt-ol and GE run as BashOperators inside the same container but override
+# OPENLINEAGE_CONFIG to openlineage-http.yml, so they use HTTP instead.
 
 transport:
-  type: http
-  url: http://demo-correlator:8080
-  endpoint: api/v1/lineage
-  timeout: 30
+  type: kafka
+  config:
+    bootstrap.servers: demo-kafka:29092
+  topic: openlineage.events
+  flush: true

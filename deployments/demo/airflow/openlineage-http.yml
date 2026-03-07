@@ -1,0 +1,12 @@
+# OpenLineage configuration for dbt-ol — HTTP transport
+# Ref: https://openlineage.io/docs/client/python#http
+#
+# dbt-ol BashOperators override OPENLINEAGE_CONFIG to this file so they use
+# HTTP transport instead of the Kafka transport configured in openlineage.yml.
+# GE reads OPENLINEAGE_URL directly and ignores OPENLINEAGE_CONFIG entirely.
+
+transport:
+  type: http
+  url: http://demo-correlator:8080
+  endpoint: api/v1/lineage
+  timeout: 30
