@@ -80,6 +80,32 @@ export function ImpactSummary({
             <p className="text-sm text-muted-foreground mt-1">
               This dataset has no known consumers. The failure is isolated.
             </p>
+            {hasLineage && (
+              <button
+                onClick={onToggleExpand}
+                className={cn(
+                  "mt-3 flex items-center gap-1 text-sm font-medium",
+                  "text-primary hover:text-primary/80 transition-colors"
+                )}
+              >
+                {isExpanded ? (
+                  <>
+                    <ChevronDown className="h-4 w-4" />
+                    Hide Lineage Graph
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-4 w-4" />
+                    Show Lineage Graph
+                    {upstreamCount > 0 && (
+                      <span className="text-muted-foreground font-normal ml-1">
+                        ({upstreamCount} upstream)
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
