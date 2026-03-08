@@ -1,32 +1,32 @@
 {
-  "_description": "Sample OpenLineage events for Correlator Plugin-Ready API integration testing and documentation",
-  "_usage": "These examples demonstrate OpenLineage v1.0 compliant events with Correlator-specific extensions for incident correlation",
+  "_description": "Sample OpenLineage events for Correlator API integration testing and documentation",
+  "_usage": "These examples demonstrate OpenLineage v1.0 compliant events consumed by Correlator from standard OL integrations",
 
   "dbt_model_lifecycle": {
     "_description": "Complete dbt model execution lifecycle (START → COMPLETE) with correlation metadata",
 
     "dbt_model_start": {
       "eventTime": "2024-01-01T12:00:00Z",
-      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
         "runId": "550e8400-e29b-41d4-a716-446655440000",
         "facets": {
           "nominalTime": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json",
             "nominalStartTime": "2024-01-01T12:00:00Z"
           },
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "1.6.0",
             "name": "dbt",
             "openlineageAdapterVersion": "1.0.0"
           },
           "correlator": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
             "toolMetadata": {
               "dbt_version": "1.6.0",
@@ -44,12 +44,12 @@
         "name": "models.marts.users",
         "facets": {
           "sql": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json",
             "query": "SELECT u.user_id, u.email, u.created_at, COUNT(o.order_id) as order_count FROM {{ ref('staging_users') }} u LEFT JOIN {{ ref('staging_orders') }} o ON u.user_id = o.user_id WHERE u.created_at > CURRENT_DATE - INTERVAL '7 days' GROUP BY u.user_id, u.email, u.created_at"
           },
           "documentation": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationJobFacet.json",
             "description": "Clean user data with enriched order metrics for analytics"
           }
@@ -61,7 +61,7 @@
           "name": "prod.staging.staging_users",
           "facets": {
             "schema": {
-              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json",
               "fields": [
                 {"name": "user_id", "type": "INTEGER", "description": "Unique user identifier"},
@@ -71,7 +71,7 @@
               ]
             },
             "correlator": {
-              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
               "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
               "businessCriticality": "high",
               "dataOwner": "data-team@company.com",
@@ -85,7 +85,7 @@
           "name": "prod.staging.staging_orders",
           "facets": {
             "schema": {
-              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json",
               "fields": [
                 {"name": "order_id", "type": "INTEGER", "description": "Unique order identifier"},
@@ -103,7 +103,7 @@
           "name": "prod.marts.users",
           "facets": {
             "correlator": {
-              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
               "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
               "businessCriticality": "critical",
               "dataOwner": "analytics-team@company.com",
@@ -120,14 +120,14 @@
 
     "dbt_model_complete": {
       "eventTime": "2024-01-01T12:05:23Z",
-      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "COMPLETE",
       "run": {
         "runId": "550e8400-e29b-41d4-a716-446655440000",
         "facets": {
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "1.6.0",
             "name": "dbt",
@@ -145,7 +145,7 @@
           "name": "prod.marts.users",
           "outputFacets": {
             "outputStatistics": {
-              "_producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/OutputStatisticsOutputDatasetFacet.json",
               "rowCount": 15743,
               "size": 2456789
@@ -161,21 +161,21 @@
 
     "airflow_extract_start": {
       "eventTime": "2024-01-01T11:30:00Z",
-      "producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+      "producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
         "runId": "770e8400-e29b-41d4-a716-446655440002",
         "facets": {
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "2.7.0",
             "name": "airflow",
             "openlineageAdapterVersion": "1.0.0"
           },
           "airflow": {
-            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/AirflowRunFacet.json",
             "dag": {
               "dag_id": "user_etl",
@@ -193,7 +193,7 @@
             }
           },
           "correlator": {
-            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
             "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
             "toolMetadata": {
               "airflow_version": "2.7.0",
@@ -212,7 +212,7 @@
         "name": "user_etl.extract_users",
         "facets": {
           "sql": {
-            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json",
             "query": "INSERT INTO staging.users SELECT user_id, email, first_name, last_name, created_at, updated_at FROM source_systems.user_api_data WHERE updated_at > NOW() - INTERVAL '1 hour'"
           }
@@ -224,7 +224,7 @@
           "name": "prod.source_systems.user_api_data",
           "facets": {
             "dataSource": {
-              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DatasourceDatasetFacet.json",
               "name": "user_api",
               "uri": "https://api.company.com/users"
@@ -238,7 +238,7 @@
           "name": "prod.staging.users",
           "facets": {
             "correlator": {
-              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
               "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json",
               "businessCriticality": "high",
               "dataOwner": "data-engineering@company.com",
@@ -251,14 +251,14 @@
 
     "airflow_extract_complete": {
       "eventTime": "2024-01-01T11:35:42Z",
-      "producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+      "producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "COMPLETE",
       "run": {
         "runId": "770e8400-e29b-41d4-a716-446655440002",
         "facets": {
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+            "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "2.7.0",
             "name": "airflow"
@@ -275,7 +275,7 @@
           "name": "prod.staging.users",
           "outputFacets": {
             "outputStatistics": {
-              "_producer": "https://github.com/correlator-io/correlator-airflow/v1.0.0",
+              "_producer": "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/OutputStatisticsOutputDatasetFacet.json",
               "rowCount": 2847,
               "size": 456231
@@ -291,21 +291,21 @@
 
     "ge_validation_start": {
       "eventTime": "2024-01-01T12:06:00Z",
-      "producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {
         "runId": "660e8400-e29b-41d4-a716-446655440001",
         "facets": {
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "0.18.0",
             "name": "great_expectations",
             "openlineageAdapterVersion": "1.0.0"
           },
           "correlator": {
-            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
             "_schemaURL": "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json",
             "toolMetadata": {
               "ge_version": "0.18.0",
@@ -322,7 +322,7 @@
         "name": "user_validation_suite",
         "facets": {
           "documentation": {
-            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationJobFacet.json",
             "description": "Comprehensive data quality validation suite for user data"
           }
@@ -334,7 +334,7 @@
           "name": "prod.marts.users",
           "facets": {
             "dataQuality": {
-              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityAssertionsDatasetFacet.json",
               "assertions": [
                 {
@@ -358,7 +358,7 @@
           },
           "inputFacets": {
             "dataQualityMetrics": {
-              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json",
               "rowCount": 15743,
               "columnMetrics": {
@@ -385,20 +385,20 @@
 
     "ge_validation_fail": {
       "eventTime": "2024-01-01T12:06:15Z",
-      "producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "FAIL",
       "run": {
         "runId": "660e8400-e29b-41d4-a716-446655440001",
         "facets": {
           "processing_engine": {
-            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json",
             "version": "0.18.0",
             "name": "great_expectations"
           },
           "errorMessage": {
-            "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+            "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
             "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ErrorMessageRunFacet.json",
             "message": "Data quality validation failed: 1 of 3 expectations failed",
             "programmingLanguage": "python"
@@ -415,7 +415,7 @@
           "name": "prod.marts.users",
           "inputFacets": {
             "dataQualityMetrics": {
-              "_producer": "https://github.com/correlator-io/correlator-ge/v1.0.0",
+              "_producer": "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations",
               "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json",
               "rowCount": 15743,
               "validationResults": {
@@ -541,10 +541,10 @@
     "_description": "Example of bulk event ingestion using newline-delimited JSON",
     "_format": "application/x-ndjson",
     "_events": [
-      "{\"eventTime\":\"2024-01-01T14:00:00Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"}}",
-      "{\"eventTime\":\"2024-01-01T14:02:15Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_orders\"}]}",
-      "{\"eventTime\":\"2024-01-01T14:02:30Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"}}",
-      "{\"eventTime\":\"2024-01-01T14:04:45Z\",\"producer\":\"https://github.com/correlator-io/correlator-dbt/v1.0.0\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_products\"}]}"
+      "{\"eventTime\":\"2024-01-01T14:00:00Z\",\"producer\":\"https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"}}",
+      "{\"eventTime\":\"2024-01-01T14:02:15Z\",\"producer\":\"https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"990e8400-e29b-41d4-a716-446655440004\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_orders\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_orders\"}]}",
+      "{\"eventTime\":\"2024-01-01T14:02:30Z\",\"producer\":\"https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"START\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"}}",
+      "{\"eventTime\":\"2024-01-01T14:04:45Z\",\"producer\":\"https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt\",\"schemaURL\":\"https://openlineage.io/spec/1-0-0/OpenLineage.json\",\"eventType\":\"COMPLETE\",\"run\":{\"runId\":\"aa0e8400-e29b-41d4-a716-446655440005\"},\"job\":{\"namespace\":\"dbt\",\"name\":\"models.staging.staging_products\"},\"outputs\":[{\"namespace\":\"postgres\",\"name\":\"prod.staging.staging_products\"}]}"
     ]
   },
 
@@ -554,7 +554,7 @@
     "invalid_schema_version": {
       "_description": "Event with unsupported schema version",
       "eventTime": "2024-01-01T12:00:00Z",
-      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
       "schemaURL": "https://openlineage.io/spec/0-5-0/OpenLineage.json",
       "eventType": "START",
       "run": {
@@ -569,7 +569,7 @@
     "missing_required_fields": {
       "_description": "Event missing required fields (run.runId)",
       "eventTime": "2024-01-01T12:00:00Z",
-      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "START",
       "run": {},
@@ -582,7 +582,7 @@
     "invalid_event_type": {
       "_description": "Event with invalid eventType",
       "eventTime": "2024-01-01T12:00:00Z",
-      "producer": "https://github.com/correlator-io/correlator-dbt/v1.0.0",
+      "producer": "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt",
       "schemaURL": "https://openlineage.io/spec/1-0-0/OpenLineage.json",
       "eventType": "INVALID_TYPE",
       "run": {

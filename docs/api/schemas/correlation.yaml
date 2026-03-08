@@ -3,776 +3,455 @@ info:
   title: Correlation Response Schemas
   version: 1.0.0
   description: |
-    Correlation query response schemas for Correlator Plugin-Ready API.
+    Correlation query response schemas for Correlator API.
 
     These schemas support the 2-click navigation workflow:
     1. Incident list → Incident detail
-    2. Incident detail → Root cause analysis with lineage traversal
-
-    **Performance Targets**: <200ms for dashboard queries, <1s for complex lineage queries
+    2. Incident detail → Root cause analysis with downstream impact
 
 components:
   schemas:
-    # Incident List Response - Dashboard view
+    # GET /api/v1/incidents response
     IncidentListResponse:
       type: object
       required:
         - incidents
-        - pagination
-        - summary
+        - total
+        - limit
+        - offset
+        - orphan_count
       properties:
         incidents:
           type: array
           items:
             $ref: '#/components/schemas/IncidentSummary'
-          description: List of incident summaries for dashboard display
-        pagination:
-          $ref: '#/components/schemas/PaginationInfo'
-        summary:
-          $ref: '#/components/schemas/IncidentListSummary'
-        filters_applied:
-          type: object
-          properties:
-            status:
-              type: string
-            severity:
-              type: string
-            time_range:
-              type: string
-          description: Currently applied filters
+        total:
+          type: integer
+          description: Total number of incidents
+        limit:
+          type: integer
+          description: Page size
+        offset:
+          type: integer
+          description: Current offset
+        orphan_count:
+          type: integer
+          description: Number of orphan datasets (namespace aliasing issues)
 
-    # Incident Summary - List item for dashboard
+    # Single incident in list view
     IncidentSummary:
       type: object
       required:
-        - incident_id
-        - title
-        - status
-        - severity
-        - created_at
-        - correlation_status
+        - id
+        - test_name
+        - test_type
+        - test_status
+        - dataset_urn
+        - dataset_name
+        - producer
+        - job_name
+        - job_run_id
+        - downstream_count
+        - has_correlation_issue
+        - executed_at
       properties:
-        incident_id:
+        id:
           type: string
-          format: uuid
-          description: Unique incident identifier
-          example: "123e4567-e89b-12d3-a456-426614174000"
-        title:
-          type: string
-          description: Human-readable incident title
-          example: "Data quality test failed: not_null_user_id"
-        status:
-          type: string
-          enum: [active, investigating, resolved]
-          description: Current incident status
-        severity:
-          type: string
-          enum: [critical, high, medium, low]
-          description: Incident severity level
-        created_at:
-          type: string
-          format: date-time
-          description: When the incident was first detected
-        updated_at:
-          type: string
-          format: date-time
-          description: Last incident update time
-        correlation_status:
-          type: string
-          enum: [correlated, partial, uncorrelated, processing]
-          description: |
-            Correlation status indicates how well we linked this incident
-            to its root cause job runs and downstream impact
-        affected_datasets:
-          type: array
-          items:
-            type: string
-          description: Dataset URNs affected by this incident
-          example: ["postgres://prod.db/clean.users", "postgres://prod.db/user_metrics"]
-        run_id:
-          type: string
-          format: uuid
-          description: Run ID (UUID) of the job that caused this incident
-          example: "550e8400-e29b-41d4-a716-446655440000"
-        correlation_confidence:
-          type: number
-          format: float
-          minimum: 0
-          maximum: 100
-          description: Confidence score for correlation accuracy (0-100%)
-          example: 94.5
-        estimated_impact:
-          $ref: '#/components/schemas/ImpactEstimate'
-
-    # Incident Details Response - Detail view with full correlation
-    IncidentDetailsResponse:
-      type: object
-      required:
-        - incident
-        - correlation
-        - timeline
-      properties:
-        incident:
-          $ref: '#/components/schemas/IncidentDetails'
-        correlation:
-          $ref: '#/components/schemas/CorrelationDetails'
-        timeline:
-          type: array
-          items:
-            $ref: '#/components/schemas/TimelineEvent'
-          description: Chronological timeline of related events
-        lineage:
-          $ref: '#/components/schemas/LineageGraph'
-          description: Dataset lineage graph (if include_lineage=true)
-        related_incidents:
-          type: array
-          items:
-            $ref: '#/components/schemas/RelatedIncident'
-          description: Other incidents that might be related
-        resolution_suggestions:
-          type: array
-          items:
-            $ref: '#/components/schemas/ResolutionSuggestion'
-          description: AI-generated resolution suggestions
-
-    # Incident Details - Full incident information
-    IncidentDetails:
-      allOf:
-        - $ref: '#/components/schemas/IncidentSummary'
-        - type: object
-          properties:
-            description:
-              type: string
-              description: Detailed incident description
-            test_failure_details:
-              $ref: '#/components/schemas/TestFailureDetails'
-            affected_downstream:
-              type: array
-              items:
-                $ref: '#/components/schemas/AffectedDownstream'
-              description: Downstream datasets/jobs impacted by this incident
-            external_links:
-              type: object
-              additionalProperties:
-                type: string
-                format: uri
-              description: Links to external tools for investigation
-              example:
-                airflow_dag: "https://airflow.company.com/dags/user_etl"
-                dbt_docs: "https://docs.company.com/models/users"
-                monitoring: "https://datadog.company.com/dashboard/users"
-
-    # Test Failure Details - Specific information about test failures
-    TestFailureDetails:
-      type: object
-      properties:
         test_name:
           type: string
-          example: "not_null_user_id"
         test_type:
           type: string
-          enum: [not_null, unique, range, custom, referential_integrity, freshness]
-          example: "not_null"
+        test_status:
+          type: string
+          enum: [passed, failed]
         dataset_urn:
           type: string
-          example: "postgres://prod.db/clean.users"
-        column_name:
+        dataset_name:
           type: string
-          example: "user_id"
-        failure_message:
+        producer:
           type: string
-          example: "Found 3 null values in user_id column"
-        failure_details:
-          type: object
-          properties:
-            failed_rows:
-              type: integer
-              example: 3
-            total_rows:
-              type: integer
-              example: 10000
-            failure_rate:
-              type: number
-              format: float
-              example: 0.03
-            sample_failed_values:
-              type: array
-              items:
-                type: string
-              example: ["null", "null", "null"]
+          description: Tool that produced the test result (e.g., "dbt", "great_expectations")
+        job_name:
+          type: string
+        job_run_id:
+          type: string
+          format: uuid
+        downstream_count:
+          type: integer
+          description: Number of downstream datasets affected
+        has_correlation_issue:
+          type: boolean
+          description: True if the dataset has a namespace aliasing issue (orphan)
         executed_at:
           type: string
           format: date-time
-        job_run_context:
-          type: object
-          properties:
-            run_id:
-              type: string
-              format: uuid
-              example: "550e8400-e29b-41d4-a716-446655440000"
-            job_name:
-              type: string
-              example: "models.users"
-            started_at:
-              type: string
-              format: date-time
-            completed_at:
-              type: string
-              format: date-time
 
-    # Correlation Details - How we linked this incident to root causes
-    CorrelationDetails:
+    # GET /api/v1/incidents/{id} response
+    IncidentDetailResponse:
       type: object
       required:
-        - method
-        - confidence_score
-        - correlation_keys
+        - id
+        - test
+        - dataset
+        - upstream
+        - downstream
+        - correlation_status
       properties:
-        method:
+        id:
           type: string
-          enum: [run_id, dataset_lineage, temporal, heuristic]
-          description: Primary correlation method used
-        confidence_score:
-          type: number
-          format: float
-          minimum: 0
-          maximum: 100
-          description: Overall correlation confidence (0-100%)
-          example: 94.5
-        correlation_keys:
-          type: object
-          properties:
-            run_id:
-              type: string
-              format: uuid
-              description: Run ID (UUID) used for correlation
-              example: "550e8400-e29b-41d4-a716-446655440000"
-            dataset_urns:
-              type: array
-              items:
-                type: string
-              description: Dataset URNs involved in correlation
-            temporal_window:
-              type: string
-              description: Time window used for correlation
-              example: "5m"
-        producing_job:
-          $ref: '#/components/schemas/ProducingJobDetails'
-        correlation_path:
+        test:
+          $ref: '#/components/schemas/TestDetail'
+        dataset:
+          $ref: '#/components/schemas/DatasetDetail'
+        job:
+          $ref: '#/components/schemas/JobDetail'
+          nullable: true
+          description: "null if uncorrelated"
+        upstream:
           type: array
           items:
-            $ref: '#/components/schemas/CorrelationStep'
-          description: Step-by-step correlation reasoning
+            $ref: '#/components/schemas/UpstreamDataset'
+        downstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/DownstreamDataset'
+        correlation_status:
+          type: string
+          enum: [correlated, orphan, unknown]
 
-    # Producing Job Details - The job that caused this incident
-    ProducingJobDetails:
+    TestDetail:
       type: object
       properties:
+        name:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        executed_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+        producer:
+          type: string
+          description: Tool that produced the test result (e.g., "dbt", "great_expectations")
+
+    DatasetDetail:
+      type: object
+      properties:
+        urn:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+
+    JobDetail:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
         run_id:
           type: string
           format: uuid
-          example: "550e8400-e29b-41d4-a716-446655440000"
-        job_name:
+        producer:
           type: string
-          example: "models.users"
-        job_namespace:
+        status:
           type: string
-          example: "dbt"
+          enum: [START, RUNNING, COMPLETE, ABORT, FAIL]
         started_at:
           type: string
           format: date-time
         completed_at:
           type: string
           format: date-time
-        status:
-          type: string
-          enum: [success, failed, running, aborted]
-        tool_metadata:
-          type: object
-          additionalProperties: true
-          description: Tool-specific metadata
-          example:
-            dbt_version: "1.6.0"
-            target: "prod"
-            invocation_id: "abc123-def456"
-        external_url:
-          type: string
-          format: uri
-          description: Link to job run in external tool
-          example: "https://cloud.getdbt.com/runs/abc123-def456"
+          nullable: true
+        parent:
+          $ref: '#/components/schemas/ParentJob'
+          nullable: true
+        orchestration:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrchestrationNode'
 
-    # Correlation Step - Step in correlation reasoning
-    CorrelationStep:
+    ParentJob:
       type: object
       properties:
-        step_number:
-          type: integer
-        description:
-          type: string
-          example: "Matched test failure run_id with producing job run"
-        method:
-          type: string
-          example: "run_id_match"
-        confidence:
-          type: number
-          format: float
-          example: 98.5
-        evidence:
-          type: object
-          additionalProperties: true
-          example:
-            test_run_id: "550e8400-e29b-41d4-a716-446655440000"
-            producer_run_id: "550e8400-e29b-41d4-a716-446655440000"
-            match_type: "exact"
-
-    # Timeline Event - Events in incident timeline
-    TimelineEvent:
-      type: object
-      required:
-        - timestamp
-        - event_type
-        - description
-      properties:
-        timestamp:
-          type: string
-          format: date-time
-        event_type:
-          type: string
-          enum: [job_started, job_completed, job_failed, test_executed, test_failed, incident_created, incident_updated]
-        description:
-          type: string
-          example: "dbt model 'users' started execution"
-        source:
-          type: string
-          description: Source system/tool that generated this event
-          example: "correlator-dbt"
-        metadata:
-          type: object
-          additionalProperties: true
-          description: Additional event metadata
-
-    # Affected Downstream - Impact on downstream systems
-    AffectedDownstream:
-      type: object
-      properties:
-        type:
-          type: string
-          enum: [dataset, job, dashboard, report, api]
-        identifier:
-          type: string
-          description: Downstream resource identifier
-          example: "postgres://prod.db/user_metrics"
         name:
           type: string
-          description: Human-readable name
-          example: "User Metrics Dashboard"
-        impact_level:
+        namespace:
           type: string
-          enum: [direct, indirect, potential]
-        distance:
-          type: integer
-          description: Degrees of separation from root cause
-          example: 2
-        business_impact:
-          type: string
-          enum: [critical, high, medium, low, unknown]
-        owner:
-          type: string
-          description: Owner/contact for this downstream resource
-          example: "analytics-team@company.com"
-
-    # Related Incident - Other potentially related incidents
-    RelatedIncident:
-      type: object
-      properties:
-        incident_id:
+        run_id:
           type: string
           format: uuid
-        title:
+        producer:
           type: string
-        relationship_type:
+        status:
           type: string
-          enum: [same_root_cause, downstream_impact, temporal_correlation, pattern_match]
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    OrchestrationNode:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        run_id:
+          type: string
+          format: uuid
+        producer:
+          type: string
+        status:
+          type: string
+
+    UpstreamDataset:
+      type: object
+      properties:
+        urn:
+          type: string
+        name:
+          type: string
+        depth:
+          type: integer
+        childUrn:
+          type: string
+          description: Child dataset URN (what this feeds into)
+        producer:
+          type: string
+
+    DownstreamDataset:
+      type: object
+      properties:
+        urn:
+          type: string
+        name:
+          type: string
+        depth:
+          type: integer
+        parentUrn:
+          type: string
+          description: Parent dataset URN for tree building
+        producer:
+          type: string
+
+    # GET /api/v1/health/correlation response
+    CorrelationHealthResponse:
+      type: object
+      required:
+        - correlation_rate
+        - total_datasets
+        - produced_datasets
+        - correlated_datasets
+        - orphan_datasets
+        - suggested_patterns
+      properties:
+        correlation_rate:
+          type: number
+          format: float
+          description: Fraction of tested datasets that are correlated (0.0 to 1.0)
+        total_datasets:
+          type: integer
+        produced_datasets:
+          type: integer
+        correlated_datasets:
+          type: integer
+        orphan_datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrphanDataset'
+        suggested_patterns:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuggestedPattern'
+
+    OrphanDataset:
+      type: object
+      required:
+        - dataset_urn
+        - test_count
+        - last_seen
+        - producer
+      properties:
+        dataset_urn:
+          type: string
+        test_count:
+          type: integer
+        last_seen:
+          type: string
+          format: date-time
+        producer:
+          type: string
+          description: Dominant test producer (e.g., "great_expectations", "dbt")
+        likely_match:
+          $ref: '#/components/schemas/DatasetMatch'
+          nullable: true
+
+    DatasetMatch:
+      type: object
+      required:
+        - dataset_urn
+        - confidence
+        - match_reason
+        - producer
+      properties:
+        dataset_urn:
+          type: string
         confidence:
           type: number
           format: float
           minimum: 0
-          maximum: 100
-        created_at:
+          maximum: 1
+        match_reason:
           type: string
-          format: date-time
+          enum: [exact_table_name, fuzzy_table_name]
+        producer:
+          type: string
+          description: Producer of the matched dataset (e.g., "dbt", "airflow")
 
-    # Resolution Suggestion - AI-generated resolution suggestions
-    ResolutionSuggestion:
+    SuggestedPattern:
       type: object
       properties:
-        suggestion_id:
+        pattern:
           type: string
-        title:
+          description: Pattern describing the orphan namespace format
+          example: "postgresql://demo-postgres/marts.{table}"
+        canonical:
           type: string
-          example: "Check upstream data source for recent schema changes"
-        description:
-          type: string
-        confidence:
-          type: number
-          format: float
-        category:
-          type: string
-          enum: [data_source, schema_change, code_change, infrastructure, process]
-        actions:
-          type: array
-          items:
-            type: object
-            properties:
-              action:
-                type: string
-              url:
-                type: string
-                format: uri
-              description:
-                type: string
-
-    # Lineage Traversal Response
-    LineageTraversalResponse:
-      type: object
-      required:
-        - dataset_urn
-        - traversal_result
-      properties:
-        dataset_urn:
-          type: string
-          description: Starting dataset URN for traversal
-          example: "postgres://prod.db/clean.users"
-        direction:
-          type: string
-          enum: [upstream, downstream, both]
-        depth:
+          description: Target canonical namespace format
+          example: "postgresql://demo-postgres/demo.marts.{table}"
+        resolves_count:
           type: integer
-        traversal_result:
-          $ref: '#/components/schemas/LineageGraph'
-        stats:
-          type: object
-          properties:
-            total_datasets:
-              type: integer
-            total_jobs:
-              type: integer
-            max_depth_reached:
-              type: integer
-            traversal_time_ms:
-              type: number
-
-    # Lineage Graph - Graph representation of dataset lineage
-    LineageGraph:
-      type: object
-      properties:
-        nodes:
-          type: array
-          items:
-            $ref: '#/components/schemas/LineageNode'
-        edges:
-          type: array
-          items:
-            $ref: '#/components/schemas/LineageEdge'
-        metadata:
-          type: object
-          properties:
-            generated_at:
-              type: string
-              format: date-time
-            includes_recent_runs:
-              type: boolean
-              description: Whether graph includes recent job run information
-
-    # Lineage Node - Node in lineage graph (dataset or job)
-    LineageNode:
-      type: object
-      required:
-        - id
-        - type
-        - name
-      properties:
-        id:
-          type: string
-          description: Unique node identifier
-        type:
-          type: string
-          enum: [dataset, job]
-        name:
-          type: string
-          description: Human-readable name
-        namespace:
-          type: string
-          description: Namespace for this node
-        metadata:
-          type: object
-          properties:
-            last_updated:
-              type: string
-              format: date-time
-            owner:
-              type: string
-            tags:
-              type: array
-              items:
-                type: string
-            business_criticality:
-              type: string
-              enum: [critical, high, medium, low]
-        recent_runs:
-          type: array
-          items:
-            type: object
-            properties:
-              run_id:
-                type: string
-                format: uuid
-              status:
-                type: string
-              started_at:
-                type: string
-                format: date-time
-              completed_at:
-                type: string
-                format: date-time
-        incidents:
-          type: array
-          items:
-            type: object
-            properties:
-              incident_id:
-                type: string
-              severity:
-                type: string
-              created_at:
-                type: string
-                format: date-time
-
-    # Lineage Edge - Edge in lineage graph
-    LineageEdge:
-      type: object
-      required:
-        - source_id
-        - target_id
-        - relationship_type
-      properties:
-        source_id:
-          type: string
-          description: Source node ID
-        target_id:
-          type: string
-          description: Target node ID
-        relationship_type:
-          type: string
-          enum: [produces, consumes, transforms]
-        run_ids:
+          description: How many orphans this pattern would resolve
+        orphans_resolved:
           type: array
           items:
             type: string
-            format: uuid
-          description: Run IDs (UUIDs) of jobs that created this relationship
-        metadata:
-          type: object
-          properties:
-            last_updated:
-              type: string
-              format: date-time
-            confidence:
-              type: number
-              format: float
-              description: Confidence in this lineage relationship
-
-    # Supporting Schemas
-    PaginationInfo:
-      type: object
-      properties:
-        total_count:
-          type: integer
-          description: Total number of items available
-        page_size:
-          type: integer
-          description: Number of items per page
-        current_page:
-          type: integer
-          description: Current page number (0-based)
-        has_next:
-          type: boolean
-          description: Whether there are more pages
-        has_previous:
-          type: boolean
-          description: Whether there are previous pages
-
-    IncidentListSummary:
-      type: object
-      properties:
-        total_incidents:
-          type: integer
-        by_status:
-          type: object
-          additionalProperties:
-            type: integer
-          example:
-            active: 15
-            investigating: 3
-            resolved: 142
-        by_severity:
-          type: object
-          additionalProperties:
-            type: integer
-          example:
-            critical: 2
-            high: 8
-            medium: 6
-            low: 2
-        correlation_stats:
-          type: object
-          properties:
-            correlated:
-              type: integer
-            uncorrelated:
-              type: integer
-            correlation_rate:
-              type: number
-              format: float
-              example: 94.2
-
-    ImpactEstimate:
-      type: object
-      properties:
-        affected_datasets:
-          type: integer
-          description: Number of downstream datasets affected
-        affected_jobs:
-          type: integer
-          description: Number of downstream jobs affected
-        business_impact:
-          type: string
-          enum: [critical, high, medium, low, unknown]
-        estimated_users_affected:
-          type: integer
-          description: Estimated number of end users affected
-        estimated_revenue_impact:
-          type: number
-          format: float
-          description: Estimated revenue impact in USD
+          description: List of orphan URNs resolved by this pattern
 
   examples:
-    # Incident List Examples
-    incident_list_example:
+    incidents_list:
       summary: Incident list response
       value:
         incidents:
-          - incident_id: "123e4567-e89b-12d3-a456-426614174000"
-            title: "Data quality test failed: not_null_user_id"
-            status: "active"
-            severity: "high"
-            created_at: "2024-01-01T12:05:30Z"
-            updated_at: "2024-01-01T12:05:30Z"
-            correlation_status: "correlated"
-            affected_datasets: ["postgres://prod.db/clean.users"]
-            run_id: "550e8400-e29b-41d4-a716-446655440000"
-            correlation_confidence: 94.5
-            estimated_impact:
-              affected_datasets: 3
-              affected_jobs: 2
-              business_impact: "high"
-          - incident_id: "234e5678-e89b-12d3-a456-426614174001"
-            title: "Freshness check failed: raw_events table"
-            status: "investigating"
-            severity: "critical"
-            created_at: "2024-01-01T11:30:00Z"
-            updated_at: "2024-01-01T12:00:00Z"
-            correlation_status: "partial"
-            affected_datasets: ["s3://data-lake/events/", "postgres://prod.db/event_metrics"]
-            correlation_confidence: 67.8
-            estimated_impact:
-              affected_datasets: 8
-              affected_jobs: 5
-              business_impact: "critical"
-        pagination:
-          total_count: 18
-          page_size: 20
-          current_page: 0
-          has_next: false
-          has_previous: false
-        summary:
-          total_incidents: 18
-          by_status:
-            active: 15
-            investigating: 3
-            resolved: 0
-          by_severity:
-            critical: 1
-            high: 7
-            medium: 8
-            low: 2
-          correlation_stats:
-            correlated: 16
-            uncorrelated: 2
-            correlation_rate: 88.9
+          - id: "14"
+            test_name: "unique_customers_customer_id"
+            test_type: "dataQualityAssertion"
+            test_status: "failed"
+            dataset_urn: "postgresql://demo-postgres/demo.marts.customers"
+            dataset_name: "demo.marts.customers"
+            producer: "dbt"
+            job_name: "demo.marts.jaffle_shop_demo.customers"
+            job_run_id: "019cc7d7-23b0-76e0-905d-2299ae1e399a"
+            downstream_count: 0
+            has_correlation_issue: false
+            executed_at: "2026-03-07T10:28:32.018674Z"
+          - id: "3"
+            test_name: "unique_stg_customers_customer_id"
+            test_type: "dataQualityAssertion"
+            test_status: "failed"
+            dataset_urn: "postgresql://demo-postgres/demo.staging.stg_customers"
+            dataset_name: "demo.staging.stg_customers"
+            producer: "dbt"
+            job_name: "demo.staging.jaffle_shop_demo.stg_customers"
+            job_run_id: "019cc7d7-23af-7652-b164-2e2ec1c1273a"
+            downstream_count: 2
+            has_correlation_issue: false
+            executed_at: "2026-03-07T10:28:32.018674Z"
+        total: 4
+        limit: 20
+        offset: 0
+        orphan_count: 2
 
-    # Incident Detail Example
-    incident_detail_example:
+    incident_detail:
       summary: Incident detail response
       value:
-        incident:
-          incident_id: "123e4567-e89b-12d3-a456-426614174000"
-          title: "Data quality test failed: not_null_user_id"
-          status: "active"
-          severity: "high"
-          created_at: "2024-01-01T12:05:30Z"
-          description: "The not_null constraint on user_id column failed during dbt model execution"
-          test_failure_details:
-            test_name: "not_null_user_id"
-            test_type: "not_null"
-            dataset_urn: "postgres://prod.db/clean.users"
-            column_name: "user_id"
-            failure_message: "Found 3 null values in user_id column"
-            failure_details:
-              failed_rows: 3
-              total_rows: 10000
-              failure_rate: 0.03
-            executed_at: "2024-01-01T12:05:30Z"
-            job_run_context:
-              run_id: "550e8400-e29b-41d4-a716-446655440000"
-              job_name: "models.users"
-              started_at: "2024-01-01T12:00:00Z"
-              completed_at: "2024-01-01T12:05:00Z"
-          external_links:
-            dbt_docs: "https://docs.company.com/models/users"
-            monitoring: "https://datadog.company.com/dashboard/users"
-        correlation:
-          method: "run_id"
-          confidence_score: 94.5
-          correlation_keys:
-            run_id: "550e8400-e29b-41d4-a716-446655440000"
-            dataset_urns: ["postgres://prod.db/clean.users"]
-            temporal_window: "5m"
-          producing_job:
-            run_id: "550e8400-e29b-41d4-a716-446655440000"
-            job_name: "models.users"
-            job_namespace: "dbt"
-            started_at: "2024-01-01T12:00:00Z"
-            completed_at: "2024-01-01T12:05:00Z"
-            status: "success"
-            tool_metadata:
-              dbt_version: "1.6.0"
-              target: "prod"
-              invocation_id: "abc123-def456"
-        timeline:
-          - timestamp: "2024-01-01T12:00:00Z"
-            event_type: "job_started"
-            description: "dbt model 'users' started execution"
-            source: "correlator-dbt"
-          - timestamp: "2024-01-01T12:05:00Z"
-            event_type: "job_completed"
-            description: "dbt model 'users' completed successfully"
-            source: "correlator-dbt"
-          - timestamp: "2024-01-01T12:05:30Z"
-            event_type: "test_failed"
-            description: "Data quality test 'not_null_user_id' failed"
-            source: "correlator-dbt"
-          - timestamp: "2024-01-01T12:05:30Z"
-            event_type: "incident_created"
-            description: "Incident created for test failure"
-            source: "correlator-engine"
+        id: "3"
+        test:
+          name: "unique_stg_customers_customer_id"
+          type: "dataQualityAssertion"
+          status: "failed"
+          message: ""
+          executed_at: "2026-03-07T10:28:32.018674Z"
+          duration_ms: 0
+          producer: "dbt"
+        dataset:
+          urn: "postgresql://demo-postgres/demo.staging.stg_customers"
+          name: "demo.staging.stg_customers"
+          namespace: "postgresql://demo-postgres"
+        job:
+          name: "demo.staging.jaffle_shop_demo.stg_customers"
+          namespace: "dbt"
+          run_id: "019cc7d7-23af-7652-b164-2e2ec1c1273a"
+          producer: "dbt"
+          status: "COMPLETE"
+          started_at: "2026-03-07T10:28:10.519806Z"
+          completed_at: "2026-03-07T10:28:10.573179Z"
+          parent:
+            name: "dbt-run-jaffle_shop_demo"
+            namespace: "dbt"
+            run_id: "019cc7d7-1cca-7e52-941e-d7909b5a4455"
+            producer: "dbt"
+            status: "COMPLETE"
+            completed_at: "2026-03-07T10:28:11.312525Z"
+          orchestration:
+            - name: "dbt-run-jaffle_shop_demo"
+              namespace: "dbt"
+              run_id: "019cc7d7-1cca-7e52-941e-d7909b5a4455"
+              producer: "dbt"
+              status: "COMPLETE"
+        upstream: []
+        downstream:
+          - urn: "postgresql://demo-postgres/demo.marts.customers"
+            name: "demo.marts.customers"
+            depth: 1
+            parentUrn: "postgresql://demo-postgres/demo.staging.stg_customers"
+            producer: "dbt"
+          - urn: "postgresql://demo-postgres/demo.marts.orders"
+            name: "demo.marts.orders"
+            depth: 1
+            parentUrn: "postgresql://demo-postgres/demo.staging.stg_customers"
+            producer: "dbt"
+        correlation_status: "correlated"
+
+    correlation_health:
+      summary: Correlation health response
+      value:
+        correlation_rate: 0.6666666666666666
+        total_datasets: 6
+        produced_datasets: 4
+        correlated_datasets: 4
+        orphan_datasets:
+          - dataset_urn: "postgresql://demo-postgres/marts.customers"
+            test_count: 5
+            last_seen: "2026-03-07T10:29:40.5774Z"
+            producer: "great_expectations"
+            likely_match:
+              dataset_urn: "postgresql://demo-postgres/demo.marts.customers"
+              confidence: 1
+              match_reason: "exact_table_name"
+              producer: "dbt"
+          - dataset_urn: "postgresql://demo-postgres/marts.orders"
+            test_count: 5
+            last_seen: "2026-03-07T10:29:40.649209Z"
+            producer: "great_expectations"
+            likely_match:
+              dataset_urn: "postgresql://demo-postgres/demo.marts.orders"
+              confidence: 1
+              match_reason: "exact_table_name"
+              producer: "dbt"
+        suggested_patterns:
+          - pattern: "postgresql://demo-postgres/marts.{table}"
+            canonical: "postgresql://demo-postgres/demo.marts.{table}"
+            resolves_count: 2
+            orphans_resolved:
+              - "postgresql://demo-postgres/marts.customers"
+              - "postgresql://demo-postgres/marts.orders"
