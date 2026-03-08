@@ -137,9 +137,10 @@ type (
 	// OrphanDatasetResponse represents a dataset that requires pattern configuration.
 	// Orphan datasets have test results but no corresponding data producer output edges.
 	OrphanDatasetResponse struct {
-		DatasetURN  string                `json:"dataset_urn"`  //nolint:tagliatelle
-		TestCount   int                   `json:"test_count"`   //nolint:tagliatelle
-		LastSeen    time.Time             `json:"last_seen"`    //nolint:tagliatelle
+		DatasetURN  string                `json:"dataset_urn"` //nolint:tagliatelle
+		TestCount   int                   `json:"test_count"`  //nolint:tagliatelle
+		LastSeen    time.Time             `json:"last_seen"`   //nolint:tagliatelle
+		Producer    string                `json:"producer"`
 		LikelyMatch *DatasetMatchResponse `json:"likely_match"` //nolint:tagliatelle
 	}
 
@@ -148,6 +149,7 @@ type (
 		DatasetURN  string  `json:"dataset_urn"` //nolint:tagliatelle
 		Confidence  float64 `json:"confidence"`
 		MatchReason string  `json:"match_reason"` //nolint:tagliatelle
+		Producer    string  `json:"producer"`
 	}
 
 	// SuggestedPatternResponse represents a pattern suggestion derived from orphan→match pairs.

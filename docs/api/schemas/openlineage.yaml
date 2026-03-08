@@ -3,10 +3,10 @@ info:
   title: OpenLineage Event Schemas
   version: 1.0.0
   description: |
-    OpenLineage v1.0 compliant event schemas for Correlator Plugin-Ready API.
+    OpenLineage v1.0 compliant event schemas for Correlator API.
 
-    Based on OpenLineage specification 2.0.2 with Correlator-specific extensions
-    for incident correlation and canonical ID extraction.
+    Based on OpenLineage specification 2.0.2. Correlator consumes standard
+    OpenLineage events from dbt, Airflow, and Great Expectations integrations.
 
 components:
   schemas:
@@ -43,9 +43,9 @@ components:
           type: string
           format: uri
           description: |
-            URI identifying the producer of this metadata. For Correlator plugins,
-            this should include the plugin name and version.
-          example: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+            URI identifying the producer of this metadata. For standard OpenLineage
+            integrations, this is the integration's GitHub URL.
+          example: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
         schemaURL:
           type: string
           format: uri
@@ -141,11 +141,11 @@ components:
             $ref: '#/components/schemas/RunFacet'
           example:
             nominalTime:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
               nominalStartTime: "2024-01-01T12:00:00Z"
             processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
               version: "1.6.0"
               name: "dbt"
@@ -172,7 +172,7 @@ components:
             $ref: '#/components/schemas/JobFacet'
           example:
             sql:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
               query: "SELECT * FROM raw.users WHERE created_at > CURRENT_DATE - 7"
 
@@ -244,7 +244,7 @@ components:
           type: string
           format: uri
           description: URI identifying the producer of this facet metadata
-          example: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+          example: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
         _schemaURL:
           type: string
           format: uri
@@ -420,23 +420,23 @@ components:
       summary: dbt model run start
       value:
         eventTime: "2024-01-01T12:00:00Z"
-        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "START"
         run:
           runId: "550e8400-e29b-41d4-a716-446655440000"
           facets:
             nominalTime:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"
               nominalStartTime: "2024-01-01T12:00:00Z"
             processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
               version: "1.6.0"
               name: "dbt"
             correlator:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json"
               toolMetadata:
                 dbt_version: "1.6.0"
@@ -448,7 +448,7 @@ components:
           name: "models.users"
           facets:
             sql:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json"
               query: "SELECT * FROM {{ ref('raw_users') }} WHERE created_at > CURRENT_DATE - 7"
         inputs:
@@ -456,7 +456,7 @@ components:
             name: "prod.raw.users"
             facets:
               schema:
-                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
                 _schemaURL: "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json"
                 fields:
                   - name: "user_id"
@@ -470,7 +470,7 @@ components:
             name: "prod.clean.users"
             facets:
               correlator:
-                _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+                _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
                 _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorDatasetFacet.json"
                 businessCriticality: "critical"
                 dataOwner: "data-team@company.com"
@@ -480,14 +480,14 @@ components:
       summary: dbt model run completion
       value:
         eventTime: "2024-01-01T12:05:00Z"
-        producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+        producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "COMPLETE"
         run:
           runId: "550e8400-e29b-41d4-a716-446655440000"
           facets:
             processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-dbt/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.44.1/integration/dbt"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
               version: "1.6.0"
               name: "dbt"
@@ -503,19 +503,19 @@ components:
       summary: Airflow task start
       value:
         eventTime: "2024-01-01T12:00:00Z"
-        producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+        producer: "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0"
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "START"
         run:
           runId: "airflow:manual__2024-01-01T12:00:00"
           facets:
             processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+              _producer: "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
               version: "2.7.0"
               name: "airflow"
             correlator:
-              _producer: "https://github.com/correlator-io/correlator-airflow/v1.0.0"
+              _producer: "https://github.com/apache/airflow/tree/providers-openlineage/2.4.0"
               _schemaURL: "https://correlator.io/spec/facets/1-0-0/CorrelatorJobFacet.json"
               toolMetadata:
                 dag_id: "user_etl"
@@ -533,14 +533,14 @@ components:
       summary: Great Expectations validation complete
       value:
         eventTime: "2024-01-01T12:10:00Z"
-        producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+        producer: "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations"
         schemaURL: "https://openlineage.io/spec/1-0-0/OpenLineage.json"
         eventType: "COMPLETE"
         run:
           runId: "ge:validation-abc123"
           facets:
             processing_engine:
-              _producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+              _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations"
               _schemaURL: "https://openlineage.io/spec/facets/1-0-0/ProcessingEngineRunFacet.json"
               version: "0.18.0"
               name: "great_expectations"
@@ -552,7 +552,7 @@ components:
             name: "prod.clean.users"
             inputFacets:
               dataQuality:
-                _producer: "https://github.com/correlator-io/correlator-ge/v1.0.0"
+                _producer: "https://github.com/OpenLineage/OpenLineage/tree/1.39.0/integration/common/openlineage/provider/great_expectations"
                 _schemaURL: "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsInputDatasetFacet.json"
                 rowCount: 10000
                 columnMetrics:

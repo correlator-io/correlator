@@ -667,11 +667,11 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	// GE has test results but NO output edge (orphan)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms, producer_name
 		)
 		VALUES
-			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100),
-			('unique_customers_email', 'unique', $1, $2, 'failed', 'Duplicates', $4, 120)
+			('not_null_customers_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100, 'great_expectations'),
+			('unique_customers_email', 'unique', $1, $2, 'failed', 'Duplicates', $4, 120, 'great_expectations')
 	`, geDatasetURN, geRunID, now, now.Add(1*time.Minute))
 	require.NoError(t, err)
 
@@ -708,6 +708,10 @@ func TestDetectOrphanDatasets(t *testing.T) {
 	assert.Equal(t, dbtDatasetURN, orphan.LikelyMatch.DatasetURN, "Likely match should be dbt dataset")
 	assert.InDelta(t, 1.0, orphan.LikelyMatch.Confidence, 0.001, "Confidence should be 1.0 for exact table name match")
 	assert.Equal(t, "exact_table_name", orphan.LikelyMatch.MatchReason, "Match reason should be exact_table_name")
+
+	// Verify producer attribution
+	assert.Equal(t, "great_expectations", orphan.Producer, "Orphan producer should be GE (dominant test producer)")
+	assert.Equal(t, "dbt", orphan.LikelyMatch.Producer, "Match producer should be dbt (dataset producer)")
 }
 
 // TestDetectOrphanDatasets_NoMatch tests orphan detection when no matching producer exists.
@@ -762,9 +766,9 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 	// GE tests orders (no producer for this table)
 	_, err = testDB.Connection.ExecContext(ctx, `
 		INSERT INTO test_results (
-			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms
+			test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms, producer_name
 		)
-		VALUES ('not_null_orders_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100)
+		VALUES ('not_null_orders_id', 'not_null', $1, $2, 'failed', 'Found nulls', $3, 100, 'great_expectations')
 	`, geDatasetURN, geRunID, now)
 	require.NoError(t, err)
 
@@ -791,6 +795,7 @@ func TestDetectOrphanDatasets_NoMatch(t *testing.T) {
 	// Verify orphan with no match
 	require.Len(t, orphans, 1, "Should detect 1 orphan dataset")
 	assert.Equal(t, geDatasetURN, orphans[0].DatasetURN)
+	assert.Equal(t, "great_expectations", orphans[0].Producer, "Orphan producer should be GE")
 	assert.Nil(t, orphans[0].LikelyMatch, "Should have no likely match (different table names)")
 }
 

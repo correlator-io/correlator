@@ -360,10 +360,12 @@ paths:
                   - dataset_urn: "demo_postgres/customers"
                     test_count: 5
                     last_seen: "2026-02-10T15:00:00Z"
+                    producer: "great_expectations"
                     likely_match:
                       dataset_urn: "postgresql://demo/marts.customers"
                       confidence: 1.0
                       match_reason: "exact_table_name"
+                      producer: "dbt"
                 suggested_patterns:
                   - pattern: "demo_postgres/{name}"
                     canonical: "postgresql://demo/marts.{name}"
@@ -717,7 +719,7 @@ components:
           format: int64
         producer:
           type: string
-          description: Tool that ran this test (e.g., "correlator-ge", "correlator-dbt")
+          description: Tool that ran this test (e.g., "great_expectations", "dbt")
 
     DatasetDetail:
       type: object
@@ -890,6 +892,7 @@ components:
         - dataset_urn
         - test_count
         - last_seen
+        - producer
       properties:
         dataset_urn:
           type: string
@@ -901,6 +904,9 @@ components:
           type: string
           format: date-time
           description: Most recent test execution timestamp
+        producer:
+          type: string
+          description: Dominant test producer for this dataset (e.g., "great_expectations", "dbt")
         likely_match:
           $ref: '#/components/schemas/DatasetMatch'
           nullable: true
@@ -912,6 +918,7 @@ components:
         - dataset_urn
         - confidence
         - match_reason
+        - producer
       properties:
         dataset_urn:
           type: string
@@ -927,6 +934,9 @@ components:
           description: |
             Explanation of why this match was suggested:
             - "exact_table_name": Table names extracted from both URNs are identical
+        producer:
+          type: string
+          description: Tool that produces the matched dataset (e.g., "dbt", "airflow")
 
     SuggestedPattern:
       type: object

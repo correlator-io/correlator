@@ -95,6 +95,7 @@ export interface DatasetMatch {
   datasetUrn: string;
   confidence: number; // 0-1, where 1 = exact match
   matchReason: "exact_table_name" | "fuzzy_match" | "no_match";
+  producer: Producer;
 }
 
 /**
@@ -104,6 +105,7 @@ export interface OrphanDataset {
   datasetUrn: string;
   testCount: number;
   lastSeen: string; // ISO 8601
+  producer: Producer;
   likelyMatch: DatasetMatch | null;
 }
 

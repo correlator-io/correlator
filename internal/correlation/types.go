@@ -266,6 +266,7 @@ type (
 	//   - DatasetURN: The orphan dataset URN (e.g., "demo_postgres/customers")
 	//   - TestCount: Number of test results for this dataset
 	//   - LastSeen: Most recent test execution timestamp
+	//   - Producer: Dominant test producer for this dataset (e.g., "great_expectations")
 	//   - LikelyMatch: Candidate producer dataset match (nil if no match found)
 	//
 	// Example:
@@ -289,6 +290,7 @@ type (
 		DatasetURN  string
 		TestCount   int
 		LastSeen    time.Time
+		Producer    string // Dominant test producer (e.g., "great_expectations", "dbt")
 		LikelyMatch *DatasetMatch
 	}
 
@@ -303,6 +305,7 @@ type (
 	//   - MatchReason: Human-readable explanation of why this match was suggested
 	//     - "exact_table_name": Table names extracted from both URNs are identical
 	//     - "no_match": No matching producer dataset found
+	//   - Producer: Tool that produces the matched dataset (e.g., "dbt", "airflow")
 	//
 	// Example:
 	//
@@ -313,5 +316,6 @@ type (
 		DatasetURN  string
 		Confidence  float64
 		MatchReason string
+		Producer    string // Producer of the matched dataset (e.g., "dbt", "airflow")
 	}
 )
