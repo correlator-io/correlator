@@ -1,7 +1,10 @@
 // Package correlation provides correlation engine functionality for linking incidents to job runs.
 package correlation
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Store defines the read interface for correlation queries.
 //
@@ -194,4 +197,54 @@ type Store interface {
 	//   - Empty slice if job has no parent
 	//   - Error if query fails or context is cancelled
 	QueryOrchestrationChain(ctx context.Context, runID string, maxDepth int) ([]OrchestrationNode, error)
+}
+
+// ResolutionStore defines write operations for incident resolution lifecycle.
+//
+// Separated from the read-only Store to follow Interface Segregation:
+//   - API handlers for PATCH /incidents/{id}/status depend on ResolutionStore
+//   - Ingestion path for auto-resolve depends on ResolutionStore
+//   - List/detail API handlers depend on Store (read-only, resolution status comes via JOIN)
+//
+// Implemented by: storage.LineageStore.
+type ResolutionStore interface {
+	// GetResolution returns the current resolution state for an incident.
+	// Returns nil (no error) if no resolution row exists (incident is implicitly open).
+	GetResolution(ctx context.Context, testResultID int64) (*IncidentResolution, error)
+
+	// SetResolution creates or updates the resolution state for an incident.
+	// Validates status transitions: open→acknowledged/resolved/muted, acknowledged→resolved/muted.
+	// Terminal states (resolved, muted) cannot be transitioned away from.
+	//
+	// For auto-resolve: pass resolvedBy="auto", reason="auto_pass", and the passing testResultID.
+	// For manual actions: pass the client_id as resolvedBy.
+	SetResolution(
+		ctx context.Context,
+		testResultID int64,
+		req ResolutionRequest,
+		resolvedBy string,
+	) (*IncidentResolution, error)
+
+	// AutoResolveOnPass finds open/acknowledged incidents matching the given (testName, datasetURN)
+	// where the failing test was executed more than gracePeriod ago, and auto-resolves them.
+	//
+	// Anti-flapping: Only resolves incidents whose failure is older than gracePeriod (default 1 hour).
+	// This prevents resolution noise from intermittent test passes.
+	//
+	// Parameters:
+	//   - testName: The test name that just passed
+	//   - datasetURN: The dataset URN the test ran against
+	//   - passingTestResultID: The test_result_id of the passing test (stored as evidence)
+	//   - gracePeriod: Minimum time since failure before auto-resolve is allowed
+	//
+	// Returns:
+	//   - Number of incidents auto-resolved
+	//   - Error if query fails
+	AutoResolveIncidents(
+		ctx context.Context,
+		testName string,
+		datasetURN string,
+		passingTestResultID int64,
+		gracePeriod time.Duration,
+	) (int, error)
 }

@@ -46,6 +46,10 @@ var (
 	// Methods defined in correlation_views.go file (same package, same type).
 	_ correlation.Store = (*LineageStore)(nil)
 
+	// LineageStore implements correlation.ResolutionStore (write interface for resolution lifecycle).
+	// Methods defined in incident_resolution.go file (same package, same type).
+	_ correlation.ResolutionStore = (*LineageStore)(nil)
+
 	// ErrInvalidStateTransition is returned when attempting an invalid state transition.
 	ErrInvalidStateTransition = errors.New("invalid state transition from terminal state")
 
@@ -71,6 +75,11 @@ const (
 	stateComplete = "COMPLETE"
 	stateFail     = "FAIL"
 	stateAbort    = "ABORT"
+
+	// autoResolveGracePeriod prevents auto-resolve from triggering on intermittent test passes.
+	// A test must remain failing for at least this duration before a subsequent pass triggers auto-resolve.
+	// TODO: make configurable via .correlator.yaml when customer signal warrants it.
+	autoResolveGracePeriod = 1 * time.Hour
 )
 
 type (
@@ -349,7 +358,7 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 	// 5. Extract test results from dataQualityAssertions facets (non-blocking)
 	// This extracts test assertions from input datasets and stores them in test_results table
 	// for correlation. Errors are logged but don't fail the event storage.
-	s.extractDataQualityAssertions(ctx, tx, event)
+	passingTests := s.extractDataQualityAssertions(ctx, tx, event)
 
 	// 6. Record idempotency key (24-hour TTL)
 	if err := s.recordIdempotency(ctx, tx, idempotencyKey, event); err != nil {
@@ -366,6 +375,9 @@ func (s *LineageStore) StoreEvent(ctx context.Context, event *ingestion.RunEvent
 		slog.String("event_type", string(event.EventType)),
 		slog.Time("event_time", event.EventTime),
 	)
+
+	// 8. Auto-resolve incidents for any passing tests (non-blocking, after commit)
+	s.autoResolvePassingTests(ctx, passingTests)
 
 	// Notify that data has changed (triggers debounced view refresh).
 	// Background refresh intentionally uses its own context, not the request context.
@@ -1459,13 +1471,19 @@ func (s *LineageStore) extractDataQualityAssertions(
 	ctx context.Context,
 	tx *sql.Tx,
 	event *ingestion.RunEvent,
-) {
+) []passingTestInfo {
+	var passing []passingTestInfo
+
 	for _, input := range event.Inputs {
-		s.extractAssertionsFromFacet(ctx, tx, event, &input,
-			"dataQualityAssertions", "assertion", "dataQualityAssertion")
-		s.extractAssertionsFromFacet(ctx, tx, event, &input,
-			"greatExpectations_assertions", "expectationType", "greatExpectationsAssertion")
+		passing = append(passing,
+			s.extractAssertionsFromFacet(ctx, tx, event, &input,
+				"dataQualityAssertions", "assertion", "dataQualityAssertion")...)
+		passing = append(passing,
+			s.extractAssertionsFromFacet(ctx, tx, event, &input,
+				"greatExpectations_assertions", "expectationType", "greatExpectationsAssertion")...)
 	}
+
+	return passing
 }
 
 // extractAssertionsFromFacet extracts test results from a single assertion facet on an input dataset.
@@ -1484,12 +1502,12 @@ func (s *LineageStore) extractAssertionsFromFacet(
 	facetKey string,
 	testNameField string,
 	testType string,
-) {
+) []passingTestInfo {
 	runID := event.Run.ID
 
 	facet, ok := input.InputFacets[facetKey]
 	if !ok {
-		return
+		return nil
 	}
 
 	facetMap, ok := facet.(map[string]interface{})
@@ -1500,7 +1518,7 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			slog.String("dataset_urn", input.URN()),
 		)
 
-		return
+		return nil
 	}
 
 	assertionsRaw, ok := facetMap["assertions"]
@@ -1511,7 +1529,7 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			slog.String("dataset_urn", input.URN()),
 		)
 
-		return
+		return nil
 	}
 
 	assertions, ok := assertionsRaw.([]interface{})
@@ -1522,10 +1540,12 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			slog.String("dataset_urn", input.URN()),
 		)
 
-		return
+		return nil
 	}
 
 	producerName, producerVersion := s.resolveProducer(event.Producer, runID)
+
+	var passing []passingTestInfo
 
 	for _, assertionRaw := range assertions {
 		assertion, ok := assertionRaw.(map[string]interface{})
@@ -1584,7 +1604,7 @@ func (s *LineageStore) extractAssertionsFromFacet(
 		// add them, extraction can be re-enabled here. Consider contributing to OL integration, by adding these fields
 		// if the fields are required by a critical feature in Correlator requested by user community.
 
-		if err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
+		testResultID, err := s.storeTestResult(ctx, tx, &ingestion.TestResult{
 			TestName:        testName,
 			TestType:        testType,
 			DatasetURN:      input.URN(),
@@ -1595,15 +1615,28 @@ func (s *LineageStore) extractAssertionsFromFacet(
 			ExecutedAt:      event.EventTime,
 			ProducerName:    producerName,
 			ProducerVersion: producerVersion,
-		}); err != nil {
+		})
+		if err != nil {
 			s.logger.Warn("failed to store test result from facet",
 				slog.String("run_id", runID),
 				slog.String("facet_key", facetKey),
 				slog.String("test_name", testName),
 				slog.String("error", err.Error()),
 			)
+
+			continue
+		}
+
+		if status == ingestion.TestStatusPassed {
+			passing = append(passing, passingTestInfo{
+				testResultID: testResultID,
+				testName:     testName,
+				datasetURN:   input.URN(),
+			})
 		}
 	}
+
+	return passing
 }
 
 // storeTestResult stores a single test result within an existing transaction.
@@ -1618,15 +1651,15 @@ func (s *LineageStore) storeTestResult(
 	ctx context.Context,
 	tx *sql.Tx,
 	testResult *ingestion.TestResult,
-) error {
+) (int64, error) {
 	metadataJSON, err := marshalJSONB(testResult.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return 0, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
 	facetsJSON, err := marshalJSONB(testResult.Facets)
 	if err != nil {
-		return fmt.Errorf("failed to marshal facets: %w", err)
+		return 0, fmt.Errorf("failed to marshal facets: %w", err)
 	}
 
 	query := `
@@ -1656,9 +1689,12 @@ func (s *LineageStore) storeTestResult(
 			producer_name = EXCLUDED.producer_name,
 			producer_version = EXCLUDED.producer_version,
 			updated_at = CURRENT_TIMESTAMP
+		RETURNING id
 	`
 
-	_, err = tx.ExecContext(
+	var testResultID int64
+
+	err = tx.QueryRowContext(
 		ctx,
 		query,
 		testResult.TestName,
@@ -1673,12 +1709,12 @@ func (s *LineageStore) storeTestResult(
 		testResult.DurationMs,
 		testResult.ProducerName,
 		sql.NullString{String: testResult.ProducerVersion, Valid: testResult.ProducerVersion != ""},
-	)
+	).Scan(&testResultID)
 	if err != nil {
-		return fmt.Errorf("failed to insert test result: %w", err)
+		return 0, fmt.Errorf("failed to insert test result: %w", err)
 	}
 
-	return nil
+	return testResultID, nil
 }
 
 // marshalJSONB marshals a map to JSONB, returning NULL-safe value for database.

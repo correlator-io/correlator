@@ -111,6 +111,14 @@ type (
 		datasetURN string
 		producer   string
 	}
+
+	// passingTestInfo captures a passing test result stored during ingestion.
+	// Used to trigger auto-resolve after the transaction commits.
+	passingTestInfo struct {
+		testResultID int64
+		testName     string
+		datasetURN   string
+	}
 )
 
 // NewConnection returns a new Database Connection.

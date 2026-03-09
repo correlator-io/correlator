@@ -3,6 +3,61 @@ package correlation
 
 import "time"
 
+// ResolutionStatus constants define the valid resolution states.
+const (
+	ResolutionOpen         ResolutionStatus = "open"
+	ResolutionAcknowledged ResolutionStatus = "acknowledged"
+	ResolutionResolved     ResolutionStatus = "resolved"
+	ResolutionMuted        ResolutionStatus = "muted"
+)
+
+// validResolutionStatuses is the set of all valid resolution states.
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validResolutionStatuses = map[ResolutionStatus]bool{
+	ResolutionOpen:         true,
+	ResolutionAcknowledged: true,
+	ResolutionResolved:     true,
+	ResolutionMuted:        true,
+}
+
+// IsValidResolutionStatus checks whether the given status is a valid resolution state.
+func IsValidResolutionStatus(s ResolutionStatus) bool {
+	return validResolutionStatuses[s]
+}
+
+// validTransitions defines the allowed state transitions for incident resolution.
+// Resolved and muted are terminal states in alpha (no reopening).
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validTransitions = map[ResolutionStatus][]ResolutionStatus{
+	ResolutionOpen:         {ResolutionAcknowledged, ResolutionResolved, ResolutionMuted},
+	ResolutionAcknowledged: {ResolutionResolved, ResolutionMuted},
+}
+
+// StatusFilter constants define the valid status filter values for listing incidents.
+const (
+	StatusFilterActive   StatusFilter = "active" // open + acknowledged
+	StatusFilterResolved StatusFilter = "resolved"
+	StatusFilterMuted    StatusFilter = "muted"
+	StatusFilterAll      StatusFilter = "all"
+)
+
+// validStatusFilters is the set of all valid status filter values.
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validStatusFilters = map[StatusFilter]bool{
+	StatusFilterActive:   true,
+	StatusFilterResolved: true,
+	StatusFilterMuted:    true,
+	StatusFilterAll:      true,
+}
+
+// IsValidStatusFilter checks whether the given filter is a valid status filter.
+func IsValidStatusFilter(f StatusFilter) bool {
+	return validStatusFilters[f]
+}
+
 type (
 	// Incident represents a single row from the incident_correlation_view materialized view.
 	//
@@ -71,6 +126,12 @@ type (
 		RootParentJobStatus      string     // Root parent job status
 		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
 		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
+		// Resolution fields (joined from incident_resolutions, NULL = implicitly open)
+		ResolutionStatus ResolutionStatus // "open" if no row in incident_resolutions
+		ResolvedBy       string           // "auto" or client_id (empty if open)
+		ResolutionReason string           // "auto_pass", "manual", etc. (empty if open)
+		MuteExpiresAt    *time.Time       // Only for muted status
+		ResolutionAt     *time.Time       // When the status was last changed
 	}
 
 	// OrchestrationNode represents one level in the orchestration chain.
@@ -114,6 +175,9 @@ type (
 		RunID              *string
 		TestExecutedAfter  *time.Time
 		TestExecutedBefore *time.Time
+		// Resolution lifecycle filters
+		StatusFilter StatusFilter // "active" (default), "resolved", "muted", "all"
+		WindowDays   int          // Time window in days for historical views (0 = no window)
 	}
 
 	// Pagination specifies pagination parameters for list queries.
@@ -318,4 +382,55 @@ type (
 		MatchReason string
 		Producer    string // Producer of the matched dataset (e.g., "dbt", "airflow")
 	}
+
+	// IncidentResolution represents the resolution state of a single incident.
+	// Maps to the incident_resolutions table. An incident with no resolution row
+	// is implicitly "open".
+	IncidentResolution struct {
+		ID                     int64
+		TestResultID           int64
+		Status                 ResolutionStatus
+		ResolvedBy             string // "auto" or client_id
+		ResolutionReason       string // "auto_pass", "manual", "false_positive", "expected"
+		ResolutionNote         string
+		ResolvedByTestResultID *int64     // For auto-resolve: the passing test result
+		MuteExpiresAt          *time.Time // Only for muted status
+		CreatedAt              time.Time
+		UpdatedAt              time.Time
+	}
+
+	// ResolutionStatus represents the resolution state of an incident.
+	ResolutionStatus string
+
+	// ResolutionRequest represents a manual status change request from the API.
+	ResolutionRequest struct {
+		Status   ResolutionStatus
+		Reason   string // "manual", "false_positive", "expected"
+		Note     string
+		MuteDays int // Only for muted; default 30
+	}
+
+	// StatusFilter represents the status filter for listing incidents.
+	StatusFilter string
 )
+
+// IsTerminal returns true if the status is immutable (no further transitions allowed in alpha).
+func (s ResolutionStatus) IsTerminal() bool {
+	return s == ResolutionResolved || s == ResolutionMuted
+}
+
+// CanTransitionTo checks whether transitioning from the current status to the target is allowed.
+func (s ResolutionStatus) CanTransitionTo(target ResolutionStatus) bool {
+	allowed, ok := validTransitions[s]
+	if !ok {
+		return false
+	}
+
+	for _, a := range allowed {
+		if a == target {
+			return true
+		}
+	}
+
+	return false
+}

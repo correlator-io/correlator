@@ -279,6 +279,10 @@ func (s *LineageStore) QueryIncidents(
 	for rows.Next() {
 		var r correlation.Incident
 
+		var resStatus, resResolvedBy, resReason sql.NullString
+
+		var resMuteExpires, resUpdatedAt sql.NullTime
+
 		err := rows.Scan(
 			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 			&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
@@ -286,6 +290,7 @@ func (s *LineageStore) QueryIncidents(
 			&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
 			&r.JobStartedAt, &r.JobCompletedAt,
 			&r.JobProducerName,
+			&resStatus, &resResolvedBy, &resReason, &resMuteExpires, &resUpdatedAt,
 			&total,
 		)
 		if err != nil {
@@ -293,6 +298,23 @@ func (s *LineageStore) QueryIncidents(
 				slog.Any("error", err))
 
 			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		r.ResolutionStatus = correlation.ResolutionOpen
+		if resStatus.Valid {
+			r.ResolutionStatus = correlation.ResolutionStatus(resStatus.String)
+		}
+
+		r.ResolvedBy = resResolvedBy.String
+
+		r.ResolutionReason = resReason.String
+
+		if resMuteExpires.Valid {
+			r.MuteExpiresAt = &resMuteExpires.Time
+		}
+
+		if resUpdatedAt.Valid {
+			r.ResolutionAt = &resUpdatedAt.Time
 		}
 
 		results = append(results, r)
@@ -333,17 +355,22 @@ func buildIncidentCorrelationQuery(
 	filter *correlation.IncidentFilter,
 	pagination *correlation.Pagination,
 ) (string, []interface{}) {
-	// Use COUNT(*) OVER() to get total count in the same query
 	baseQuery := `
 		SELECT
-			test_result_id, test_name, test_type, test_status, test_message,
-			test_executed_at, test_duration_ms, test_producer_name,
-			dataset_urn, dataset_name, dataset_namespace,
-			job_run_id, job_name, job_namespace, job_status, job_event_type,
-			job_started_at, job_completed_at,
-			job_producer_name,
+			icv.test_result_id, icv.test_name, icv.test_type, icv.test_status, icv.test_message,
+			icv.test_executed_at, icv.test_duration_ms, icv.test_producer_name,
+			icv.dataset_urn, icv.dataset_name, icv.dataset_namespace,
+			icv.job_run_id, icv.job_name, icv.job_namespace, icv.job_status, icv.job_event_type,
+			icv.job_started_at, icv.job_completed_at,
+			icv.job_producer_name,
+			ir.status AS resolution_status,
+			ir.resolved_by,
+			ir.resolution_reason,
+			ir.mute_expires_at,
+			ir.updated_at AS resolution_updated_at,
 			COUNT(*) OVER() AS total_count
-		FROM incident_correlation_view
+		FROM incident_correlation_view icv
+		LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id
 	`
 
 	conditions, args, paramIndex := buildFilterConditions(filter)
@@ -352,9 +379,8 @@ func buildIncidentCorrelationQuery(
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	baseQuery += " ORDER BY test_executed_at DESC"
+	baseQuery += " ORDER BY icv.test_executed_at DESC"
 
-	// Add pagination (LIMIT/OFFSET)
 	if pagination != nil {
 		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIndex, paramIndex+1)
 
@@ -378,39 +404,78 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 	paramIndex := 1
 
 	if filter.JobStatus != nil {
-		conditions = append(conditions, fmt.Sprintf("job_status = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_status = $%d", paramIndex))
 		args = append(args, *filter.JobStatus)
 		paramIndex++
 	}
 
 	if filter.JobProducerName != nil {
-		conditions = append(conditions, fmt.Sprintf("job_producer_name = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_producer_name = $%d", paramIndex))
 		args = append(args, *filter.JobProducerName)
 		paramIndex++
 	}
 
 	if filter.DatasetURN != nil {
-		conditions = append(conditions, fmt.Sprintf("dataset_urn = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.dataset_urn = $%d", paramIndex))
 		args = append(args, *filter.DatasetURN)
 		paramIndex++
 	}
 
 	if filter.RunID != nil {
-		conditions = append(conditions, fmt.Sprintf("job_run_id = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_run_id = $%d", paramIndex))
 		args = append(args, *filter.RunID)
 		paramIndex++
 	}
 
 	if filter.TestExecutedAfter != nil {
-		conditions = append(conditions, fmt.Sprintf("test_executed_at > $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.test_executed_at > $%d", paramIndex))
 		args = append(args, *filter.TestExecutedAfter)
 		paramIndex++
 	}
 
 	if filter.TestExecutedBefore != nil {
-		conditions = append(conditions, fmt.Sprintf("test_executed_at < $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.test_executed_at < $%d", paramIndex))
 		args = append(args, *filter.TestExecutedBefore)
 		paramIndex++
+	}
+
+	// Resolution status filtering
+	switch filter.StatusFilter {
+	case correlation.StatusFilterActive, "":
+		// Active = open + acknowledged. No resolution row = implicitly open.
+		conditions = append(
+			conditions, "(ir.status IS NULL OR ir.status IN ('open', 'acknowledged'))",
+		)
+	case correlation.StatusFilterResolved:
+		conditions = append(conditions, "ir.status = 'resolved'")
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf("ir.updated_at >= NOW() - ($%d || ' days')::interval", paramIndex),
+			)
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
+	case correlation.StatusFilterMuted:
+		conditions = append(conditions, "ir.status = 'muted'")
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf("ir.updated_at >= NOW() - ($%d || ' days')::interval", paramIndex),
+			)
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
+	case correlation.StatusFilterAll:
+		// No resolution status filter — show everything.
+		// Apply window to resolved/muted only (active incidents always visible).
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf(
+					"(ir.status IS NULL OR ir.status IN ('open', 'acknowledged') OR "+
+						"ir.updated_at >= NOW() - ($%d || ' days')::interval)",
+					paramIndex))
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
 	}
 
 	return conditions, args, paramIndex
@@ -428,23 +493,31 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 // Returns:
 //   - Pointer to Incident (nil if not found, no error)
 //   - Error if query fails or context is cancelled
+//
+//nolint:funlen // Long due to scanning 36 columns from the correlation view + resolution JOIN
 func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64) (*correlation.Incident, error) {
 	start := time.Now()
 
 	query := `
 		SELECT
-			test_result_id, test_name, test_type, test_status, test_message,
-			test_executed_at, test_duration_ms, test_producer_name,
-			dataset_urn, dataset_name, dataset_namespace,
-			job_run_id, job_name, job_namespace, job_status, job_event_type,
-			job_started_at, job_completed_at,
-			job_producer_name,
-			parent_run_id, parent_job_name, parent_job_namespace,
-			parent_job_status, parent_job_completed_at, parent_producer_name,
-			root_parent_run_id, root_parent_job_name, root_parent_job_namespace,
-			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
-		FROM incident_correlation_view
-		WHERE test_result_id = $1
+			icv.test_result_id, icv.test_name, icv.test_type, icv.test_status, icv.test_message,
+			icv.test_executed_at, icv.test_duration_ms, icv.test_producer_name,
+			icv.dataset_urn, icv.dataset_name, icv.dataset_namespace,
+			icv.job_run_id, icv.job_name, icv.job_namespace, icv.job_status, icv.job_event_type,
+			icv.job_started_at, icv.job_completed_at,
+			icv.job_producer_name,
+			icv.parent_run_id, icv.parent_job_name, icv.parent_job_namespace,
+			icv.parent_job_status, icv.parent_job_completed_at, icv.parent_producer_name,
+			icv.root_parent_run_id, icv.root_parent_job_name, icv.root_parent_job_namespace,
+			icv.root_parent_job_status, icv.root_parent_job_completed_at, icv.root_parent_producer_name,
+			ir.status AS resolution_status,
+			ir.resolved_by,
+			ir.resolution_reason,
+			ir.mute_expires_at,
+			ir.updated_at AS resolution_updated_at
+		FROM incident_correlation_view icv
+		LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id
+		WHERE icv.test_result_id = $1
 		LIMIT 1
 	`
 
@@ -460,6 +533,10 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	var rootParentJobStatus, rootParentProducerName sql.NullString
 
+	var resStatus, resResolvedBy, resReason sql.NullString
+
+	var resMuteExpires, resUpdatedAt sql.NullTime
+
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
@@ -471,6 +548,7 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
 		&rootParentRunID, &rootParentJobName, &rootParentJobNamespace,
 		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
+		&resStatus, &resResolvedBy, &resReason, &resMuteExpires, &resUpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -508,6 +586,23 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	if rootParentJobCompletedAt.Valid {
 		r.RootParentJobCompletedAt = &rootParentJobCompletedAt.Time
+	}
+
+	r.ResolutionStatus = correlation.ResolutionOpen
+	if resStatus.Valid {
+		r.ResolutionStatus = correlation.ResolutionStatus(resStatus.String)
+	}
+
+	r.ResolvedBy = resResolvedBy.String
+
+	r.ResolutionReason = resReason.String
+
+	if resMuteExpires.Valid {
+		r.MuteExpiresAt = &resMuteExpires.Time
+	}
+
+	if resUpdatedAt.Valid {
+		r.ResolutionAt = &resUpdatedAt.Time
 	}
 
 	s.logger.Info("Queried incident by ID from view",
