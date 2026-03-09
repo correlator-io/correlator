@@ -3,6 +3,27 @@
 export type TestStatus = "failed" | "passed" | "warning" | "unknown";
 export type Producer = "dbt" | "airflow" | "great_expectations" | "unknown";
 export type CorrelationStatus = "correlated" | "orphan" | "unknown";
+export type ResolutionStatus = "open" | "acknowledged" | "resolved" | "muted";
+
+export interface RetryContext {
+  totalAttempts: number;
+  currentAttempt: number;
+  allFailed: boolean;
+  rootRunId: string;
+}
+
+export interface RetryAttempt {
+  incidentId: string;
+  attempt: number;
+  status: TestStatus;
+  executedAt: string;
+  jobRunId: string;
+  resolutionStatus: ResolutionStatus;
+}
+
+export interface RetryContextDetail extends RetryContext {
+  otherAttempts: RetryAttempt[];
+}
 
 export interface Incident {
   id: string;
@@ -17,6 +38,10 @@ export interface Incident {
   downstreamCount: number;
   hasCorrelationIssue: boolean;
   executedAt: string; // ISO 8601
+  resolutionStatus: ResolutionStatus;
+  retryContext: RetryContext | null;
+  resolvedBy?: string; // "auto" or client_id — distinguishes auto vs manual on list
+  muteExpiresAt?: string; // ISO 8601, only for muted incidents
 }
 
 export interface IncidentDetail {
@@ -49,6 +74,12 @@ export interface IncidentDetail {
   upstream: UpstreamDataset[];
   downstream: DownstreamDataset[];
   correlationStatus: CorrelationStatus;
+  resolutionStatus: ResolutionStatus;
+  resolvedBy?: string; // "auto" or client_id
+  resolutionReason?: string; // "auto_pass", "manual", "false_positive", "expected"
+  resolvedAt?: string | null;
+  muteExpiresAt?: string | null; // ISO 8601, only for muted
+  retryContext: RetryContextDetail | null;
 }
 
 export interface ParentJob {

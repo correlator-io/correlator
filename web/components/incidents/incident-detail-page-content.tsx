@@ -1,40 +1,31 @@
 "use client";
 
-import { useIncidentDetail } from "@/hooks";
 import { IncidentDetail } from "./incident-detail";
 import { IncidentDetailSkeleton } from "./incident-detail-skeleton";
 import { IncidentError } from "./incident-error";
-import { ApiError } from "@/lib/api";
+import {
+  MOCK_INCIDENT_DETAIL,
+  MOCK_ACKNOWLEDGED_DETAIL,
+  MOCK_RESOLVED_DETAIL,
+  MOCK_MANUALLY_RESOLVED_DETAIL,
+  MOCK_MUTED_DETAIL,
+} from "@/lib/mock-data";
+import type { IncidentDetail as IncidentDetailType } from "@/lib/types";
+
+const MOCK_DETAILS: Record<string, IncidentDetailType> = {
+  "32": MOCK_INCIDENT_DETAIL,
+  "28": MOCK_ACKNOWLEDGED_DETAIL,
+  "18": MOCK_RESOLVED_DETAIL,
+  "12": MOCK_MANUALLY_RESOLVED_DETAIL,
+  "9": MOCK_MUTED_DETAIL,
+};
 
 interface IncidentDetailPageContentProps {
   id: string;
 }
 
 export function IncidentDetailPageContent({ id }: IncidentDetailPageContentProps) {
-  const { data, isLoading, error, refetch } = useIncidentDetail(id);
-
-  if (isLoading) {
-    return <IncidentDetailSkeleton />;
-  }
-
-  if (error) {
-    // Handle 404 specifically
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <IncidentError
-          message="Incident not found. It may have been resolved or the ID is invalid."
-          onRetry={() => refetch()}
-        />
-      );
-    }
-
-    return (
-      <IncidentError
-        message={error instanceof Error ? error.message : "Unknown error"}
-        onRetry={() => refetch()}
-      />
-    );
-  }
+  const data = MOCK_DETAILS[id] ?? { ...MOCK_INCIDENT_DETAIL, id };
 
   if (!data) {
     return <IncidentDetailSkeleton />;

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, GitBranch } from "lucide-react";
+import { AlertTriangle, ArrowRight, GitBranch, RotateCcw } from "lucide-react";
 import { StatusDot } from "./status-badge";
+import { ResolutionBadge } from "./resolution-badge";
+import { ResolutionActions } from "./resolution-actions";
 import { ProducerIcon } from "@/components/icons/producer-icon";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -12,14 +14,19 @@ import {
   formatAbsoluteTime,
   extractDatasetName,
 } from "@/lib/utils";
-import type { Incident } from "@/lib/types";
+import type { Incident, ResolutionStatus } from "@/lib/types";
 
 interface IncidentCardProps {
   incident: Incident;
   className?: string;
+  onStatusChange?: (
+    id: string,
+    status: ResolutionStatus,
+    options?: { reason?: string; muteDays?: number }
+  ) => void;
 }
 
-export function IncidentCard({ incident, className }: IncidentCardProps) {
+export function IncidentCard({ incident, className, onStatusChange }: IncidentCardProps) {
   const {
     id,
     testName,
@@ -31,9 +38,14 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
     downstreamCount,
     hasCorrelationIssue,
     executedAt,
+    resolutionStatus,
+    retryContext,
+    resolvedBy,
+    muteExpiresAt,
   } = incident;
 
   const datasetName = extractDatasetName(datasetUrn);
+  const isResolved = resolutionStatus === "resolved" || resolutionStatus === "muted";
 
   return (
     <TooltipProvider>
@@ -41,10 +53,11 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
         <Card
           className={cn(
             "transition-colors hover:bg-muted/50 cursor-pointer",
+            isResolved && "opacity-60",
             className
           )}
         >
-          {/* Header: INC-{id} · Human-readable title */}
+          {/* Header: INC-{id} · Human-readable title + resolution badge + actions */}
           <CardHeader className="pb-1 pt-4 px-4">
             <div className="flex items-center gap-2">
               <StatusDot status={testStatus} className="h-2.5 w-2.5 flex-shrink-0" />
@@ -53,6 +66,56 @@ export function IncidentCard({ incident, className }: IncidentCardProps) {
                 <span className="mx-1.5 text-muted-foreground/50">·</span>
                 <span className="group-hover:text-primary">{testName}</span>
               </CardTitle>
+
+              {/* Resolution badge — visible on all states except open */}
+              {resolutionStatus !== "open" && (
+                <ResolutionBadge
+                  status={resolutionStatus}
+                  resolvedBy={resolvedBy}
+                  muteExpiresAt={muteExpiresAt}
+                  className="flex-shrink-0"
+                />
+              )}
+
+              {/* Retry badge — compact indicator when retries exist */}
+              {retryContext && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs font-medium flex-shrink-0",
+                        retryContext.allFailed
+                          ? "border-status-failed/30 text-status-failed bg-status-failed/10"
+                          : resolutionStatus === "resolved"
+                            ? "border-status-passed/30 text-status-passed bg-status-passed/10"
+                            : "border-status-warning/30 text-status-warning bg-status-warning/10"
+                      )}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      {retryContext.totalAttempts}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>
+                      Attempt {retryContext.currentAttempt} of{" "}
+                      {retryContext.totalAttempts}
+                      {retryContext.allFailed
+                        ? " — all attempts failed"
+                        : " — passed on retry"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {/* Action buttons — only for active incidents */}
+              {onStatusChange && (
+                <ResolutionActions
+                  incidentId={id}
+                  currentStatus={resolutionStatus}
+                  onStatusChange={onStatusChange}
+                />
+              )}
+
               <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
             </div>
           </CardHeader>
