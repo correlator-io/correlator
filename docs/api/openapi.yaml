@@ -32,6 +32,8 @@ tags:
     description: OpenLineage event ingestion endpoint
   - name: Correlation Queries
     description: Incident list and detail endpoints for UI
+  - name: Incident Resolution
+    description: Incident status management (acknowledge, resolve, mute)
   - name: Correlation Health
     description: Correlation system health and orphan dataset detection
 
@@ -241,13 +243,41 @@ paths:
     get:
       summary: List incidents
       description: |
-        Retrieve paginated list of incidents. Supports filtering by time range.
+        Retrieve paginated list of incidents with optional filtering by status, time range,
+        and time window.
 
         The view only returns failed/error test results that have lineage correlation.
+
+        **Retry Deduplication:** When a test runs multiple times under the same orchestrator
+        run (e.g., Airflow retries), only the latest attempt is returned. The `retry_context`
+        field provides metadata about the retry group.
+
+        **Status Filtering:**
+        - `active` (default): Open + acknowledged incidents
+        - `resolved`: Resolved incidents (within `window` days)
+        - `muted`: Muted incidents (within `window` days)
+        - `all`: All statuses (active always shown; resolved/muted within `window` days)
       operationId: listIncidents
       tags:
         - Correlation Queries
       parameters:
+        - name: status
+          in: query
+          description: Filter by resolution status
+          schema:
+            type: string
+            enum: [active, resolved, muted, all]
+            default: active
+        - name: window
+          in: query
+          description: |
+            Time window in days for historical views (resolved/muted). Defaults to 7 for
+            non-active filters. Ignored when status=active.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 7
         - name: since
           in: query
           description: Filter incidents after this timestamp (ISO8601)
@@ -289,12 +319,15 @@ paths:
       summary: Get incident details
       description: |
         Retrieve detailed incident information including test details, dataset info,
-        producing job, and downstream impact.
+        producing job, upstream/downstream lineage, resolution status, and retry context.
 
         The `correlation_status` field indicates:
         - `correlated`: Fully correlated with a data-producing job
         - `orphan`: Namespace aliasing issue (needs configuration)
         - `unknown`: Correlation status cannot be determined
+
+        The `retry_context` field (if present) includes `other_attempts` — an array of
+        sibling test executions under the same orchestrator run.
       operationId: getIncidentDetails
       tags:
         - Correlation Queries
@@ -308,7 +341,7 @@ paths:
           example: "123"
       responses:
         '200':
-          description: Incident details with downstream impact
+          description: Incident details with lineage and resolution info
           content:
             application/json:
               schema:
@@ -319,6 +352,107 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/status:
+    patch:
+      summary: Update incident resolution status
+      description: |
+        Transition an incident to a new resolution status.
+
+        **Valid transitions:**
+        - `open` → `acknowledged`, `resolved`, `muted`
+        - `acknowledged` → `resolved`, `muted`
+        - `resolved` and `muted` are terminal (no further transitions in alpha)
+
+        **Status-specific rules:**
+        - `acknowledged`: No additional fields required
+        - `resolved`: `reason` optional (defaults to `"manual"`)
+        - `muted`: `reason` required (e.g., `"false_positive"`, `"expected"`),
+          `mute_days` optional (defaults to 30, max 365)
+
+        Returns `409 Conflict` if the transition is not allowed from the current state.
+      operationId: updateIncidentStatus
+      tags:
+        - Incident Resolution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Test result ID (numeric)
+          schema:
+            type: string
+          example: "123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+            examples:
+              acknowledge:
+                summary: Acknowledge an incident
+                value:
+                  status: acknowledged
+              resolve:
+                summary: Resolve an incident
+                value:
+                  status: resolved
+                  reason: manual
+                  note: "Fixed upstream data source"
+              mute:
+                summary: Mute an incident
+                value:
+                  status: muted
+                  reason: false_positive
+                  mute_days: 7
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/counts:
+    get:
+      summary: Get incident counts by status
+      description: |
+        Returns aggregate counts of incidents grouped by resolution status.
+
+        Active incidents (open + acknowledged) are always counted regardless of time window.
+        Resolved and muted counts are scoped to the last 30 days.
+      operationId: getIncidentCounts
+      tags:
+        - Incident Resolution
+      responses:
+        '200':
+          description: Incident counts by status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentCountsResponse'
+              example:
+                active: 12
+                resolved: 45
+                muted: 3
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -613,6 +747,7 @@ components:
         - downstream_count
         - has_correlation_issue
         - executed_at
+        - resolution_status
       properties:
         id:
           type: string
@@ -652,6 +787,29 @@ components:
           type: string
           format: date-time
           description: Test execution timestamp
+        resolution_status:
+          type: string
+          enum: [open, acknowledged, resolved, muted]
+          description: Current resolution status (open if no explicit resolution)
+        resolved_by:
+          type: string
+          description: Who resolved the incident ("auto" or client ID). Omitted if open.
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the resolution status was last changed
+        mute_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Mute expiry timestamp (only for muted status)
+        retry_context:
+          $ref: '#/components/schemas/RunRetryContextSummary'
+          nullable: true
+          description: |
+            Retry metadata when the test ran multiple times under the same
+            orchestrator run. Null when no retries exist (single attempt).
 
     IncidentDetailResponse:
       type: object
@@ -662,6 +820,7 @@ components:
         - upstream
         - downstream
         - correlation_status
+        - resolution_status
       properties:
         id:
           type: string
@@ -691,6 +850,31 @@ components:
             - correlated: Fully correlated with data-producing job
             - orphan: Namespace aliasing issue
             - unknown: Cannot determine correlation
+        resolution_status:
+          type: string
+          enum: [open, acknowledged, resolved, muted]
+          description: Current resolution status
+        resolved_by:
+          type: string
+          description: Who resolved ("auto" or client ID). Omitted if open.
+        resolution_reason:
+          type: string
+          description: Resolution reason (e.g., "manual", "auto_pass", "false_positive"). Omitted if open.
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the resolution status was last changed
+        mute_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Mute expiry timestamp (only for muted status)
+        retry_context:
+          $ref: '#/components/schemas/RunRetryContextDetail'
+          nullable: true
+          description: |
+            Full retry metadata including other attempts. Null when no retries exist.
 
     TestDetail:
       type: object
@@ -848,6 +1032,168 @@ components:
         producer:
           type: string
           description: Tool that produced this upstream dataset (e.g., "dbt", "airflow")
+
+    # Incident Resolution Schemas
+    UpdateStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [acknowledged, resolved, muted]
+          description: Target resolution status
+        reason:
+          type: string
+          description: |
+            Resolution reason. Required for `muted` (e.g., "false_positive", "expected").
+            Optional for `resolved` (defaults to "manual").
+        note:
+          type: string
+          description: Free-text note about the resolution
+        mute_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 30
+          description: Mute duration in days (only for muted status)
+
+    UpdateStatusResponse:
+      type: object
+      required:
+        - id
+        - resolution_status
+        - resolved_by
+        - resolved_at
+      properties:
+        id:
+          type: string
+          description: Test result ID
+        resolution_status:
+          type: string
+          enum: [acknowledged, resolved, muted]
+          description: New resolution status
+        resolved_by:
+          type: string
+          description: Who made the change (client ID from API key)
+        resolved_at:
+          type: string
+          format: date-time
+          description: Timestamp of the status change
+        resolution_reason:
+          type: string
+          nullable: true
+          description: Resolution reason (null for acknowledged)
+        mute_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Mute expiry timestamp (only for muted status)
+
+    IncidentCountsResponse:
+      type: object
+      required:
+        - active
+        - resolved
+        - muted
+      properties:
+        active:
+          type: integer
+          description: Count of open + acknowledged incidents
+        resolved:
+          type: integer
+          description: Count of resolved incidents (within 30-day window)
+        muted:
+          type: integer
+          description: Count of muted incidents (within 30-day window)
+
+    # Run Retry Schemas
+    RunRetryContextSummary:
+      type: object
+      description: Lightweight retry context for list responses
+      required:
+        - total_attempts
+        - current_attempt
+        - all_failed
+        - root_run_id
+      properties:
+        total_attempts:
+          type: integer
+          description: Total number of attempts in the retry group
+          example: 3
+        current_attempt:
+          type: integer
+          description: Ordinal position of this attempt (1-based)
+          example: 3
+        all_failed:
+          type: boolean
+          description: True if every attempt in the group failed
+        root_run_id:
+          type: string
+          format: uuid
+          description: Root orchestrator run ID grouping the retries
+
+    RunRetryContextDetail:
+      type: object
+      description: Full retry context for detail responses including sibling attempts
+      required:
+        - total_attempts
+        - current_attempt
+        - all_failed
+        - root_run_id
+        - other_attempts
+      properties:
+        total_attempts:
+          type: integer
+          description: Total number of attempts in the retry group
+        current_attempt:
+          type: integer
+          description: Ordinal position of this attempt (1-based)
+        all_failed:
+          type: boolean
+          description: True if every attempt in the group failed
+        root_run_id:
+          type: string
+          format: uuid
+          description: Root orchestrator run ID grouping the retries
+        other_attempts:
+          type: array
+          description: Sibling attempts (excludes current incident)
+          items:
+            $ref: '#/components/schemas/RunRetryAttempt'
+
+    RunRetryAttempt:
+      type: object
+      description: A single sibling attempt in a run retry group
+      required:
+        - incident_id
+        - attempt
+        - test_status
+        - executed_at
+        - job_run_id
+        - resolution_status
+      properties:
+        incident_id:
+          type: string
+          description: Test result ID of the sibling attempt
+        attempt:
+          type: integer
+          description: Ordinal position of this attempt (1-based)
+        test_status:
+          type: string
+          description: Test status (failed, error, passed)
+        executed_at:
+          type: string
+          format: date-time
+          description: When this attempt was executed
+        job_run_id:
+          type: string
+          format: uuid
+          description: Job run ID for this attempt
+        resolution_status:
+          type: string
+          enum: [open, acknowledged, resolved, muted]
+          description: Resolution status of this attempt
 
     # Correlation Health Schemas
     CorrelationHealthResponse:
@@ -1025,6 +1371,30 @@ components:
             title: "Not Found"
             status: 404
             detail: "Incident not found"
+
+    Conflict:
+      description: State transition not allowed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://getcorrelator.io/problems/409"
+            title: "Conflict"
+            status: 409
+            detail: "cannot transition from resolved to acknowledged: resolved is a terminal state"
+
+    UnprocessableEntity:
+      description: Validation error in request body
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            type: "https://getcorrelator.io/problems/422"
+            title: "Unprocessable Entity"
+            status: 422
+            detail: "status must be one of: acknowledged, resolved, muted"
 
     PayloadTooLarge:
       description: Request body exceeds 1 MB limit

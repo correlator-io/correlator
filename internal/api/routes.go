@@ -59,8 +59,14 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Correlation endpoints (UI)
 	if s.correlationStore != nil {
 		mux.HandleFunc("GET /api/v1/incidents", s.handleListIncidents)
+		mux.HandleFunc("GET /api/v1/incidents/counts", s.handleGetIncidentCounts)
 		mux.HandleFunc("GET /api/v1/incidents/{id}", s.handleGetIncidentDetails)
 		mux.HandleFunc("GET /api/v1/health/correlation", s.handleGetCorrelationHealth)
+	}
+
+	// Resolution endpoints (write operations)
+	if s.resolutionStore != nil {
+		mux.HandleFunc("PATCH /api/v1/incidents/{id}/status", s.handleUpdateIncidentStatus)
 	}
 }
 

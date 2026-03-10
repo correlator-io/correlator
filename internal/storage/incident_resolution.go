@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/correlator-io/correlator/internal/correlation"
+	"github.com/lib/pq"
 )
 
 // Sentinel errors for resolution store operations.
@@ -66,33 +67,29 @@ func (s *LineageStore) GetResolution(ctx context.Context, testResultID int64) (*
 }
 
 // SetResolution creates or updates the resolution state for an incident.
-// Validates status transitions before applying the change.
+// Transition validation is pushed into the SQL WHERE clause to eliminate
+// the TOCTOU race between reading current status and writing the update.
+// If the WHERE clause matches zero rows, the status was concurrently changed.
 func (s *LineageStore) SetResolution(
 	ctx context.Context,
 	testResultID int64,
 	req correlation.ResolutionRequest,
 	resolvedBy string,
 ) (*correlation.IncidentResolution, error) {
-	existing, err := s.GetResolution(ctx, testResultID)
-	if err != nil {
-		return nil, err
-	}
-
-	currentStatus := correlation.ResolutionOpen
-	if existing != nil {
-		currentStatus = existing.Status
-	}
-
-	if !currentStatus.CanTransitionTo(req.Status) {
-		return nil, fmt.Errorf("%w: %s → %s", ErrInvalidResolutionTransition, currentStatus, req.Status)
-	}
-
 	var muteExpiresAt *time.Time
 	if req.Status == correlation.ResolutionMuted && req.MuteDays > 0 {
 		t := time.Now().Add(time.Duration(req.MuteDays) * 24 * time.Hour)
 		muteExpiresAt = &t
 	}
 
+	allowedSources := allowedSourceStatuses(req.Status)
+	if len(allowedSources) == 0 {
+		return nil, fmt.Errorf("%w: no valid source state for target %s", ErrInvalidResolutionTransition, req.Status)
+	}
+
+	// The INSERT handles the implicit-open case (no row exists).
+	// The ON CONFLICT UPDATE only fires when the current status is a valid source,
+	// preventing concurrent transitions from overwriting each other.
 	upsert := `
 		INSERT INTO incident_resolutions (
 		    test_result_id, status, resolved_by, resolution_reason, resolution_note, mute_expires_at)
@@ -102,7 +99,9 @@ func (s *LineageStore) SetResolution(
 			resolved_by = EXCLUDED.resolved_by,
 			resolution_reason = EXCLUDED.resolution_reason,
 			resolution_note = EXCLUDED.resolution_note,
-			mute_expires_at = EXCLUDED.mute_expires_at
+			mute_expires_at = EXCLUDED.mute_expires_at,
+			resolved_by_test_result_id = NULL
+		WHERE incident_resolutions.status = ANY($7)
 		RETURNING id, test_result_id, status,
 		          COALESCE(resolved_by, ''), COALESCE(resolution_reason, ''), COALESCE(resolution_note, ''),
 		          resolved_by_test_result_id, mute_expires_at,
@@ -114,14 +113,20 @@ func (s *LineageStore) SetResolution(
 
 	var muteExp sql.NullTime
 
-	err = s.conn.QueryRowContext(ctx, upsert,
+	err := s.conn.QueryRowContext(ctx, upsert,
 		testResultID, req.Status, resolvedBy, req.Reason, req.Note, muteExpiresAt,
+		pq.Array(allowedSources),
 	).Scan(
 		&r.ID, &r.TestResultID, &r.Status,
 		&r.ResolvedBy, &r.ResolutionReason, &r.ResolutionNote,
 		&resolvedByTRID, &muteExp,
 		&r.CreatedAt, &r.UpdatedAt,
 	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, resolveTransitionError(ctx, s, testResultID, req.Status)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("set resolution: %w", err)
 	}
@@ -135,6 +140,42 @@ func (s *LineageStore) SetResolution(
 	}
 
 	return &r, nil
+}
+
+// allowedSourceStatuses returns the set of statuses that can transition to the target.
+func allowedSourceStatuses(target correlation.ResolutionStatus) []string {
+	switch target {
+	case correlation.ResolutionAcknowledged:
+		return []string{string(correlation.ResolutionOpen)}
+	case correlation.ResolutionResolved, correlation.ResolutionMuted:
+		return []string{string(correlation.ResolutionOpen), string(correlation.ResolutionAcknowledged)}
+	case correlation.ResolutionOpen:
+		return nil
+	default:
+		return nil
+	}
+}
+
+// resolveTransitionError distinguishes "incident not found" from "invalid transition"
+// when the UPSERT returns no rows. A no-row result means either:
+// (a) no resolution row existed AND the INSERT somehow failed (shouldn't happen for open→X), or
+// (b) a row existed but the WHERE clause rejected the transition.
+func resolveTransitionError(
+	ctx context.Context,
+	s *LineageStore,
+	testResultID int64,
+	targetStatus correlation.ResolutionStatus,
+) error {
+	existing, err := s.GetResolution(ctx, testResultID)
+	if err != nil {
+		return fmt.Errorf("set resolution: failed to determine current state: %w", err)
+	}
+
+	if existing == nil {
+		return fmt.Errorf("set resolution: %w (test_result_id=%d)", ErrIncidentNotFound, testResultID)
+	}
+
+	return fmt.Errorf("%w: %s → %s", ErrInvalidResolutionTransition, existing.Status, targetStatus)
 }
 
 // AutoResolveIncidents finds open/acknowledged incidents matching the given (testName, datasetURN)
@@ -206,23 +247,15 @@ func (s *LineageStore) autoResolvePassingTests(ctx context.Context, passing []pa
 	}
 
 	for _, pt := range passing {
-		count, err := s.AutoResolveIncidents(ctx, pt.testName, pt.datasetURN, pt.testResultID, autoResolveGracePeriod)
+		_, err := s.AutoResolveIncidents(
+			ctx, pt.testName, pt.datasetURN, pt.testResultID, autoResolveGracePeriod,
+		)
 		if err != nil {
 			s.logger.Warn("auto-resolve failed for passing test",
 				slog.String("test_name", pt.testName),
 				slog.String("dataset_urn", pt.datasetURN),
 				slog.Int64("test_result_id", pt.testResultID),
 				slog.String("error", err.Error()),
-			)
-
-			continue
-		}
-
-		if count > 0 {
-			s.logger.Info("auto-resolved incidents on ingestion",
-				slog.String("test_name", pt.testName),
-				slog.String("dataset_urn", pt.datasetURN),
-				slog.Int("resolved_count", count),
 			)
 		}
 	}

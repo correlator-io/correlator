@@ -141,7 +141,23 @@ func (s *Server) assembleIncidentDetailResponse(
 		}
 	}
 
-	return mapIncidentToDetail(incident, upstream, downstream, orphanDatasetSet, orchestrationChain)
+	// Query other retry attempts (non-fatal)
+	var otherAttempts []correlation.RunRetryAttempt
+
+	if incident.RootParentRunID != "" {
+		attempts, err := s.correlationStore.QueryOtherAttempts(ctx, id)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "Failed to query other attempts",
+				"correlation_id", correlationID,
+				"incident_id", id,
+				"error", err.Error(),
+			)
+		} else {
+			otherAttempts = attempts
+		}
+	}
+
+	return mapIncidentToDetail(incident, upstream, downstream, orphanDatasetSet, orchestrationChain, otherAttempts)
 }
 
 // mapIncidentToDetail converts a domain Incident with lineage results to API response.
@@ -152,6 +168,7 @@ func mapIncidentToDetail(
 	downstream []correlation.DownstreamResult,
 	orphanDatasetSet map[string]bool,
 	orchestrationChain []correlation.OrchestrationNode,
+	otherAttempts []correlation.RunRetryAttempt,
 ) IncidentDetailResponse {
 	response := IncidentDetailResponse{
 		ID: strconv.FormatInt(inc.TestResultID, 10),
@@ -172,6 +189,11 @@ func mapIncidentToDetail(
 		Upstream:          mapUpstreamResults(upstream),
 		Downstream:        mapDownstreamResults(downstream),
 		CorrelationStatus: determineCorrelationStatus(inc, orphanDatasetSet),
+		ResolutionStatus:  string(inc.ResolutionStatus),
+		ResolvedBy:        inc.ResolvedBy,
+		ResolutionReason:  inc.ResolutionReason,
+		ResolvedAt:        inc.ResolvedAt,
+		MuteExpiresAt:     inc.MuteExpiresAt,
 	}
 
 	if inc.RunID != "" {
@@ -208,6 +230,10 @@ func mapIncidentToDetail(
 		if len(orchestrationChain) > 0 {
 			response.Job.Orchestration = mapOrchestrationChain(orchestrationChain)
 		}
+	}
+
+	if len(otherAttempts) > 0 {
+		response.RetryContext = buildDetailRetryContext(inc, otherAttempts)
 	}
 
 	return response
@@ -301,4 +327,48 @@ func determineCorrelationStatus(inc *correlation.Incident, orphanDatasetSet map[
 
 	// Fully correlated
 	return CorrelationStatusCorrelated
+}
+
+// buildDetailRetryContext assembles the full retry context for a detail response.
+func buildDetailRetryContext(
+	inc *correlation.Incident,
+	otherAttempts []correlation.RunRetryAttempt,
+) *RunRetryContextDetail {
+	attempts := make([]RunRetryAttemptResponse, 0, len(otherAttempts))
+	for _, a := range otherAttempts {
+		attempts = append(attempts, RunRetryAttemptResponse{
+			IncidentID:       a.IncidentID,
+			Attempt:          a.Attempt,
+			TestStatus:       a.TestStatus,
+			ExecutedAt:       a.ExecutedAt,
+			JobRunID:         a.JobRunID,
+			ResolutionStatus: string(a.ResolutionStatus),
+		})
+	}
+
+	totalAttempts := len(otherAttempts) + 1
+	allFailed := isFailedStatus(inc.TestStatus)
+
+	for _, a := range otherAttempts {
+		if !isFailedStatus(a.TestStatus) {
+			allFailed = false
+
+			break
+		}
+	}
+
+	// NOTE: assumes this incident is the latest attempt (true when navigating from deduplicated list).
+	// If direct linking to older attempts is added, compute the actual ordinal from QueryOtherAttempts.
+	return &RunRetryContextDetail{
+		TotalAttempts:  totalAttempts,
+		CurrentAttempt: totalAttempts,
+		AllFailed:      allFailed,
+		RootRunID:      inc.RootParentRunID,
+		OtherAttempts:  attempts,
+	}
+}
+
+// isFailedStatus returns true if the test status represents a failure.
+func isFailedStatus(status string) bool {
+	return status == "failed" || status == "error"
 }

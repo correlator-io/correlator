@@ -20,30 +20,41 @@ type (
 	// This is a simplified view of an incident, optimized for list display.
 	// Use GET /api/v1/incidents/{id} for full incident details.
 	IncidentSummary struct {
-		ID                  string    `json:"id"`
-		TestName            string    `json:"test_name"`    //nolint:tagliatelle
-		TestType            string    `json:"test_type"`    //nolint:tagliatelle
-		TestStatus          string    `json:"test_status"`  //nolint:tagliatelle
-		DatasetURN          string    `json:"dataset_urn"`  //nolint:tagliatelle
-		DatasetName         string    `json:"dataset_name"` //nolint:tagliatelle
-		Producer            string    `json:"producer"`
-		JobName             string    `json:"job_name"`              //nolint:tagliatelle
-		JobRunID            string    `json:"job_run_id"`            //nolint:tagliatelle
-		DownstreamCount     int       `json:"downstream_count"`      //nolint:tagliatelle
-		HasCorrelationIssue bool      `json:"has_correlation_issue"` //nolint:tagliatelle
-		ExecutedAt          time.Time `json:"executed_at"`           //nolint:tagliatelle
+		ID                  string                  `json:"id"`
+		TestName            string                  `json:"test_name"`    //nolint:tagliatelle
+		TestType            string                  `json:"test_type"`    //nolint:tagliatelle
+		TestStatus          string                  `json:"test_status"`  //nolint:tagliatelle
+		DatasetURN          string                  `json:"dataset_urn"`  //nolint:tagliatelle
+		DatasetName         string                  `json:"dataset_name"` //nolint:tagliatelle
+		Producer            string                  `json:"producer"`
+		JobName             string                  `json:"job_name"`                  //nolint:tagliatelle
+		JobRunID            string                  `json:"job_run_id"`                //nolint:tagliatelle
+		DownstreamCount     int                     `json:"downstream_count"`          //nolint:tagliatelle
+		HasCorrelationIssue bool                    `json:"has_correlation_issue"`     //nolint:tagliatelle
+		ExecutedAt          time.Time               `json:"executed_at"`               //nolint:tagliatelle
+		ResolutionStatus    string                  `json:"resolution_status"`         //nolint:tagliatelle
+		ResolvedBy          string                  `json:"resolved_by,omitempty"`     //nolint:tagliatelle
+		ResolvedAt          *time.Time              `json:"resolved_at,omitempty"`     //nolint:tagliatelle
+		MuteExpiresAt       *time.Time              `json:"mute_expires_at,omitempty"` //nolint:tagliatelle
+		RetryContext        *RunRetryContextSummary `json:"retry_context"`             //nolint:tagliatelle
 	}
 
 	// IncidentDetailResponse represents the response for GET /api/v1/incidents/{id}.
 	// Contains full incident information including test details, dataset, job, and lineage.
 	IncidentDetailResponse struct {
-		ID                string              `json:"id"`
-		Test              TestDetail          `json:"test"`
-		Dataset           DatasetDetail       `json:"dataset"`
-		Job               *JobDetail          `json:"job"` // nil if uncorrelated
-		Upstream          []UpstreamDataset   `json:"upstream"`
-		Downstream        []DownstreamDataset `json:"downstream"`
-		CorrelationStatus string              `json:"correlation_status"` //nolint:tagliatelle
+		ID                string                 `json:"id"`
+		Test              TestDetail             `json:"test"`
+		Dataset           DatasetDetail          `json:"dataset"`
+		Job               *JobDetail             `json:"job"` // nil if uncorrelated
+		Upstream          []UpstreamDataset      `json:"upstream"`
+		Downstream        []DownstreamDataset    `json:"downstream"`
+		CorrelationStatus string                 `json:"correlation_status"`          //nolint:tagliatelle
+		ResolutionStatus  string                 `json:"resolution_status"`           //nolint:tagliatelle
+		ResolvedBy        string                 `json:"resolved_by,omitempty"`       //nolint:tagliatelle
+		ResolutionReason  string                 `json:"resolution_reason,omitempty"` //nolint:tagliatelle
+		ResolvedAt        *time.Time             `json:"resolved_at,omitempty"`       //nolint:tagliatelle
+		MuteExpiresAt     *time.Time             `json:"mute_expires_at,omitempty"`   //nolint:tagliatelle
+		RetryContext      *RunRetryContextDetail `json:"retry_context"`               //nolint:tagliatelle
 	}
 
 	// TestDetail contains test information for incident detail view.
@@ -121,6 +132,34 @@ type (
 		Depth    int    `json:"depth"`
 		ChildURN string `json:"childUrn"` // Child dataset URN (what this feeds into)
 		Producer string `json:"producer"` // Tool that produced this dataset (e.g., "dbt")
+	}
+
+	// RunRetryContextSummary is the lightweight retry context for list responses.
+	// Null when no retries exist (total_attempts == 1).
+	RunRetryContextSummary struct {
+		TotalAttempts  int    `json:"total_attempts"`  //nolint:tagliatelle
+		CurrentAttempt int    `json:"current_attempt"` //nolint:tagliatelle
+		AllFailed      bool   `json:"all_failed"`      //nolint:tagliatelle
+		RootRunID      string `json:"root_run_id"`     //nolint:tagliatelle
+	}
+
+	// RunRetryContextDetail is the full retry context for detail responses, including other attempts.
+	RunRetryContextDetail struct {
+		TotalAttempts  int                       `json:"total_attempts"`  //nolint:tagliatelle
+		CurrentAttempt int                       `json:"current_attempt"` //nolint:tagliatelle
+		AllFailed      bool                      `json:"all_failed"`      //nolint:tagliatelle
+		RootRunID      string                    `json:"root_run_id"`     //nolint:tagliatelle
+		OtherAttempts  []RunRetryAttemptResponse `json:"other_attempts"`  //nolint:tagliatelle
+	}
+
+	// RunRetryAttemptResponse represents one sibling attempt in a retry group.
+	RunRetryAttemptResponse struct {
+		IncidentID       string    `json:"incident_id"` //nolint:tagliatelle
+		Attempt          int       `json:"attempt"`
+		TestStatus       string    `json:"test_status"`       //nolint:tagliatelle
+		ExecutedAt       time.Time `json:"executed_at"`       //nolint:tagliatelle
+		JobRunID         string    `json:"job_run_id"`        //nolint:tagliatelle
+		ResolutionStatus string    `json:"resolution_status"` //nolint:tagliatelle
 	}
 
 	// CorrelationHealthResponse represents the response for GET /api/v1/health/correlation.

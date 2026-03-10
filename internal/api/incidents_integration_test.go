@@ -8,12 +8,15 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/correlator-io/correlator/internal/correlation"
 )
 
 // TestListIncidents_Integration tests GET /api/v1/incidents endpoint.
@@ -583,4 +586,348 @@ func extractDatasetName(urn string) string {
 	}
 
 	return urn
+}
+
+// TestPatchIncidentStatus_Integration tests PATCH /api/v1/incidents/{id}/status endpoint.
+func TestPatchIncidentStatus_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	now := time.Now()
+	runID := uuid.New().String()
+	datasetURN := "postgresql://prod-db/public.patch_test"
+
+	testResultID := setupIncidentTestData(ctx, t, ts, runID, datasetURN, now)
+
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
+	_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
+	require.NoError(t, err)
+
+	t.Run("acknowledge open incident", func(t *testing.T) {
+		body := `{"status":"acknowledged"}`
+		endpoint := fmt.Sprintf("/api/v1/incidents/%d/status", testResultID)
+		req := httptest.NewRequest(http.MethodPatch, endpoint, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var resp updateStatusResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		assert.Equal(t, "acknowledged", resp.ResolutionStatus)
+		assert.NotNil(t, resp.ResolvedAt)
+	})
+
+	t.Run("resolve acknowledged incident", func(t *testing.T) {
+		body := `{"status":"resolved","reason":"manual","note":"fixed upstream"}`
+		endpoint := fmt.Sprintf("/api/v1/incidents/%d/status", testResultID)
+		req := httptest.NewRequest(http.MethodPatch, endpoint, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var resp updateStatusResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		assert.Equal(t, "resolved", resp.ResolutionStatus)
+		require.NotNil(t, resp.ResolutionReason)
+		assert.Equal(t, "manual", *resp.ResolutionReason)
+	})
+
+	t.Run("terminal state rejects transition - 409", func(t *testing.T) {
+		body := `{"status":"acknowledged"}`
+		endpoint := fmt.Sprintf("/api/v1/incidents/%d/status", testResultID)
+		req := httptest.NewRequest(http.MethodPatch, endpoint, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusConflict, rr.Code)
+	})
+
+	t.Run("nonexistent incident - 404", func(t *testing.T) {
+		body := `{"status":"acknowledged"}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/incidents/999999/status", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("invalid status - 422", func(t *testing.T) {
+		body := `{"status":"invalid"}`
+		runID2 := uuid.New().String()
+		tid := setupIncidentTestData(ctx, t, ts, runID2, "postgresql://prod-db/public.patch_422", now)
+
+		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
+		_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
+		require.NoError(t, err)
+
+		endpoint := fmt.Sprintf("/api/v1/incidents/%d/status", tid)
+		req := httptest.NewRequest(http.MethodPatch, endpoint, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
+	})
+
+	t.Run("mute with expiry", func(t *testing.T) {
+		runID3 := uuid.New().String()
+		tid := setupIncidentTestData(ctx, t, ts, runID3, "postgresql://prod-db/public.patch_mute", now)
+
+		require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
+		_, err := ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
+		require.NoError(t, err)
+
+		body := `{"status":"muted","reason":"false_positive","mute_days":7}`
+		endpoint := fmt.Sprintf("/api/v1/incidents/%d/status", tid)
+		req := httptest.NewRequest(http.MethodPatch, endpoint, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var resp updateStatusResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		assert.Equal(t, "muted", resp.ResolutionStatus)
+		require.NotNil(t, resp.MuteExpiresAt)
+
+		expectedExpiry := time.Now().Add(7 * 24 * time.Hour)
+		assert.WithinDuration(t, expectedExpiry, *resp.MuteExpiresAt, 5*time.Second)
+	})
+}
+
+// TestGetIncidentCounts_Integration tests GET /api/v1/incidents/counts endpoint.
+func TestGetIncidentCounts_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	now := time.Now()
+
+	runID := uuid.New().String()
+
+	_, err := ts.db.ExecContext(ctx, `
+		INSERT INTO job_runs (run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, producer_name)
+		VALUES ($1, 'counts_job', 'test_ns', 'COMPLETE', 'COMPLETE', $2, $3, 'dbt')
+	`, runID, now, now.Add(-5*time.Minute))
+	require.NoError(t, err)
+
+	urns := []string{
+		"postgresql://prod-db/public.counts_open",
+		"postgresql://prod-db/public.counts_resolved",
+		"postgresql://prod-db/public.counts_muted",
+	}
+
+	for _, urn := range urns {
+		_, err = ts.db.ExecContext(ctx, `
+			INSERT INTO datasets (dataset_urn, name, namespace) VALUES ($1, $1, 'public')
+			ON CONFLICT DO NOTHING
+		`, urn)
+		require.NoError(t, err)
+
+		_, err = ts.db.ExecContext(ctx, `
+			INSERT INTO lineage_edges (run_id, dataset_urn, edge_type) VALUES ($1, $2, 'output')
+		`, runID, urn)
+		require.NoError(t, err)
+	}
+
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO test_results (id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms)
+		VALUES
+			(500, 'test_open',     'not_null', $1, $4, 'failed', 'msg', $5, 100),
+			(501, 'test_resolved', 'not_null', $2, $4, 'failed', 'msg', $5, 100),
+			(502, 'test_muted',    'not_null', $3, $4, 'failed', 'msg', $5, 100)
+	`, urns[0], urns[1], urns[2], runID, now)
+	require.NoError(t, err)
+
+	_, err = ts.lineageStore.SetResolution(ctx, 501, correlation.ResolutionRequest{
+		Status: correlation.ResolutionResolved,
+		Reason: "manual",
+	}, "user")
+	require.NoError(t, err)
+
+	_, err = ts.lineageStore.SetResolution(ctx, 502, correlation.ResolutionRequest{
+		Status:   correlation.ResolutionMuted,
+		Reason:   "false_positive",
+		MuteDays: 30,
+	}, "user")
+	require.NoError(t, err)
+
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
+	_, err = ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
+	require.NoError(t, err)
+
+	t.Run("returns counts by status", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents/counts", nil)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var resp incidentCountsResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+
+		assert.GreaterOrEqual(t, resp.Active, 1, "Should have at least 1 active")
+		assert.GreaterOrEqual(t, resp.Resolved, 1, "Should have at least 1 resolved")
+		assert.GreaterOrEqual(t, resp.Muted, 1, "Should have at least 1 muted")
+	})
+}
+
+// TestRetryDedup_Integration tests that retry deduplication works in the list endpoint.
+func TestRetryDedup_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ts := setupTestServer(ctx, t)
+
+	now := time.Now()
+
+	rootRunID := uuid.New().String()
+	run1ID := uuid.New().String()
+	run2ID := uuid.New().String()
+	datasetURN := "postgresql://prod-db/public.retry_test"
+
+	// Root orchestrator (Airflow DAG run)
+	_, err := ts.db.ExecContext(ctx, `
+		INSERT INTO job_runs (run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, producer_name)
+		VALUES ($1, 'orchestrator', 'airflow', 'FAIL', 'FAIL', $2, $3, 'airflow')
+	`, rootRunID, now, now.Add(-10*time.Minute))
+	require.NoError(t, err)
+
+	// Two child runs (retries) under the same root, both producing the same dataset
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO job_runs (run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, producer_name, root_parent_run_id)
+		VALUES
+			($1, 'transform', 'dbt_prod', 'FAIL', 'FAIL', $3, $4, 'dbt', $5),
+			($2, 'transform', 'dbt_prod', 'FAIL', 'FAIL', $3, $4, 'dbt', $5)
+	`, run1ID, run2ID, now, now.Add(-5*time.Minute), rootRunID)
+	require.NoError(t, err)
+
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO datasets (dataset_urn, name, namespace) VALUES ($1, 'retry_test', 'public')
+		ON CONFLICT DO NOTHING
+	`, datasetURN)
+	require.NoError(t, err)
+
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO lineage_edges (run_id, dataset_urn, edge_type)
+		VALUES ($1, $2, 'output'), ($3, $2, 'output')
+	`, run1ID, datasetURN, run2ID)
+	require.NoError(t, err)
+
+	// Two test results for the same (test_name, dataset_urn) under different runs.
+	// The materialized view cross-joins to 4 rows, but the query's deduped CTE
+	// collapses them back to 2 unique test results before retry grouping.
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO test_results (id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms)
+		VALUES
+			(600, 'not_null_id', 'not_null', $1, $2, 'failed', 'attempt 1 failed', $4, 100),
+			(601, 'not_null_id', 'not_null', $1, $3, 'failed', 'attempt 2 failed', $5, 100)
+	`, datasetURN, run1ID, run2ID, now.Add(-1*time.Minute), now)
+	require.NoError(t, err)
+
+	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))
+
+	_, err = ts.db.ExecContext(ctx, "SELECT refresh_correlation_views()")
+	require.NoError(t, err)
+
+	t.Run("list deduplicates to latest attempt", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents", nil)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var response IncidentListResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &response))
+
+		retryIncidents := filterByTestName(response.Incidents, "not_null_id")
+		assert.Len(t, retryIncidents, 1,
+			"Should show only 1 incident after dedup (latest attempt)")
+
+		if len(retryIncidents) > 0 {
+			inc := retryIncidents[0]
+			assert.Equal(t, "601", inc.ID, "Should keep the latest attempt")
+			require.NotNil(t, inc.RetryContext, "RetryContext should be populated")
+			assert.Equal(t, 2, inc.RetryContext.TotalAttempts)
+			assert.True(t, inc.RetryContext.AllFailed)
+			assert.Equal(t, rootRunID, inc.RetryContext.RootRunID)
+		}
+	})
+
+	t.Run("detail shows other_attempts", func(t *testing.T) {
+		endpoint := "/api/v1/incidents/601"
+		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
+		req.Header.Set("Authorization", "Bearer "+ts.apiKey)
+
+		rr := httptest.NewRecorder()
+		ts.server.httpServer.Handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code, "Response: %s", rr.Body.String())
+
+		var response IncidentDetailResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &response))
+
+		require.NotNil(t, response.RetryContext, "RetryContext should be populated on detail")
+		assert.Equal(t, 2, response.RetryContext.TotalAttempts)
+		assert.True(t, response.RetryContext.AllFailed)
+		assert.Len(t, response.RetryContext.OtherAttempts, 1, "Should have 1 other attempt")
+
+		if len(response.RetryContext.OtherAttempts) > 0 {
+			other := response.RetryContext.OtherAttempts[0]
+			assert.Equal(t, "600", other.IncidentID)
+			assert.Equal(t, "failed", other.TestStatus)
+		}
+	})
+}
+
+// filterByTestName returns incidents matching the given test name.
+func filterByTestName(incidents []IncidentSummary, name string) []IncidentSummary {
+	var filtered []IncidentSummary
+
+	for _, inc := range incidents {
+		if inc.TestName == name {
+			filtered = append(filtered, inc)
+		}
+	}
+
+	return filtered
 }

@@ -35,26 +35,26 @@ var validTransitions = map[ResolutionStatus][]ResolutionStatus{
 	ResolutionAcknowledged: {ResolutionResolved, ResolutionMuted},
 }
 
-// StatusFilter constants define the valid status filter values for listing incidents.
+// ResolutionStatusFilter constants define the valid status filter values for listing incidents.
 const (
-	StatusFilterActive   StatusFilter = "active" // open + acknowledged
-	StatusFilterResolved StatusFilter = "resolved"
-	StatusFilterMuted    StatusFilter = "muted"
-	StatusFilterAll      StatusFilter = "all"
+	StatusFilterActive   ResolutionStatusFilter = "active" // open + acknowledged
+	StatusFilterResolved ResolutionStatusFilter = "resolved"
+	StatusFilterMuted    ResolutionStatusFilter = "muted"
+	StatusFilterAll      ResolutionStatusFilter = "all"
 )
 
 // validStatusFilters is the set of all valid status filter values.
 //
 //nolint:gochecknoglobals // Package-level lookup table, read-only after init.
-var validStatusFilters = map[StatusFilter]bool{
+var validStatusFilters = map[ResolutionStatusFilter]bool{
 	StatusFilterActive:   true,
 	StatusFilterResolved: true,
 	StatusFilterMuted:    true,
 	StatusFilterAll:      true,
 }
 
-// IsValidStatusFilter checks whether the given filter is a valid status filter.
-func IsValidStatusFilter(f StatusFilter) bool {
+// IsValidResolutionStatusFilter checks whether the given filter is a valid status filter.
+func IsValidResolutionStatusFilter(f ResolutionStatusFilter) bool {
 	return validStatusFilters[f]
 }
 
@@ -131,7 +131,9 @@ type (
 		ResolvedBy       string           // "auto" or client_id (empty if open)
 		ResolutionReason string           // "auto_pass", "manual", etc. (empty if open)
 		MuteExpiresAt    *time.Time       // Only for muted status
-		ResolutionAt     *time.Time       // When the status was last changed
+		ResolvedAt       *time.Time       // When the status was last changed
+		// Run retry context (computed via window functions, only populated in list queries)
+		RunRetryContext *RunRetryContext
 	}
 
 	// OrchestrationNode represents one level in the orchestration chain.
@@ -176,8 +178,8 @@ type (
 		TestExecutedAfter  *time.Time
 		TestExecutedBefore *time.Time
 		// Resolution lifecycle filters
-		StatusFilter StatusFilter // "active" (default), "resolved", "muted", "all"
-		WindowDays   int          // Time window in days for historical views (0 = no window)
+		StatusFilter ResolutionStatusFilter // "active" (default), "resolved", "muted", "all"
+		WindowDays   int                    // Time window in days for historical views (0 = no window)
 	}
 
 	// Pagination specifies pagination parameters for list queries.
@@ -410,8 +412,38 @@ type (
 		MuteDays int // Only for muted; default 30
 	}
 
-	// StatusFilter represents the status filter for listing incidents.
-	StatusFilter string
+	// ResolutionStatusFilter represents the status filter for listing incidents.
+	ResolutionStatusFilter string
+
+	// IncidentCounts holds the count of incidents by resolution status.
+	// Used by GET /api/v1/incidents/counts.
+	IncidentCounts struct {
+		Active   int
+		Resolved int
+		Muted    int
+	}
+
+	// RunRetryContext provides retry metadata for an incident whose test ran
+	// multiple times under the same orchestrator run (e.g., Airflow retry).
+	// Nil when no retries exist (total_attempts == 1).
+	RunRetryContext struct {
+		TotalAttempts  int    // Total number of attempts for this (test_name, dataset_urn, root_parent_run_id)
+		CurrentAttempt int    // Ordinal position of this attempt (1-based)
+		AllFailed      bool   // True if every attempt in the group has status IN ('failed', 'error')
+		RootRunID      string // The root_parent_run_id grouping key
+		// OtherAttempts is only populated on detail responses, not list.
+		OtherAttempts []RunRetryAttempt
+	}
+
+	// RunRetryAttempt represents one sibling attempt in a retry group (excludes current incident).
+	RunRetryAttempt struct {
+		IncidentID       string
+		Attempt          int
+		TestStatus       string
+		ExecutedAt       time.Time
+		JobRunID         string
+		ResolutionStatus ResolutionStatus
+	}
 )
 
 // IsTerminal returns true if the status is immutable (no further transitions allowed in alpha).

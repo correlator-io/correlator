@@ -340,11 +340,6 @@ CREATE INDEX idx_incident_resolutions_mute_expiry
     ON incident_resolutions(mute_expires_at)
     WHERE status = 'muted' AND mute_expires_at IS NOT NULL;
 
--- Index for auto-resolve: find open/acknowledged incidents by test identity
-CREATE INDEX idx_incident_resolutions_auto_resolve
-    ON incident_resolutions(test_result_id)
-    WHERE status IN ('open', 'acknowledged');
-
 COMMENT ON TABLE incident_resolutions IS 'Incident resolution lifecycle state — separate from OpenLineage-derived test_results to keep ingested data pure';
 COMMENT ON COLUMN incident_resolutions.test_result_id IS 'Links to the test_results row that constitutes the incident — 1:1 relationship';
 COMMENT ON COLUMN incident_resolutions.status IS 'Resolution state: open (default/implicit), acknowledged, resolved, muted';

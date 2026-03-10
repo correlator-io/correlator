@@ -197,6 +197,16 @@ type Store interface {
 	//   - Empty slice if job has no parent
 	//   - Error if query fails or context is cancelled
 	QueryOrchestrationChain(ctx context.Context, runID string, maxDepth int) ([]OrchestrationNode, error)
+
+	// QueryIncidentCounts returns the number of active, resolved, and muted incidents.
+	// Resolved/muted counts are scoped to the given windowDays (server default: 30).
+	// Active incidents are always counted regardless of window.
+	QueryIncidentCounts(ctx context.Context, windowDays int) (*IncidentCounts, error)
+
+	// QueryOtherAttempts returns sibling retry attempts for an incident, excluding the
+	// current incident itself. Uses (test_name, dataset_urn, root_parent_run_id) grouping.
+	// Returns nil if the incident has no root_parent_run_id or no siblings exist.
+	QueryOtherAttempts(ctx context.Context, testResultID int64) ([]RunRetryAttempt, error)
 }
 
 // ResolutionStore defines write operations for incident resolution lifecycle.
@@ -225,7 +235,7 @@ type ResolutionStore interface {
 		resolvedBy string,
 	) (*IncidentResolution, error)
 
-	// AutoResolveOnPass finds open/acknowledged incidents matching the given (testName, datasetURN)
+	// AutoResolveIncidents finds open/acknowledged incidents matching the given (testName, datasetURN)
 	// where the failing test was executed more than gracePeriod ago, and auto-resolves them.
 	//
 	// Anti-flapping: Only resolves incidents whose failure is older than gracePeriod (default 1 hour).

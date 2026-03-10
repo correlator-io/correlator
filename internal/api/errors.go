@@ -22,6 +22,7 @@ var commonProblemTypes = map[int]string{
 	http.StatusMethodNotAllowed:      "https://getcorrelator.io/problems/405",
 	http.StatusRequestEntityTooLarge: "https://getcorrelator.io/problems/413",
 	http.StatusUnsupportedMediaType:  "https://getcorrelator.io/problems/415",
+	http.StatusConflict:              "https://getcorrelator.io/problems/409",
 	http.StatusUnprocessableEntity:   "https://getcorrelator.io/problems/422",
 	http.StatusInternalServerError:   "https://getcorrelator.io/problems/500",
 }
@@ -194,6 +195,15 @@ func UnprocessableEntity(detail string) *ProblemDetail {
 	return NewProblemDetail(
 		http.StatusUnprocessableEntity,
 		"Unprocessable Entity",
+		detail,
+	)
+}
+
+// Conflict creates a 409 Conflict problem.
+func Conflict(detail string) *ProblemDetail {
+	return NewProblemDetail(
+		http.StatusConflict,
+		"Conflict",
 		detail,
 	)
 }
