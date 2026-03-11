@@ -144,7 +144,7 @@ func (s *Server) assembleIncidentDetailResponse(
 	// Query other retry attempts (non-fatal)
 	var otherAttempts []correlation.RunRetryAttempt
 
-	if incident.RootParentRunID != "" {
+	if incident.TestRootParentRunID != "" {
 		attempts, err := s.correlationStore.QueryOtherAttempts(ctx, id)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "Failed to query other attempts",
@@ -363,7 +363,7 @@ func buildDetailRetryContext(
 		TotalAttempts:  totalAttempts,
 		CurrentAttempt: totalAttempts,
 		AllFailed:      allFailed,
-		RootRunID:      inc.RootParentRunID,
+		RootRunID:      inc.TestRootParentRunID,
 		OtherAttempts:  attempts,
 	}
 }

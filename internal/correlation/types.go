@@ -126,6 +126,9 @@ type (
 		RootParentJobStatus      string     // Root parent job status
 		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
 		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
+		// Test run's root parent — the orchestrator retry group key.
+		// May differ from RootParentRunID when test runner (GE) and producer (dbt) are separate tasks.
+		TestRootParentRunID string
 		// Resolution fields (joined from incident_resolutions, NULL = implicitly open)
 		ResolutionStatus ResolutionStatus // "open" if no row in incident_resolutions
 		ResolvedBy       string           // "auto" or client_id (empty if open)

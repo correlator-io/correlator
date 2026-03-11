@@ -819,6 +819,8 @@ func TestRetryDedup_Integration(t *testing.T) {
 	rootRunID := uuid.New().String()
 	run1ID := uuid.New().String()
 	run2ID := uuid.New().String()
+	testRun1ID := uuid.New().String()
+	testRun2ID := uuid.New().String()
 	datasetURN := "postgresql://prod-db/public.retry_test"
 
 	// Root orchestrator (Airflow DAG run)
@@ -829,14 +831,24 @@ func TestRetryDedup_Integration(t *testing.T) {
 	`, rootRunID, now, now.Add(-10*time.Minute))
 	require.NoError(t, err)
 
-	// Two child runs (retries) under the same root, both producing the same dataset
+	// Two producing runs (dbt model runs) — no root_parent_run_id (matches real dbt-ol behavior)
+	_, err = ts.db.ExecContext(ctx, `
+		INSERT INTO job_runs (run_id, job_name, job_namespace, current_state,
+			event_type, event_time, started_at, producer_name)
+		VALUES
+			($1, 'transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt'),
+			($2, 'transform', 'dbt_prod', 'COMPLETE', 'COMPLETE', $3, $4, 'dbt')
+	`, run1ID, run2ID, now, now.Add(-5*time.Minute))
+	require.NoError(t, err)
+
+	// Two test runs (GE validation retries) — these have root_parent_run_id from the orchestrator
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO job_runs (run_id, job_name, job_namespace, current_state,
 			event_type, event_time, started_at, producer_name, root_parent_run_id)
 		VALUES
-			($1, 'transform', 'dbt_prod', 'FAIL', 'FAIL', $3, $4, 'dbt', $5),
-			($2, 'transform', 'dbt_prod', 'FAIL', 'FAIL', $3, $4, 'dbt', $5)
-	`, run1ID, run2ID, now, now.Add(-5*time.Minute), rootRunID)
+			($1, 'ge_validate', 'airflow', 'FAIL', 'FAIL', $3, $4, 'great_expectations', $5),
+			($2, 'ge_validate', 'airflow', 'FAIL', 'FAIL', $3, $4, 'great_expectations', $5)
+	`, testRun1ID, testRun2ID, now, now.Add(-3*time.Minute), rootRunID)
 	require.NoError(t, err)
 
 	_, err = ts.db.ExecContext(ctx, `
@@ -851,15 +863,15 @@ func TestRetryDedup_Integration(t *testing.T) {
 	`, run1ID, datasetURN, run2ID)
 	require.NoError(t, err)
 
-	// Two test results for the same (test_name, dataset_urn) under different runs.
-	// The materialized view cross-joins to 4 rows, but the query's deduped CTE
-	// collapses them back to 2 unique test results before retry grouping.
+	// Two test results for the same (test_name, dataset_urn) under different test runs.
+	// Test results reference GE test runs (which have root_parent_run_id), while
+	// lineage edges reference dbt producing runs (which don't).
 	_, err = ts.db.ExecContext(ctx, `
 		INSERT INTO test_results (id, test_name, test_type, dataset_urn, run_id, status, message, executed_at, duration_ms)
 		VALUES
 			(600, 'not_null_id', 'not_null', $1, $2, 'failed', 'attempt 1 failed', $4, 100),
 			(601, 'not_null_id', 'not_null', $1, $3, 'failed', 'attempt 2 failed', $5, 100)
-	`, datasetURN, run1ID, run2ID, now.Add(-1*time.Minute), now)
+	`, datasetURN, testRun1ID, testRun2ID, now.Add(-1*time.Minute), now)
 	require.NoError(t, err)
 
 	require.NoError(t, ts.lineageStore.InitResolvedDatasets(ctx))

@@ -523,7 +523,13 @@ SELECT
     root_jr.job_namespace   AS root_parent_job_namespace,
     root_jr.current_state   AS root_parent_job_status,
     root_jr.completed_at    AS root_parent_job_completed_at,
-    root_jr.producer_name   AS root_parent_producer_name
+    root_jr.producer_name   AS root_parent_producer_name,
+
+    -- Test run's root parent (the orchestrator retry group key).
+    -- The test run (e.g., GE validation) may have a different root_parent_run_id
+    -- than the producing job (e.g., dbt model). Retry deduplication groups by
+    -- the test run's root parent, not the producer's.
+    test_jr.root_parent_run_id AS test_root_parent_run_id
 
 FROM test_results tr
     JOIN resolved_datasets rd_test ON tr.dataset_urn = rd_test.raw_urn
@@ -533,6 +539,7 @@ FROM test_results tr
     JOIN job_runs jr ON le.run_id = jr.run_id
     LEFT JOIN job_runs parent_jr ON jr.parent_run_id = parent_jr.run_id
     LEFT JOIN job_runs root_jr ON jr.root_parent_run_id = root_jr.run_id
+    LEFT JOIN job_runs test_jr ON tr.run_id = test_jr.run_id
 
 WHERE tr.status IN ('failed', 'error')
 

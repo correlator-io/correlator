@@ -372,11 +372,11 @@ func scanIncidentRows(rows *sql.Rows) ([]correlation.Incident, int, error) {
 
 // buildIncidentCorrelationQuery constructs SQL query with retry deduplication.
 //
-// Uses a CTE with ROW_NUMBER() to deduplicate by (test_name, dataset_urn, root_parent_run_id),
+// Uses a CTE with ROW_NUMBER() to deduplicate by (test_name, dataset_urn, test_root_parent_run_id),
 // keeping only the latest attempt. Window functions compute retry context (total_attempts,
 // current_attempt, all_failed) alongside the dedup.
 //
-// Incidents without a root_parent_run_id are never grouped (each is its own group).
+// Incidents without a test_root_parent_run_id are never grouped (each is its own group).
 //
 // Returns (query, args) for use with QueryContext.
 func buildIncidentCorrelationQuery(
@@ -395,7 +395,7 @@ func buildIncidentCorrelationQuery(
 	//    multiple rows per test result when multiple runs output the same dataset).
 	//    We keep the row whose job_run_id matches the test_result's own run_id,
 	//    falling back to the most recent job run.
-	// 2. ranked: Apply retry grouping via (test_name, dataset_urn, root_parent_run_id)
+	// 2. ranked: Apply retry grouping via (test_name, dataset_urn, test_root_parent_run_id)
 	//    with ROW_NUMBER() for dedup and window functions for retry context.
 	query := `
 		WITH deduped AS (
@@ -411,7 +411,7 @@ func buildIncidentCorrelationQuery(
 				ir.resolution_reason,
 				ir.mute_expires_at,
 				ir.updated_at AS resolution_updated_at,
-				COALESCE(icv.root_parent_run_id::text, '') AS root_parent_run_id
+				COALESCE(icv.test_root_parent_run_id::text, '') AS test_root_parent_run_id
 			FROM incident_correlation_view icv
 			LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id` +
 		whereClause + `
@@ -422,21 +422,21 @@ func buildIncidentCorrelationQuery(
 				d.*,
 				ROW_NUMBER() OVER (
 					PARTITION BY d.test_name, d.dataset_urn,
-						COALESCE(NULLIF(d.root_parent_run_id, ''), d.test_result_id::text)
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
 					ORDER BY d.test_executed_at DESC
 				) AS row_num,
 				COUNT(*) OVER (
 					PARTITION BY d.test_name, d.dataset_urn,
-						COALESCE(NULLIF(d.root_parent_run_id, ''), d.test_result_id::text)
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
 				) AS total_attempts,
 				ROW_NUMBER() OVER (
 					PARTITION BY d.test_name, d.dataset_urn,
-						COALESCE(NULLIF(d.root_parent_run_id, ''), d.test_result_id::text)
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
 					ORDER BY d.test_executed_at ASC
 				) AS attempt_asc,
 				BOOL_AND(d.test_status IN ('failed', 'error')) OVER (
 					PARTITION BY d.test_name, d.dataset_urn,
-						COALESCE(NULLIF(d.root_parent_run_id, ''), d.test_result_id::text)
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
 				) AS all_failed
 			FROM deduped d
 		)
@@ -448,7 +448,7 @@ func buildIncidentCorrelationQuery(
 			job_started_at, job_completed_at,
 			job_producer_name,
 			resolution_status, resolved_by, resolution_reason, mute_expires_at, resolution_updated_at,
-			root_parent_run_id,
+			test_root_parent_run_id,
 			total_attempts, attempt_asc AS current_attempt, all_failed,
 			COUNT(*) OVER() AS total_count
 		FROM ranked
@@ -584,6 +584,7 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 			icv.parent_job_status, icv.parent_job_completed_at, icv.parent_producer_name,
 			icv.root_parent_run_id, icv.root_parent_job_name, icv.root_parent_job_namespace,
 			icv.root_parent_job_status, icv.root_parent_job_completed_at, icv.root_parent_producer_name,
+			icv.test_root_parent_run_id,
 			ir.status AS resolution_status,
 			ir.resolved_by,
 			ir.resolution_reason,
@@ -611,6 +612,8 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	var resMuteExpires, resUpdatedAt sql.NullTime
 
+	var testRootParentRunID sql.NullString
+
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
@@ -622,6 +625,7 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
 		&rootParentRunID, &rootParentJobName, &rootParentJobNamespace,
 		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
+		&testRootParentRunID,
 		&resStatus, &resResolvedBy, &resReason, &resMuteExpires, &resUpdatedAt,
 	)
 	if err != nil {
@@ -661,6 +665,8 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 	if rootParentJobCompletedAt.Valid {
 		r.RootParentJobCompletedAt = &rootParentJobCompletedAt.Time
 	}
+
+	r.TestRootParentRunID = testRootParentRunID.String
 
 	r.ResolutionStatus = correlation.ResolutionOpen
 	if resStatus.Valid {
@@ -1521,8 +1527,8 @@ func (s *LineageStore) QueryIncidentCounts(ctx context.Context, windowDays int) 
 
 // QueryOtherAttempts implements correlation.Store.
 // Returns sibling retry attempts for an incident (excludes the incident itself).
-// Groups by (test_name, dataset_urn, root_parent_run_id).
-// Returns nil if no root_parent_run_id or no siblings exist.
+// Groups by (test_name, dataset_urn, test_root_parent_run_id).
+// Returns nil if no test_root_parent_run_id or no siblings exist.
 func (s *LineageStore) QueryOtherAttempts(
 	ctx context.Context,
 	testResultID int64,
@@ -1531,7 +1537,7 @@ func (s *LineageStore) QueryOtherAttempts(
 
 	query := `
 		WITH current AS (
-			SELECT test_name, dataset_urn, root_parent_run_id
+			SELECT test_name, dataset_urn, test_root_parent_run_id
 			FROM incident_correlation_view
 			WHERE test_result_id = $1
 			LIMIT 1
@@ -1545,9 +1551,9 @@ func (s *LineageStore) QueryOtherAttempts(
 			FROM incident_correlation_view icv
 			JOIN current c ON icv.test_name = c.test_name
 				AND icv.dataset_urn = c.dataset_urn
-				AND icv.root_parent_run_id = c.root_parent_run_id
+				AND icv.test_root_parent_run_id = c.test_root_parent_run_id
 			WHERE icv.test_result_id != $1
-				AND c.root_parent_run_id IS NOT NULL
+				AND c.test_root_parent_run_id IS NOT NULL
 			ORDER BY icv.test_result_id, icv.job_started_at DESC
 		)
 		SELECT
