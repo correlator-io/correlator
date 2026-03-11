@@ -1483,6 +1483,23 @@ func (s *LineageStore) QueryIncidentCounts(ctx context.Context, windowDays int) 
 	start := time.Now()
 
 	query := `
+		WITH deduped AS (
+			SELECT DISTINCT ON (icv.test_result_id)
+				icv.test_result_id, icv.test_name, icv.dataset_urn,
+				icv.test_executed_at, icv.test_status,
+				COALESCE(icv.test_root_parent_run_id::text, '') AS test_root_parent_run_id
+			FROM incident_correlation_view icv
+			ORDER BY icv.test_result_id, icv.job_started_at DESC
+		),
+		ranked AS (
+			SELECT d.test_result_id,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+					ORDER BY d.test_executed_at DESC
+				) AS row_num
+			FROM deduped d
+		)
 		SELECT
 			COUNT(*) FILTER (
 				WHERE ir.status IS NULL OR ir.status IN ('open', 'acknowledged')
@@ -1495,11 +1512,10 @@ func (s *LineageStore) QueryIncidentCounts(ctx context.Context, windowDays int) 
 				WHERE ir.status = 'muted'
 				  AND ir.updated_at >= NOW() - $1 * INTERVAL '1 day'
 			) AS muted
-		FROM (
-			SELECT DISTINCT ON (icv.test_result_id) icv.test_result_id
-			FROM incident_correlation_view icv
-		) deduped
-		LEFT JOIN incident_resolutions ir ON deduped.test_result_id = ir.test_result_id
+		FROM ranked r
+		JOIN deduped d ON r.test_result_id = d.test_result_id
+		LEFT JOIN incident_resolutions ir ON r.test_result_id = ir.test_result_id
+		WHERE r.row_num = 1
 	`
 
 	var counts correlation.IncidentCounts
