@@ -413,8 +413,7 @@ func buildIncidentCorrelationQuery(
 				ir.updated_at AS resolution_updated_at,
 				COALESCE(icv.test_root_parent_run_id::text, '') AS test_root_parent_run_id
 			FROM incident_correlation_view icv
-			LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id` +
-		whereClause + `
+			LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id` + whereClause + `
 			ORDER BY icv.test_result_id, icv.job_started_at DESC
 		),
 		ranked AS (
