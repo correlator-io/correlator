@@ -260,3 +260,78 @@ func (s *LineageStore) autoResolvePassingTests(ctx context.Context, passing []pa
 		}
 	}
 }
+
+// CascadeResolutionToSiblings applies the same resolution to all sibling
+// retry attempts sharing the same (test_name, dataset_urn, test_root_parent_run_id).
+// Only transitions eligible siblings (open/acknowledged); terminal states are skipped.
+func (s *LineageStore) CascadeResolutionToSiblings(
+	ctx context.Context,
+	testResultID int64,
+	req correlation.ResolutionRequest,
+	resolvedBy string,
+) (int, error) {
+	var muteExpiresAt *time.Time
+	if req.Status == correlation.ResolutionMuted && req.MuteDays > 0 {
+		t := time.Now().Add(time.Duration(req.MuteDays) * 24 * time.Hour)
+		muteExpiresAt = &t
+	}
+
+	allowedSources := allowedSourceStatuses(req.Status)
+	if len(allowedSources) == 0 {
+		return 0, nil
+	}
+
+	query := `
+		WITH retry_group AS (
+			SELECT test_name, dataset_urn, test_root_parent_run_id
+			FROM incident_correlation_view
+			WHERE test_result_id = $1
+			LIMIT 1
+		),
+		siblings AS (
+			SELECT DISTINCT icv.test_result_id
+			FROM incident_correlation_view icv
+			JOIN retry_group rg
+				ON icv.test_name = rg.test_name
+				AND icv.dataset_urn = rg.dataset_urn
+				AND icv.test_root_parent_run_id = rg.test_root_parent_run_id
+			WHERE icv.test_result_id != $1
+				AND rg.test_root_parent_run_id IS NOT NULL
+		)
+		INSERT INTO incident_resolutions (
+			test_result_id, status, resolved_by, resolution_reason,
+			resolution_note, mute_expires_at)
+		SELECT s.test_result_id, $2, $3, $4, $5, $6
+		FROM siblings s
+		ON CONFLICT (test_result_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			resolved_by = EXCLUDED.resolved_by,
+			resolution_reason = EXCLUDED.resolution_reason,
+			resolution_note = EXCLUDED.resolution_note,
+			mute_expires_at = EXCLUDED.mute_expires_at,
+			resolved_by_test_result_id = NULL
+		WHERE incident_resolutions.status = ANY($7)`
+
+	result, err := s.conn.ExecContext(ctx, query,
+		testResultID, req.Status, resolvedBy, req.Reason, req.Note, muteExpiresAt,
+		pq.Array(allowedSources),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("cascade resolution to retry group: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cascade resolution rows affected: %w", err)
+	}
+
+	if rowsAffected > 0 {
+		slog.Info("cascaded resolution to retry siblings",
+			slog.Int64("primary_test_result_id", testResultID),
+			slog.String("status", string(req.Status)),
+			slog.Int64("siblings_updated", rowsAffected),
+		)
+	}
+
+	return int(rowsAffected), nil
+}

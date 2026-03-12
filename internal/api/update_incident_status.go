@@ -102,6 +102,21 @@ func (s *Server) handleUpdateIncidentStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Cascade the same resolution to all sibling retry attempts (best-effort).
+	if sibCount, err := s.resolutionStore.CascadeResolutionToSiblings(ctx, testResultID, *req, resolvedBy); err != nil {
+		s.logger.WarnContext(ctx, "Failed to cascade resolution to retry siblings",
+			"correlation_id", correlationID,
+			"incident_id", testResultID,
+			"error", err.Error(),
+		)
+	} else if sibCount > 0 {
+		s.logger.InfoContext(ctx, "Cascaded resolution to retry siblings",
+			"correlation_id", correlationID,
+			"incident_id", testResultID,
+			"siblings_updated", sibCount,
+		)
+	}
+
 	resp := mapResolutionToResponse(idStr, resolution)
 
 	data, err := json.Marshal(resp)

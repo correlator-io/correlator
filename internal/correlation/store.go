@@ -257,4 +257,15 @@ type ResolutionStore interface {
 		passingTestResultID int64,
 		gracePeriod time.Duration,
 	) (int, error)
+
+	// CascadeResolutionToSiblings applies the same resolution to all sibling
+	// retry attempts in the same group (test_name, dataset_urn, test_root_parent_run_id).
+	// Siblings that cannot transition (already in a terminal state) are skipped.
+	// Returns the number of siblings updated.
+	CascadeResolutionToSiblings(
+		ctx context.Context,
+		testResultID int64,
+		req ResolutionRequest,
+		resolvedBy string,
+	) (int, error)
 }
