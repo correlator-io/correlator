@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, CheckCircle2, VolumeX, Loader2, Bot, User, Clock } from "lucide-react";
+import { Eye, CheckCircle2, Loader2, Bot, User, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResolutionBadge } from "./resolution-badge";
 import { MutePopover } from "./mute-popover";
@@ -29,7 +29,6 @@ interface ResolutionActionBarProps {
 export function ResolutionActionBar({
   resolutionStatus,
   resolvedBy,
-  resolutionReason,
   resolvedAt,
   muteExpiresAt,
   onStatusChange,

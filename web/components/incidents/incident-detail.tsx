@@ -9,6 +9,7 @@ import { CorrelationWarning } from "./correlation-warning";
 import { ResolutionActionBar } from "./resolution-action-bar";
 import { RetryTimeline } from "./retry-timeline";
 import { LineageGraph } from "@/components/lineage/lineage-graph";
+import { useUpdateIncidentStatus } from "@/hooks/use-incidents";
 import type { IncidentDetail as IncidentDetailType, ResolutionStatus } from "@/lib/types";
 
 interface IncidentDetailProps {
@@ -45,11 +46,19 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
     return true;
   });
 
+  const mutation = useUpdateIncidentStatus();
+
   const handleStatusChange = (
     newStatus: ResolutionStatus,
-    _options?: { reason?: string; muteDays?: number }
+    options?: { reason?: string; muteDays?: number }
   ) => {
     setResolutionStatus(newStatus);
+    mutation.mutate({
+      id,
+      status: newStatus as "acknowledged" | "resolved" | "muted",
+      reason: options?.reason,
+      mute_days: options?.muteDays,
+    });
   };
 
   return (

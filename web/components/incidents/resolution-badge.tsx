@@ -1,6 +1,6 @@
 "use client";
 
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { Eye, CheckCircle2, VolumeX } from "lucide-react";
 import {
   Tooltip,

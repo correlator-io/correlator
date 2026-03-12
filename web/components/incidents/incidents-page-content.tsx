@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import { IncidentCard } from "./incident-card";
 import { OrphanCalloutBanner } from "./orphan-callout-banner";
+import { IncidentListSkeleton } from "./incident-list-skeleton";
+import { IncidentError } from "./incident-error";
 import {
   Select,
   SelectContent,
@@ -11,99 +13,61 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CheckCircle2, Clock } from "lucide-react";
-import { MOCK_INCIDENTS } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
-import type { Incident, ResolutionStatus } from "@/lib/types";
+import { useIncidents, useIncidentCounts, useUpdateIncidentStatus } from "@/hooks/use-incidents";
+import type { StatusFilter } from "@/lib/api";
+import type { ResolutionStatus } from "@/lib/types";
 
-type StatusFilter = "active" | "resolved" | "muted" | "all";
 type TimeWindow = "7" | "14" | "30" | "90";
-
-const STATUS_TABS: { value: StatusFilter; label: string; count?: (incidents: Incident[]) => number }[] = [
-  {
-    value: "active",
-    label: "Active",
-    count: (incidents) =>
-      incidents.filter((i) => i.resolutionStatus === "open" || i.resolutionStatus === "acknowledged").length,
-  },
-  {
-    value: "resolved",
-    label: "Resolved",
-    count: (incidents) =>
-      incidents.filter((i) => i.resolutionStatus === "resolved").length,
-  },
-  {
-    value: "muted",
-    label: "Muted",
-    count: (incidents) =>
-      incidents.filter((i) => i.resolutionStatus === "muted").length,
-  },
-  {
-    value: "all",
-    label: "All",
-  },
-];
 
 export function IncidentsPageContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("7");
 
-  const [incidents, setIncidents] = useState<Incident[]>(MOCK_INCIDENTS);
-  const orphanCount = 2;
+  const needsWindow = statusFilter === "resolved" || statusFilter === "muted";
+  const listParams = {
+    status: statusFilter,
+    ...(needsWindow ? { window: Number(timeWindow) } : {}),
+  };
 
-  // N1 fix: "All" tab shows all active + time-windowed resolved/muted
-  const filteredIncidents = useMemo(() => {
-    switch (statusFilter) {
-      case "active":
-        return incidents.filter(
-          (i) => i.resolutionStatus === "open" || i.resolutionStatus === "acknowledged"
-        );
-      case "resolved":
-        return incidents.filter((i) => i.resolutionStatus === "resolved");
-      case "muted":
-        return incidents.filter((i) => i.resolutionStatus === "muted");
-      case "all":
-        return incidents;
-      default:
-        return incidents;
-    }
-  }, [incidents, statusFilter]);
+  const { data, isLoading, isError, error } = useIncidents(listParams);
+  const { data: counts } = useIncidentCounts();
+  const mutation = useUpdateIncidentStatus();
 
   const handleStatusChange = useCallback(
-    (id: string, newStatus: ResolutionStatus) => {
-      setIncidents((prev) =>
-        prev.map((inc) =>
-          inc.id === id ? { ...inc, resolutionStatus: newStatus } : inc
-        )
-      );
+    (id: string, newStatus: ResolutionStatus, options?: { reason?: string; muteDays?: number }) => {
+      mutation.mutate({
+        id,
+        status: newStatus as "acknowledged" | "resolved" | "muted",
+        reason: options?.reason,
+        mute_days: options?.muteDays,
+      });
     },
-    []
+    [mutation]
   );
 
-  const showTimeWindow = statusFilter === "resolved" || statusFilter === "muted";
-  const isAllTab = statusFilter === "all";
+  if (isLoading) return <IncidentListSkeleton />;
+  if (isError) return <IncidentError message={error?.message ?? "Failed to load incidents"} />;
 
-  // N1: Count active vs historical for the "All" tab UX cue
-  const activeCount = useMemo(() =>
-    filteredIncidents.filter(
-      (i) => i.resolutionStatus === "open" || i.resolutionStatus === "acknowledged"
-    ).length,
-    [filteredIncidents]
-  );
-  const historicalCount = filteredIncidents.length - activeCount;
+  const incidents = data?.incidents ?? [];
+  const orphanCount = data?.orphanCount ?? 0;
+
+  const tabs: { value: StatusFilter; label: string; count?: number }[] = [
+    { value: "active", label: "Active", count: counts?.active },
+    { value: "resolved", label: "Resolved", count: counts?.resolved },
+    { value: "muted", label: "Muted", count: counts?.muted },
+    { value: "all", label: "All" },
+  ];
 
   return (
     <div className="space-y-4">
-      {/* Orphan callout banner */}
       <OrphanCalloutBanner orphanCount={orphanCount} />
 
-      {/* Status filter tabs + time window */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         {/* Tab bar */}
         <div className="flex items-center gap-1 rounded-lg border bg-muted/50 p-1">
-          {STATUS_TABS.map((tab) => {
-            const count = tab.count?.(incidents);
+          {tabs.map((tab) => {
             const isActive = statusFilter === tab.value;
-
             return (
               <button
                 key={tab.value}
@@ -116,7 +80,7 @@ export function IncidentsPageContent() {
                 )}
               >
                 {tab.label}
-                {count !== undefined && count > 0 && (
+                {tab.count !== undefined && tab.count > 0 && (
                   <span
                     className={cn(
                       "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs font-medium",
@@ -127,7 +91,7 @@ export function IncidentsPageContent() {
                         : "bg-transparent text-muted-foreground"
                     )}
                   >
-                    {count}
+                    {tab.count}
                   </span>
                 )}
               </button>
@@ -135,8 +99,8 @@ export function IncidentsPageContent() {
           })}
         </div>
 
-        {/* Time window — for resolved/muted tabs only (not "All" — active incidents have no time window) */}
-        {showTimeWindow && (
+        {/* Time window — for resolved/muted tabs only */}
+        {needsWindow && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
             <span>Last</span>
@@ -157,26 +121,16 @@ export function IncidentsPageContent() {
           </div>
         )}
 
-        {/* Count — with UX cue for "All" tab */}
+        {/* Count */}
         <p className="text-sm text-muted-foreground sm:ml-auto">
-          {isAllTab ? (
-            <>
-              {activeCount} active · {historicalCount} resolved/muted
-            </>
-          ) : (
-            <>
-              {filteredIncidents.length} incident
-              {filteredIncidents.length !== 1 ? "s" : ""}
-            </>
-          )}
+          {data?.total ?? 0} incident{(data?.total ?? 0) !== 1 ? "s" : ""}
         </p>
       </div>
 
       {/* Incident cards */}
-      {filteredIncidents.length > 0 ? (
+      {incidents.length > 0 ? (
         <div className="space-y-2">
-          {filteredIncidents.map((incident) => {
-            // N4: Only pass onStatusChange to mutable (open/acknowledged) incidents
+          {incidents.map((incident) => {
             const isMutable =
               incident.resolutionStatus === "open" ||
               incident.resolutionStatus === "acknowledged";

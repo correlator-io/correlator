@@ -11,6 +11,7 @@ import type {
   SuggestedPattern,
   Producer,
   TestStatus,
+  ResolutionStatus,
   CorrelationStatus,
   UpstreamDataset,
   DownstreamDataset,
@@ -31,7 +32,7 @@ async function apiFetch<T>(
 
   const headers: HeadersInit = {
     "Content-Type": "application/json",
-    ...(API_KEY && { "X-Api-Key": API_KEY }),
+    ...(API_KEY && { Authorization: `Bearer ${API_KEY}` }),
     ...options.headers,
   };
 
@@ -90,6 +91,16 @@ export interface ApiIncidentSummary {
   downstream_count: number;
   has_correlation_issue: boolean;
   executed_at: string;
+  resolution_status?: string;
+  resolved_by?: string;
+  resolved_at?: string | null;
+  mute_expires_at?: string | null;
+  retry_context?: {
+    total_attempts: number;
+    current_attempt: number;
+    all_failed: boolean;
+    root_run_id: string;
+  } | null;
 }
 
 interface ApiIncidentListResponse {
@@ -169,6 +180,25 @@ export interface ApiIncidentDetailResponse {
   upstream: ApiUpstreamDataset[];
   downstream: ApiDownstreamDataset[];
   correlation_status: string;
+  resolution_status?: string;
+  resolved_by?: string;
+  resolution_reason?: string;
+  resolved_at?: string | null;
+  mute_expires_at?: string | null;
+  retry_context?: {
+    total_attempts: number;
+    current_attempt: number;
+    all_failed: boolean;
+    root_run_id: string;
+    other_attempts?: {
+      incident_id: string;
+      attempt: number;
+      test_status: string;
+      executed_at: string;
+      job_run_id: string;
+      resolution_status: string;
+    }[];
+  } | null;
 }
 
 // ============================================================
@@ -254,6 +284,17 @@ function transformIncident(api: ApiIncidentSummary): Incident {
     downstreamCount: api.downstream_count,
     hasCorrelationIssue: api.has_correlation_issue,
     executedAt: api.executed_at,
+    resolutionStatus: (api.resolution_status as ResolutionStatus) ?? "open",
+    retryContext: api.retry_context
+      ? {
+          totalAttempts: api.retry_context.total_attempts,
+          currentAttempt: api.retry_context.current_attempt,
+          allFailed: api.retry_context.all_failed,
+          rootRunId: api.retry_context.root_run_id,
+        }
+      : null,
+    resolvedBy: api.resolved_by,
+    muteExpiresAt: api.mute_expires_at ?? undefined,
   };
 }
 
@@ -317,6 +358,27 @@ function transformIncidentDetail(api: ApiIncidentDetailResponse): IncidentDetail
       producer: d.producer ? normalizeProducer(d.producer) : undefined,
     })),
     correlationStatus: api.correlation_status as CorrelationStatus,
+    resolutionStatus: (api.resolution_status as ResolutionStatus) ?? "open",
+    resolvedBy: api.resolved_by,
+    resolutionReason: api.resolution_reason,
+    resolvedAt: api.resolved_at ?? null,
+    muteExpiresAt: api.mute_expires_at ?? null,
+    retryContext: api.retry_context
+      ? {
+          totalAttempts: api.retry_context.total_attempts,
+          currentAttempt: api.retry_context.current_attempt,
+          allFailed: api.retry_context.all_failed,
+          rootRunId: api.retry_context.root_run_id,
+          otherAttempts: (api.retry_context.other_attempts ?? []).map((a) => ({
+            incidentId: a.incident_id,
+            attempt: a.attempt,
+            status: a.test_status as TestStatus,
+            executedAt: a.executed_at,
+            jobRunId: a.job_run_id,
+            resolutionStatus: a.resolution_status as ResolutionStatus,
+          })),
+        }
+      : null,
   };
 }
 
@@ -365,7 +427,11 @@ function transformCorrelationHealth(
 // Public API Functions
 // ============================================================
 
+export type StatusFilter = "active" | "resolved" | "muted" | "all";
+
 export interface FetchIncidentsParams {
+  status?: StatusFilter;
+  window?: number;
   limit?: number;
   offset?: number;
   since?: string;
@@ -376,6 +442,12 @@ export async function fetchIncidents(
 ): Promise<IncidentListResponse> {
   const searchParams = new URLSearchParams();
 
+  if (params.status) {
+    searchParams.set("status", params.status);
+  }
+  if (params.window !== undefined) {
+    searchParams.set("window", String(params.window));
+  }
   if (params.limit !== undefined) {
     searchParams.set("limit", String(params.limit));
   }
@@ -398,6 +470,42 @@ export async function fetchIncidents(
     offset: response.offset,
     orphanCount: response.orphan_count ?? 0,
   };
+}
+
+export interface IncidentCounts {
+  active: number;
+  resolved: number;
+  muted: number;
+}
+
+export async function fetchIncidentCounts(): Promise<IncidentCounts> {
+  return apiFetch<IncidentCounts>("/api/v1/incidents/counts");
+}
+
+export interface UpdateStatusParams {
+  status: "acknowledged" | "resolved" | "muted";
+  reason?: string;
+  note?: string;
+  mute_days?: number;
+}
+
+export interface UpdateStatusResponse {
+  id: string;
+  resolution_status: string;
+  resolved_by: string;
+  resolved_at: string;
+  resolution_reason: string | null;
+  mute_expires_at: string | null;
+}
+
+export async function updateIncidentStatus(
+  id: string,
+  params: UpdateStatusParams
+): Promise<UpdateStatusResponse> {
+  return apiFetch<UpdateStatusResponse>(`/api/v1/incidents/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(params),
+  });
 }
 
 export async function fetchIncidentDetail(id: string): Promise<IncidentDetail> {

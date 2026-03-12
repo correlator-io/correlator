@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, CheckCircle2, VolumeX, Loader2 } from "lucide-react";
+import { Eye, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
