@@ -28,6 +28,10 @@
 --    - updated_at tracks key lifecycle changes
 --    - Trigger: update_api_keys_updated_at
 --
+-- 6. incident_resolutions - Status transitions (open → acknowledged/resolved/muted)
+--    - updated_at tracks last status transition
+--    - Trigger: update_incident_resolutions_updated_at
+--
 -- IMMUTABLE TABLES (have only created_at):
 -- These tables follow event sourcing principles - rows are never updated.
 --
@@ -276,7 +280,76 @@ COMMENT ON COLUMN test_results.test_name IS 'Extended to VARCHAR(750) based on r
 COMMENT ON COLUMN test_results.facets IS 'Raw OpenLineage input facets from validation event — preserves assertions, data quality metrics for auditability';
 
 -- =====================================================
--- 6. LINEAGE EVENT IDEMPOTENCY - Duplicate detection
+-- 6. INCIDENT RESOLUTIONS - Resolution lifecycle state
+-- =====================================================
+--
+-- DESIGN: Separate table keeps OpenLineage-derived data (test_results) pure.
+-- An incident with NO row in this table is implicitly "open" — rows are only
+-- created on the first status transition (acknowledge, resolve, mute) or by
+-- the auto-resolve path.
+--
+-- MUTABILITY: Mutable (status transitions)
+-- - Status transitions: open → acknowledged, open → resolved, open → muted,
+--   acknowledged → resolved, acknowledged → muted.
+-- - Resolved/muted incidents are immutable for alpha (no reopening).
+-- - updated_at tracks the last status transition.
+--
+-- AUTO-RESOLVE: When a passing test result is ingested for the same
+-- (test_name, dataset_urn) as an open/acknowledged incident, the system
+-- auto-resolves with resolved_by='auto', resolution_reason='auto_pass'.
+-- Anti-flapping: 1-hour grace period prevents resolution from intermittent passes.
+-- =====================================================
+CREATE TABLE incident_resolutions (
+    id BIGSERIAL PRIMARY KEY,
+
+    test_result_id BIGINT NOT NULL REFERENCES test_results(id) ON DELETE CASCADE,
+
+    -- Resolution state
+    status VARCHAR(20) NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'acknowledged', 'resolved', 'muted')),
+
+    -- Who/what changed the status
+    -- 'auto' for auto-resolve, client_id for manual actions
+    resolved_by VARCHAR(100),
+
+    -- Why: 'auto_pass', 'manual', 'false_positive', 'expected'
+    resolution_reason VARCHAR(50),
+
+    -- Optional free-text note
+    resolution_note TEXT,
+
+    -- For auto-resolve: the passing test_result_id that triggered resolution
+    resolved_by_test_result_id BIGINT REFERENCES test_results(id) ON DELETE SET NULL,
+
+    -- Mute expiry (only for muted status)
+    mute_expires_at TIMESTAMP WITH TIME ZONE,
+
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- Each test_result has at most one resolution record
+    CONSTRAINT uq_incident_resolution_test_result UNIQUE (test_result_id)
+);
+
+-- Partial index: fast lookup for active resolutions (open/acknowledged)
+CREATE INDEX idx_incident_resolutions_status
+    ON incident_resolutions(status) WHERE status IN ('open', 'acknowledged');
+
+-- Partial index: mute expiry cleanup
+CREATE INDEX idx_incident_resolutions_mute_expiry
+    ON incident_resolutions(mute_expires_at)
+    WHERE status = 'muted' AND mute_expires_at IS NOT NULL;
+
+COMMENT ON TABLE incident_resolutions IS 'Incident resolution lifecycle state — separate from OpenLineage-derived test_results to keep ingested data pure';
+COMMENT ON COLUMN incident_resolutions.test_result_id IS 'Links to the test_results row that constitutes the incident — 1:1 relationship';
+COMMENT ON COLUMN incident_resolutions.status IS 'Resolution state: open (default/implicit), acknowledged, resolved, muted';
+COMMENT ON COLUMN incident_resolutions.resolved_by IS 'Actor: auto for auto-resolve, client_id for manual actions';
+COMMENT ON COLUMN incident_resolutions.resolution_reason IS 'Reason: auto_pass, manual, false_positive, expected';
+COMMENT ON COLUMN incident_resolutions.resolved_by_test_result_id IS 'For auto-resolve: the passing test result that triggered resolution';
+COMMENT ON COLUMN incident_resolutions.mute_expires_at IS 'When a muted incident auto-expires back to open (null = no expiry)';
+
+-- =====================================================
+-- 7. LINEAGE EVENT IDEMPOTENCY - Duplicate detection
 -- =====================================================
 -- 
 -- Idempotency Strategy:
@@ -319,7 +392,7 @@ COMMENT ON COLUMN lineage_event_idempotency.idempotency_key IS 'SHA-256 hash of 
 COMMENT ON COLUMN lineage_event_idempotency.expires_at IS 'TTL expiration (24 hours from created_at) - events older than this are not deduped';
 
 -- =====================================================
--- 7. API KEYS - Authentication
+-- 8. API KEYS - Authentication
 -- =====================================================
 -- 
 -- Dual-Hash Strategy for Security + Performance:
@@ -380,7 +453,7 @@ COMMENT ON COLUMN api_keys.key_hash IS 'Bcrypt hash of API key - use bcrypt.Comp
 COMMENT ON COLUMN api_keys.key_lookup_hash IS 'SHA-256 hash of plaintext key for O(1) lookup performance';
 
 -- =====================================================
--- 8. API KEY AUDIT LOG
+-- 9. API KEY AUDIT LOG
 -- =====================================================
 CREATE TABLE api_key_audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -450,7 +523,13 @@ SELECT
     root_jr.job_namespace   AS root_parent_job_namespace,
     root_jr.current_state   AS root_parent_job_status,
     root_jr.completed_at    AS root_parent_job_completed_at,
-    root_jr.producer_name   AS root_parent_producer_name
+    root_jr.producer_name   AS root_parent_producer_name,
+
+    -- Test run's root parent (the orchestrator retry group key).
+    -- The test run (e.g., GE validation) may have a different root_parent_run_id
+    -- than the producing job (e.g., dbt model). Retry deduplication groups by
+    -- the test run's root parent, not the producer's.
+    test_jr.root_parent_run_id AS test_root_parent_run_id
 
 FROM test_results tr
     JOIN resolved_datasets rd_test ON tr.dataset_urn = rd_test.raw_urn
@@ -460,6 +539,7 @@ FROM test_results tr
     JOIN job_runs jr ON le.run_id = jr.run_id
     LEFT JOIN job_runs parent_jr ON jr.parent_run_id = parent_jr.run_id
     LEFT JOIN job_runs root_jr ON jr.root_parent_run_id = root_jr.run_id
+    LEFT JOIN job_runs test_jr ON tr.run_id = test_jr.run_id
 
 WHERE tr.status IN ('failed', 'error')
 
@@ -731,6 +811,10 @@ CREATE TRIGGER update_test_results_updated_at
     BEFORE UPDATE ON test_results
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_incident_resolutions_updated_at
+    BEFORE UPDATE ON incident_resolutions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- =====================================================
 -- VALIDATION
 -- =====================================================
@@ -758,6 +842,10 @@ BEGIN
         RAISE EXCEPTION 'Table test_results not created';
     END IF;
 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'incident_resolutions') THEN
+        RAISE EXCEPTION 'Table incident_resolutions not created';
+    END IF;
+
     -- Verify materialized views (use current_schema() for schema-agnostic validation)
     IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'incident_correlation_view') THEN
         RAISE EXCEPTION 'Materialized view incident_correlation_view not created';
@@ -782,7 +870,7 @@ END $$;
 -- Success message
 SELECT
     'Initial OpenLineage schema migration completed' as status,
-    9 as tables_created,
+    10 as tables_created,
     3 as materialized_views_created,
     1 as functions_created,
     'OpenLineage v1.0 compliant, correlation-ready' as note,

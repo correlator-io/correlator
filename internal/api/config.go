@@ -81,7 +81,7 @@ func LoadServerConfig() *ServerConfig {
 			config.GetEnvStr("CORRELATOR_CORS_ALLOWED_ORIGINS", "*"),
 		), // "*" is Development default - should be restricted in production
 		CORSAllowedMethods: config.ParseCommaSeparatedList(
-			config.GetEnvStr("CORRELATOR_CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS"),
+			config.GetEnvStr("CORRELATOR_CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH"),
 		),
 		CORSAllowedHeaders: config.ParseCommaSeparatedList(
 			config.GetEnvStr(

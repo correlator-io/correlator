@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 type (
 	// incidentListParams holds parsed query parameters for incident list.
 	incidentListParams struct {
-		since  *time.Time
-		limit  int
-		offset int
+		since        *time.Time
+		limit        int
+		offset       int
+		statusFilter correlation.ResolutionStatusFilter
+		windowDays   int
 	}
 
 	// paramError represents a parameter validation error.
@@ -30,6 +33,9 @@ const (
 	defaultLimit = 20
 	maxLimit     = 100
 	minLimit     = 1
+
+	defaultWindowDays = 7
+	maxWindowDays     = 90
 )
 
 func (e *paramError) Error() string {
@@ -133,8 +139,23 @@ func parseIncidentListParams(r *http.Request) (*incidentListParams, error) {
 	q := r.URL.Query()
 
 	params := &incidentListParams{
-		limit:  defaultLimit,
-		offset: 0,
+		limit:        defaultLimit,
+		offset:       0,
+		statusFilter: correlation.StatusFilterActive,
+	}
+
+	// Parse resolution status filter
+	if statusStr := q.Get("status"); statusStr != "" {
+		sf := correlation.ResolutionStatusFilter(statusStr)
+		if !correlation.IsValidResolutionStatusFilter(sf) {
+			return nil, &paramError{param: "status", msg: "must be one of: active, resolved, muted, all"}
+		}
+
+		params.statusFilter = sf
+	}
+
+	if err := parseWindowParam(q, params); err != nil {
+		return nil, err
 	}
 
 	// Parse since (ISO8601 timestamp)
@@ -147,46 +168,76 @@ func parseIncidentListParams(r *http.Request) (*incidentListParams, error) {
 		params.since = &t
 	}
 
-	// Parse limit
-	if limitStr := q.Get("limit"); limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil {
-			return nil, &paramError{param: "limit", msg: "must be a valid integer"}
-		}
-
-		if limit < minLimit || limit > maxLimit {
-			return nil, &paramError{param: "limit", msg: "must be between 1 and 100"}
-		}
-
-		params.limit = limit
-	}
-
-	// Parse offset
-	if offsetStr := q.Get("offset"); offsetStr != "" {
-		offset, err := strconv.Atoi(offsetStr)
-		if err != nil {
-			return nil, &paramError{param: "offset", msg: "must be a valid integer"}
-		}
-
-		if offset < 0 {
-			return nil, &paramError{param: "offset", msg: "must be >= 0"}
-		}
-
-		params.offset = offset
+	if err := parsePaginationParams(q, params); err != nil {
+		return nil, err
 	}
 
 	return params, nil
 }
 
-// buildIncidentFilter creates a correlation.IncidentFilter from parsed parameters.
-func buildIncidentFilter(params *incidentListParams) *correlation.IncidentFilter {
-	if params.since == nil {
-		return nil // No filter needed
+// parseWindowParam parses the window query parameter and applies defaults for historical views.
+func parseWindowParam(q url.Values, params *incidentListParams) error {
+	if windowStr := q.Get("window"); windowStr != "" {
+		window, err := strconv.Atoi(windowStr)
+		if err != nil {
+			return &paramError{param: "window", msg: "must be a valid integer"}
+		}
+
+		if window < 1 || window > maxWindowDays {
+			return &paramError{param: "window", msg: "must be between 1 and 90"}
+		}
+
+		params.windowDays = window
+	} else if params.statusFilter != correlation.StatusFilterActive {
+		params.windowDays = defaultWindowDays
 	}
 
-	return &correlation.IncidentFilter{
-		TestExecutedAfter: params.since,
+	return nil
+}
+
+// parsePaginationParams parses limit and offset query parameters.
+func parsePaginationParams(q url.Values, params *incidentListParams) error {
+	if limitStr := q.Get("limit"); limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil {
+			return &paramError{param: "limit", msg: "must be a valid integer"}
+		}
+
+		if limit < minLimit || limit > maxLimit {
+			return &paramError{param: "limit", msg: "must be between 1 and 100"}
+		}
+
+		params.limit = limit
 	}
+
+	if offsetStr := q.Get("offset"); offsetStr != "" {
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil {
+			return &paramError{param: "offset", msg: "must be a valid integer"}
+		}
+
+		if offset < 0 {
+			return &paramError{param: "offset", msg: "must be >= 0"}
+		}
+
+		params.offset = offset
+	}
+
+	return nil
+}
+
+// buildIncidentFilter creates a correlation.IncidentFilter from parsed parameters.
+func buildIncidentFilter(params *incidentListParams) *correlation.IncidentFilter {
+	filter := &correlation.IncidentFilter{
+		StatusFilter: params.statusFilter,
+		WindowDays:   params.windowDays,
+	}
+
+	if params.since != nil {
+		filter.TestExecutedAfter = params.since
+	}
+
+	return filter
 }
 
 // extractRunIDs returns unique run IDs from a slice of incidents.
@@ -212,7 +263,7 @@ func mapIncidentToSummary(
 	downstreamCounts map[string]int,
 	orphanDatasetSet map[string]bool,
 ) IncidentSummary {
-	return IncidentSummary{
+	summary := IncidentSummary{
 		ID:                  strconv.FormatInt(inc.TestResultID, 10),
 		TestName:            inc.TestName,
 		TestType:            inc.TestType,
@@ -225,7 +276,26 @@ func mapIncidentToSummary(
 		DownstreamCount:     downstreamCounts[inc.RunID],
 		HasCorrelationIssue: orphanDatasetSet[inc.DatasetURN],
 		ExecutedAt:          inc.TestExecutedAt,
+		ResolutionStatus:    string(inc.ResolutionStatus),
 	}
+
+	if inc.ResolvedBy != "" {
+		summary.ResolvedBy = inc.ResolvedBy
+	}
+
+	summary.ResolvedAt = inc.ResolvedAt
+	summary.MuteExpiresAt = inc.MuteExpiresAt
+
+	if inc.RunRetryContext != nil {
+		summary.RetryContext = &RunRetryContextSummary{
+			TotalAttempts:  inc.RunRetryContext.TotalAttempts,
+			CurrentAttempt: inc.RunRetryContext.CurrentAttempt,
+			AllFailed:      inc.RunRetryContext.AllFailed,
+			RootRunID:      inc.RunRetryContext.RootRunID,
+		}
+	}
+
+	return summary
 }
 
 // buildOrphanDatasetSet creates a set of orphan dataset URNs for O(1) lookup.

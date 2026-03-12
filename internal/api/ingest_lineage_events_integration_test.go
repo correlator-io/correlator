@@ -72,14 +72,14 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 		LogLevel:           slog.LevelInfo,
 		MaxRequestSize:     defaultMaxRequestSize,
 		CORSAllowedOrigins: []string{"*"},
-		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		CORSAllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
 
 	// Create server with dependencies (no rate limiter for lineage tests)
 	// lineageStore implements both ingestion.Store and correlation.Store
-	server := NewServer(cfg, keyStore, nil, lineageStore, lineageStore)
+	server := NewServer(cfg, keyStore, nil, lineageStore, lineageStore, lineageStore)
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {

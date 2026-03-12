@@ -67,6 +67,10 @@ describe("transformIncident", () => {
       downstreamCount: 5,
       hasCorrelationIssue: false,
       executedAt: "2026-01-23T10:30:00Z",
+      resolutionStatus: "open",
+      retryContext: null,
+      resolvedBy: undefined,
+      muteExpiresAt: undefined,
     });
   });
 

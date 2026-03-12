@@ -28,8 +28,9 @@ type Server struct {
 	apiKeyStore      storage.APIKeyStore
 	rateLimiter      middleware.RateLimiter
 	ingestionStore   ingestion.Store
-	correlationStore correlation.Store    // Optional: enables correlation API endpoints (nil = disabled)
-	validator        *ingestion.Validator // Shared validator (thread-safe, created once)
+	correlationStore correlation.Store           // Optional: enables correlation API endpoints (nil = disabled)
+	resolutionStore  correlation.ResolutionStore // Optional: enables resolution write endpoints (nil = disabled)
+	validator        *ingestion.Validator        // Shared validator (thread-safe, created once)
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
@@ -44,12 +45,14 @@ type Server struct {
 //   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
 //   - ingestionStore: open lineage events store (REQUIRED - panics if nil)
 //   - correlationStore: Correlation query implementation (nil disables correlation endpoints)
+//   - resolutionStore: Resolution write implementation (nil disables resolution endpoints)
 func NewServer(
 	cfg *ServerConfig,
 	apiKeyStore storage.APIKeyStore,
 	rateLimiter middleware.RateLimiter,
 	ingestionStore ingestion.Store,
 	correlationStore correlation.Store,
+	resolutionStore correlation.ResolutionStore,
 ) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -75,6 +78,7 @@ func NewServer(
 		rateLimiter:      rateLimiter,
 		ingestionStore:   ingestionStore,
 		correlationStore: correlationStore,
+		resolutionStore:  resolutionStore,
 		validator:        validator,
 	}
 

@@ -3,6 +3,61 @@ package correlation
 
 import "time"
 
+// ResolutionStatus constants define the valid resolution states.
+const (
+	ResolutionOpen         ResolutionStatus = "open"
+	ResolutionAcknowledged ResolutionStatus = "acknowledged"
+	ResolutionResolved     ResolutionStatus = "resolved"
+	ResolutionMuted        ResolutionStatus = "muted"
+)
+
+// validResolutionStatuses is the set of all valid resolution states.
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validResolutionStatuses = map[ResolutionStatus]bool{
+	ResolutionOpen:         true,
+	ResolutionAcknowledged: true,
+	ResolutionResolved:     true,
+	ResolutionMuted:        true,
+}
+
+// IsValidResolutionStatus checks whether the given status is a valid resolution state.
+func IsValidResolutionStatus(s ResolutionStatus) bool {
+	return validResolutionStatuses[s]
+}
+
+// validTransitions defines the allowed state transitions for incident resolution.
+// Resolved and muted are terminal states in alpha (no reopening).
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validTransitions = map[ResolutionStatus][]ResolutionStatus{
+	ResolutionOpen:         {ResolutionAcknowledged, ResolutionResolved, ResolutionMuted},
+	ResolutionAcknowledged: {ResolutionResolved, ResolutionMuted},
+}
+
+// ResolutionStatusFilter constants define the valid status filter values for listing incidents.
+const (
+	StatusFilterActive   ResolutionStatusFilter = "active" // open + acknowledged
+	StatusFilterResolved ResolutionStatusFilter = "resolved"
+	StatusFilterMuted    ResolutionStatusFilter = "muted"
+	StatusFilterAll      ResolutionStatusFilter = "all"
+)
+
+// validStatusFilters is the set of all valid status filter values.
+//
+//nolint:gochecknoglobals // Package-level lookup table, read-only after init.
+var validStatusFilters = map[ResolutionStatusFilter]bool{
+	StatusFilterActive:   true,
+	StatusFilterResolved: true,
+	StatusFilterMuted:    true,
+	StatusFilterAll:      true,
+}
+
+// IsValidResolutionStatusFilter checks whether the given filter is a valid status filter.
+func IsValidResolutionStatusFilter(f ResolutionStatusFilter) bool {
+	return validStatusFilters[f]
+}
+
 type (
 	// Incident represents a single row from the incident_correlation_view materialized view.
 	//
@@ -71,6 +126,17 @@ type (
 		RootParentJobStatus      string     // Root parent job status
 		RootParentJobCompletedAt *time.Time // Root parent job completion timestamp
 		RootParentProducerName   string     // Root parent producer (e.g., "airflow")
+		// Test run's root parent — the orchestrator retry group key.
+		// May differ from RootParentRunID when test runner (GE) and producer (dbt) are separate tasks.
+		TestRootParentRunID string
+		// Resolution fields (joined from incident_resolutions, NULL = implicitly open)
+		ResolutionStatus ResolutionStatus // "open" if no row in incident_resolutions
+		ResolvedBy       string           // "auto" or client_id (empty if open)
+		ResolutionReason string           // "auto_pass", "manual", etc. (empty if open)
+		MuteExpiresAt    *time.Time       // Only for muted status
+		ResolvedAt       *time.Time       // When the status was last changed
+		// Run retry context (computed via window functions, only populated in list queries)
+		RunRetryContext *RunRetryContext
 	}
 
 	// OrchestrationNode represents one level in the orchestration chain.
@@ -114,6 +180,9 @@ type (
 		RunID              *string
 		TestExecutedAfter  *time.Time
 		TestExecutedBefore *time.Time
+		// Resolution lifecycle filters
+		StatusFilter ResolutionStatusFilter // "active" (default), "resolved", "muted", "all"
+		WindowDays   int                    // Time window in days for historical views (0 = no window)
 	}
 
 	// Pagination specifies pagination parameters for list queries.
@@ -318,4 +387,85 @@ type (
 		MatchReason string
 		Producer    string // Producer of the matched dataset (e.g., "dbt", "airflow")
 	}
+
+	// IncidentResolution represents the resolution state of a single incident.
+	// Maps to the incident_resolutions table. An incident with no resolution row
+	// is implicitly "open".
+	IncidentResolution struct {
+		ID                     int64
+		TestResultID           int64
+		Status                 ResolutionStatus
+		ResolvedBy             string // "auto" or client_id
+		ResolutionReason       string // "auto_pass", "manual", "false_positive", "expected"
+		ResolutionNote         string
+		ResolvedByTestResultID *int64     // For auto-resolve: the passing test result
+		MuteExpiresAt          *time.Time // Only for muted status
+		CreatedAt              time.Time
+		UpdatedAt              time.Time
+	}
+
+	// ResolutionStatus represents the resolution state of an incident.
+	ResolutionStatus string
+
+	// ResolutionRequest represents a manual status change request from the API.
+	ResolutionRequest struct {
+		Status   ResolutionStatus
+		Reason   string // "manual", "false_positive", "expected"
+		Note     string
+		MuteDays int // Only for muted; default 30
+	}
+
+	// ResolutionStatusFilter represents the status filter for listing incidents.
+	ResolutionStatusFilter string
+
+	// IncidentCounts holds the count of incidents by resolution status.
+	// Used by GET /api/v1/incidents/counts.
+	IncidentCounts struct {
+		Active   int
+		Resolved int
+		Muted    int
+	}
+
+	// RunRetryContext provides retry metadata for an incident whose test ran
+	// multiple times under the same orchestrator run (e.g., Airflow retry).
+	// Nil when no retries exist (total_attempts == 1).
+	RunRetryContext struct {
+		TotalAttempts  int    // Total number of attempts for this (test_name, dataset_urn, root_parent_run_id)
+		CurrentAttempt int    // Ordinal position of this attempt (1-based)
+		AllFailed      bool   // True if every attempt in the group has status IN ('failed', 'error')
+		RootRunID      string // The root_parent_run_id grouping key
+		// OtherAttempts is only populated on detail responses, not list.
+		OtherAttempts []RunRetryAttempt
+	}
+
+	// RunRetryAttempt represents one sibling attempt in a retry group (excludes current incident).
+	RunRetryAttempt struct {
+		IncidentID       string
+		Attempt          int
+		TestStatus       string
+		ExecutedAt       time.Time
+		JobRunID         string
+		ResolutionStatus ResolutionStatus
+	}
 )
+
+// IsTerminal returns true if the status is immutable (no further transitions allowed in alpha).
+func (s ResolutionStatus) IsTerminal() bool {
+	return s == ResolutionResolved || s == ResolutionMuted
+}
+
+// CanTransitionTo checks whether transitioning from the current status to the target is allowed.
+func (s ResolutionStatus) CanTransitionTo(target ResolutionStatus) bool {
+	allowed, ok := validTransitions[s]
+	if !ok {
+		return false
+	}
+
+	for _, a := range allowed {
+		if a == target {
+			return true
+		}
+	}
+
+	return false
+}

@@ -196,8 +196,8 @@ func start(args []string) error {
 		logger.Info("Kafka consumer disabled (set CORRELATOR_KAFKA_ENABLED=true to enable)")
 	}
 
-	// lineageStore implements both ingestion.Store and correlation.Store interfaces
-	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore)
+	// lineageStore implements ingestion.Store, correlation.Store, and correlation.ResolutionStore
+	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
 
 	// --- Signal handling: orchestrate all subsystems ---
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -272,37 +273,11 @@ func (s *LineageStore) QueryIncidents(
 		_ = rows.Close()
 	}()
 
-	var results []correlation.Incident
+	results, total, err := scanIncidentRows(rows)
+	if err != nil {
+		s.logger.Error("Failed to scan incident rows", slog.Any("error", err))
 
-	var total int
-
-	for rows.Next() {
-		var r correlation.Incident
-
-		err := rows.Scan(
-			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
-			&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
-			&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
-			&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
-			&r.JobStartedAt, &r.JobCompletedAt,
-			&r.JobProducerName,
-			&total,
-		)
-		if err != nil {
-			s.logger.Error("Failed to scan incident correlation row",
-				slog.Any("error", err))
-
-			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
-		}
-
-		results = append(results, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		s.logger.Error("Error iterating incident correlation rows",
-			slog.Any("error", err))
-
-		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+		return nil, err
 	}
 
 	duration := time.Since(start)
@@ -313,7 +288,6 @@ func (s *LineageStore) QueryIncidents(
 		slog.Bool("filtered", filter != nil),
 		slog.Bool("paginated", pagination != nil))
 
-	// Warn if query is slow (>500ms)
 	if duration > 500*time.Millisecond {
 		s.logger.Warn("Slow incident correlation query detected",
 			slog.Duration("duration", duration),
@@ -326,15 +300,145 @@ func (s *LineageStore) QueryIncidents(
 	}, nil
 }
 
-// buildIncidentCorrelationQuery constructs SQL query with WHERE clause based on filter.
-// Uses COUNT(*) OVER() window function for efficient pagination.
+// scanIncidentRows scans SQL rows into Incident slice with run retry context.
+func scanIncidentRows(rows *sql.Rows) ([]correlation.Incident, int, error) {
+	var results []correlation.Incident
+
+	var total int
+
+	for rows.Next() {
+		var r correlation.Incident
+
+		var resStatus, resResolvedBy, resReason sql.NullString
+
+		var resMuteExpires, resUpdatedAt sql.NullTime
+
+		var rootParentRunID string
+
+		var totalAttempts, currentAttempt int
+
+		var allFailed bool
+
+		err := rows.Scan(
+			&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
+			&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
+			&r.DatasetURN, &r.DatasetName, &r.DatasetNS,
+			&r.RunID, &r.JobName, &r.JobNamespace, &r.JobStatus, &r.JobEventType,
+			&r.JobStartedAt, &r.JobCompletedAt,
+			&r.JobProducerName,
+			&resStatus, &resResolvedBy, &resReason, &resMuteExpires, &resUpdatedAt,
+			&rootParentRunID,
+			&totalAttempts, &currentAttempt, &allFailed,
+			&total,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		r.ResolutionStatus = correlation.ResolutionOpen
+		if resStatus.Valid {
+			r.ResolutionStatus = correlation.ResolutionStatus(resStatus.String)
+		}
+
+		r.ResolvedBy = resResolvedBy.String
+		r.ResolutionReason = resReason.String
+
+		if resMuteExpires.Valid {
+			r.MuteExpiresAt = &resMuteExpires.Time
+		}
+
+		if resUpdatedAt.Valid {
+			r.ResolvedAt = &resUpdatedAt.Time
+		}
+
+		if totalAttempts > 1 {
+			r.RunRetryContext = &correlation.RunRetryContext{
+				TotalAttempts:  totalAttempts,
+				CurrentAttempt: currentAttempt,
+				AllFailed:      allFailed,
+				RootRunID:      rootParentRunID,
+			}
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	return results, total, nil
+}
+
+// buildIncidentCorrelationQuery constructs SQL query with retry deduplication.
+//
+// Uses a CTE with ROW_NUMBER() to deduplicate by (test_name, dataset_urn, test_root_parent_run_id),
+// keeping only the latest attempt. Window functions compute retry context (total_attempts,
+// current_attempt, all_failed) alongside the dedup.
+//
+// Incidents without a test_root_parent_run_id are never grouped (each is its own group).
+//
 // Returns (query, args) for use with QueryContext.
 func buildIncidentCorrelationQuery(
 	filter *correlation.IncidentFilter,
 	pagination *correlation.Pagination,
 ) (string, []interface{}) {
-	// Use COUNT(*) OVER() to get total count in the same query
-	baseQuery := `
+	conditions, args, paramIndex := buildFilterConditions(filter)
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Two-stage CTE:
+	// 1. deduped: Deduplicate by test_result_id (the materialized view can produce
+	//    multiple rows per test result when multiple runs output the same dataset).
+	//    We keep the row whose job_run_id matches the test_result's own run_id,
+	//    falling back to the most recent job run.
+	// 2. ranked: Apply retry grouping via (test_name, dataset_urn, test_root_parent_run_id)
+	//    with ROW_NUMBER() for dedup and window functions for retry context.
+	query := `
+		WITH deduped AS (
+			SELECT DISTINCT ON (icv.test_result_id)
+				icv.test_result_id, icv.test_name, icv.test_type, icv.test_status, icv.test_message,
+				icv.test_executed_at, icv.test_duration_ms, icv.test_producer_name,
+				icv.dataset_urn, icv.dataset_name, icv.dataset_namespace,
+				icv.job_run_id, icv.job_name, icv.job_namespace, icv.job_status, icv.job_event_type,
+				icv.job_started_at, icv.job_completed_at,
+				icv.job_producer_name,
+				ir.status AS resolution_status,
+				ir.resolved_by,
+				ir.resolution_reason,
+				ir.mute_expires_at,
+				ir.updated_at AS resolution_updated_at,
+				COALESCE(icv.test_root_parent_run_id::text, '') AS test_root_parent_run_id
+			FROM incident_correlation_view icv
+			LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id` + whereClause + `
+			ORDER BY icv.test_result_id, icv.job_started_at DESC
+		),
+		ranked AS (
+			SELECT
+				d.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+					ORDER BY d.test_executed_at DESC
+				) AS row_num,
+				COUNT(*) OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+				) AS total_attempts,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+					ORDER BY d.test_executed_at ASC
+				) AS attempt_asc,
+				BOOL_AND(d.test_status IN ('failed', 'error')) OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+				) AS all_failed
+			FROM deduped d
+		)
 		SELECT
 			test_result_id, test_name, test_type, test_status, test_message,
 			test_executed_at, test_duration_ms, test_producer_name,
@@ -342,26 +446,21 @@ func buildIncidentCorrelationQuery(
 			job_run_id, job_name, job_namespace, job_status, job_event_type,
 			job_started_at, job_completed_at,
 			job_producer_name,
+			resolution_status, resolved_by, resolution_reason, mute_expires_at, resolution_updated_at,
+			test_root_parent_run_id,
+			total_attempts, attempt_asc AS current_attempt, all_failed,
 			COUNT(*) OVER() AS total_count
-		FROM incident_correlation_view
-	`
+		FROM ranked
+		WHERE row_num = 1
+		ORDER BY test_executed_at DESC`
 
-	conditions, args, paramIndex := buildFilterConditions(filter)
-
-	if len(conditions) > 0 {
-		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	baseQuery += " ORDER BY test_executed_at DESC"
-
-	// Add pagination (LIMIT/OFFSET)
 	if pagination != nil {
-		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIndex, paramIndex+1)
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIndex, paramIndex+1)
 
 		args = append(args, pagination.Limit, pagination.Offset)
 	}
 
-	return baseQuery, args
+	return query, args
 }
 
 // buildFilterConditions extracts filter conditions from IncidentFilter.
@@ -378,39 +477,78 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 	paramIndex := 1
 
 	if filter.JobStatus != nil {
-		conditions = append(conditions, fmt.Sprintf("job_status = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_status = $%d", paramIndex))
 		args = append(args, *filter.JobStatus)
 		paramIndex++
 	}
 
 	if filter.JobProducerName != nil {
-		conditions = append(conditions, fmt.Sprintf("job_producer_name = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_producer_name = $%d", paramIndex))
 		args = append(args, *filter.JobProducerName)
 		paramIndex++
 	}
 
 	if filter.DatasetURN != nil {
-		conditions = append(conditions, fmt.Sprintf("dataset_urn = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.dataset_urn = $%d", paramIndex))
 		args = append(args, *filter.DatasetURN)
 		paramIndex++
 	}
 
 	if filter.RunID != nil {
-		conditions = append(conditions, fmt.Sprintf("job_run_id = $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.job_run_id = $%d", paramIndex))
 		args = append(args, *filter.RunID)
 		paramIndex++
 	}
 
 	if filter.TestExecutedAfter != nil {
-		conditions = append(conditions, fmt.Sprintf("test_executed_at > $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.test_executed_at > $%d", paramIndex))
 		args = append(args, *filter.TestExecutedAfter)
 		paramIndex++
 	}
 
 	if filter.TestExecutedBefore != nil {
-		conditions = append(conditions, fmt.Sprintf("test_executed_at < $%d", paramIndex))
+		conditions = append(conditions, fmt.Sprintf("icv.test_executed_at < $%d", paramIndex))
 		args = append(args, *filter.TestExecutedBefore)
 		paramIndex++
+	}
+
+	// Resolution status filtering
+	switch filter.StatusFilter {
+	case correlation.StatusFilterActive, "":
+		// Active = open + acknowledged. No resolution row = implicitly open.
+		conditions = append(
+			conditions, "(ir.status IS NULL OR ir.status IN ('open', 'acknowledged'))",
+		)
+	case correlation.StatusFilterResolved:
+		conditions = append(conditions, "ir.status = 'resolved'")
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf("ir.updated_at >= NOW() - $%d * INTERVAL '1 day'", paramIndex),
+			)
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
+	case correlation.StatusFilterMuted:
+		conditions = append(conditions, "ir.status = 'muted'")
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf("ir.updated_at >= NOW() - $%d * INTERVAL '1 day'", paramIndex),
+			)
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
+	case correlation.StatusFilterAll:
+		// No resolution status filter — show everything.
+		// Apply window to resolved/muted only (active incidents always visible).
+		if filter.WindowDays > 0 {
+			conditions = append(
+				conditions, fmt.Sprintf(
+					"(ir.status IS NULL OR ir.status IN ('open', 'acknowledged') OR "+
+						"ir.updated_at >= NOW() - $%d * INTERVAL '1 day')",
+					paramIndex))
+			args = append(args, filter.WindowDays)
+			paramIndex++
+		}
 	}
 
 	return conditions, args, paramIndex
@@ -428,23 +566,32 @@ func buildFilterConditions(filter *correlation.IncidentFilter) ([]string, []inte
 // Returns:
 //   - Pointer to Incident (nil if not found, no error)
 //   - Error if query fails or context is cancelled
+//
+//nolint:funlen // Long due to scanning 36 columns from the correlation view + resolution JOIN
 func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64) (*correlation.Incident, error) {
 	start := time.Now()
 
 	query := `
 		SELECT
-			test_result_id, test_name, test_type, test_status, test_message,
-			test_executed_at, test_duration_ms, test_producer_name,
-			dataset_urn, dataset_name, dataset_namespace,
-			job_run_id, job_name, job_namespace, job_status, job_event_type,
-			job_started_at, job_completed_at,
-			job_producer_name,
-			parent_run_id, parent_job_name, parent_job_namespace,
-			parent_job_status, parent_job_completed_at, parent_producer_name,
-			root_parent_run_id, root_parent_job_name, root_parent_job_namespace,
-			root_parent_job_status, root_parent_job_completed_at, root_parent_producer_name
-		FROM incident_correlation_view
-		WHERE test_result_id = $1
+			icv.test_result_id, icv.test_name, icv.test_type, icv.test_status, icv.test_message,
+			icv.test_executed_at, icv.test_duration_ms, icv.test_producer_name,
+			icv.dataset_urn, icv.dataset_name, icv.dataset_namespace,
+			icv.job_run_id, icv.job_name, icv.job_namespace, icv.job_status, icv.job_event_type,
+			icv.job_started_at, icv.job_completed_at,
+			icv.job_producer_name,
+			icv.parent_run_id, icv.parent_job_name, icv.parent_job_namespace,
+			icv.parent_job_status, icv.parent_job_completed_at, icv.parent_producer_name,
+			icv.root_parent_run_id, icv.root_parent_job_name, icv.root_parent_job_namespace,
+			icv.root_parent_job_status, icv.root_parent_job_completed_at, icv.root_parent_producer_name,
+			icv.test_root_parent_run_id,
+			ir.status AS resolution_status,
+			ir.resolved_by,
+			ir.resolution_reason,
+			ir.mute_expires_at,
+			ir.updated_at AS resolution_updated_at
+		FROM incident_correlation_view icv
+		LEFT JOIN incident_resolutions ir ON icv.test_result_id = ir.test_result_id
+		WHERE icv.test_result_id = $1
 		LIMIT 1
 	`
 
@@ -460,6 +607,12 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	var rootParentJobStatus, rootParentProducerName sql.NullString
 
+	var resStatus, resResolvedBy, resReason sql.NullString
+
+	var resMuteExpires, resUpdatedAt sql.NullTime
+
+	var testRootParentRunID sql.NullString
+
 	err := row.Scan(
 		&r.TestResultID, &r.TestName, &r.TestType, &r.TestStatus, &r.TestMessage,
 		&r.TestExecutedAt, &r.TestDurationMs, &r.TestProducerName,
@@ -471,6 +624,8 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 		&parentJobStatus, &parentJobCompletedAt, &parentProducerName,
 		&rootParentRunID, &rootParentJobName, &rootParentJobNamespace,
 		&rootParentJobStatus, &rootParentJobCompletedAt, &rootParentProducerName,
+		&testRootParentRunID,
+		&resStatus, &resResolvedBy, &resReason, &resMuteExpires, &resUpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -508,6 +663,25 @@ func (s *LineageStore) QueryIncidentByID(ctx context.Context, testResultID int64
 
 	if rootParentJobCompletedAt.Valid {
 		r.RootParentJobCompletedAt = &rootParentJobCompletedAt.Time
+	}
+
+	r.TestRootParentRunID = testRootParentRunID.String
+
+	r.ResolutionStatus = correlation.ResolutionOpen
+	if resStatus.Valid {
+		r.ResolutionStatus = correlation.ResolutionStatus(resStatus.String)
+	}
+
+	r.ResolvedBy = resResolvedBy.String
+
+	r.ResolutionReason = resReason.String
+
+	if resMuteExpires.Valid {
+		r.MuteExpiresAt = &resMuteExpires.Time
+	}
+
+	if resUpdatedAt.Valid {
+		r.ResolvedAt = &resUpdatedAt.Time
 	}
 
 	s.logger.Info("Queried incident by ID from view",
@@ -1300,4 +1474,154 @@ func (s *LineageStore) queryHealthStats(ctx context.Context) (*healthStats, erro
 	)
 
 	return &stats, err
+}
+
+// QueryIncidentCounts implements correlation.Store.
+// Returns the number of active, resolved, and muted incidents.
+// Active is always a full count; resolved/muted are scoped to windowDays.
+func (s *LineageStore) QueryIncidentCounts(ctx context.Context, windowDays int) (*correlation.IncidentCounts, error) {
+	start := time.Now()
+
+	query := `
+		WITH deduped AS (
+			SELECT DISTINCT ON (icv.test_result_id)
+				icv.test_result_id, icv.test_name, icv.dataset_urn,
+				icv.test_executed_at, icv.test_status,
+				COALESCE(icv.test_root_parent_run_id::text, '') AS test_root_parent_run_id
+			FROM incident_correlation_view icv
+			ORDER BY icv.test_result_id, icv.job_started_at DESC
+		),
+		ranked AS (
+			SELECT d.test_result_id,
+				ROW_NUMBER() OVER (
+					PARTITION BY d.test_name, d.dataset_urn,
+						COALESCE(NULLIF(d.test_root_parent_run_id, ''), d.test_result_id::text)
+					ORDER BY d.test_executed_at DESC
+				) AS row_num
+			FROM deduped d
+		)
+		SELECT
+			COUNT(*) FILTER (
+				WHERE ir.status IS NULL OR ir.status IN ('open', 'acknowledged')
+			) AS active,
+			COUNT(*) FILTER (
+				WHERE ir.status = 'resolved'
+				  AND ir.updated_at >= NOW() - $1 * INTERVAL '1 day'
+			) AS resolved,
+			COUNT(*) FILTER (
+				WHERE ir.status = 'muted'
+				  AND ir.updated_at >= NOW() - $1 * INTERVAL '1 day'
+			) AS muted
+		FROM ranked r
+		JOIN deduped d ON r.test_result_id = d.test_result_id
+		LEFT JOIN incident_resolutions ir ON r.test_result_id = ir.test_result_id
+		WHERE r.row_num = 1
+	`
+
+	var counts correlation.IncidentCounts
+
+	err := s.conn.QueryRowContext(ctx, query, windowDays).Scan(
+		&counts.Active, &counts.Resolved, &counts.Muted,
+	)
+	if err != nil {
+		s.logger.Error("Failed to query incident counts",
+			slog.Any("error", err),
+			slog.Int("window_days", windowDays))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried incident counts",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int("active", counts.Active),
+		slog.Int("resolved", counts.Resolved),
+		slog.Int("muted", counts.Muted))
+
+	return &counts, nil
+}
+
+// QueryOtherAttempts implements correlation.Store.
+// Returns sibling retry attempts for an incident (excludes the incident itself).
+// Groups by (test_name, dataset_urn, test_root_parent_run_id).
+// Returns nil if no test_root_parent_run_id or no siblings exist.
+func (s *LineageStore) QueryOtherAttempts(
+	ctx context.Context,
+	testResultID int64,
+) ([]correlation.RunRetryAttempt, error) {
+	start := time.Now()
+
+	query := `
+		WITH current AS (
+			SELECT test_name, dataset_urn, test_root_parent_run_id
+			FROM incident_correlation_view
+			WHERE test_result_id = $1
+			LIMIT 1
+		),
+		deduped AS (
+			SELECT DISTINCT ON (icv.test_result_id)
+				icv.test_result_id,
+				icv.test_status,
+				icv.test_executed_at,
+				icv.job_run_id
+			FROM incident_correlation_view icv
+			JOIN current c ON icv.test_name = c.test_name
+				AND icv.dataset_urn = c.dataset_urn
+				AND icv.test_root_parent_run_id = c.test_root_parent_run_id
+			WHERE icv.test_result_id != $1
+				AND c.test_root_parent_run_id IS NOT NULL
+			ORDER BY icv.test_result_id, icv.job_started_at DESC
+		)
+		SELECT
+			d.test_result_id,
+			ROW_NUMBER() OVER (ORDER BY d.test_executed_at ASC) AS attempt,
+			d.test_status,
+			d.test_executed_at,
+			d.job_run_id,
+			COALESCE(ir.status, 'open') AS resolution_status
+		FROM deduped d
+		LEFT JOIN incident_resolutions ir ON d.test_result_id = ir.test_result_id
+		ORDER BY d.test_executed_at ASC
+	`
+
+	rows, err := s.conn.QueryContext(ctx, query, testResultID)
+	if err != nil {
+		s.logger.Error("Failed to query other attempts",
+			slog.Any("error", err),
+			slog.Int64("test_result_id", testResultID))
+
+		return nil, fmt.Errorf("%w: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var attempts []correlation.RunRetryAttempt
+
+	for rows.Next() {
+		var a correlation.RunRetryAttempt
+
+		var testResultIDStr int64
+
+		err := rows.Scan(
+			&testResultIDStr, &a.Attempt, &a.TestStatus,
+			&a.ExecutedAt, &a.JobRunID, &a.ResolutionStatus,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to scan row: %w", ErrCorrelationQueryFailed, err)
+		}
+
+		a.IncidentID = strconv.FormatInt(testResultIDStr, 10)
+
+		attempts = append(attempts, a)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: row iteration error: %w", ErrCorrelationQueryFailed, err)
+	}
+
+	s.logger.Info("Queried other attempts",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int64("test_result_id", testResultID),
+		slog.Int("attempt_count", len(attempts)))
+
+	return attempts, nil
 }
