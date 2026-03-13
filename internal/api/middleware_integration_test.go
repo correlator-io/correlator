@@ -89,7 +89,13 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 	}
 
 	// Create server with dependencies
-	server := NewServer(config, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+	server := NewServer(config, Dependencies{
+		APIKeyStore:      keyStore,
+		RateLimiter:      rateLimiter,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {
@@ -163,7 +169,12 @@ func TestAuthenticationIntegration(t *testing.T) {
 		CORSAllowedHeaders: []string{"Content-Type", "Authorization", "X-Correlation-ID"},
 		CORSMaxAge:         86400,
 	}
-	server := NewServer(config, keyStore, nil, lineageStore, lineageStore, lineageStore)
+	server := NewServer(config, Dependencies{
+		APIKeyStore:      keyStore,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	t.Run("Successful Authentication with Bearer Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
@@ -290,14 +301,15 @@ func TestPublicEndpointAuthBypass(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rr.Code, "Response body: %s", rr.Body.String())
 
-		var health HealthStatus
+		var resp systemHealthResponse
 
-		err := json.Unmarshal(rr.Body.Bytes(), &health)
+		err := json.Unmarshal(rr.Body.Bytes(), &resp)
 		require.NoError(t, err, "Failed to parse health response")
 
-		assert.Equal(t, "healthy", health.Status, "Expected healthy status")
-		assert.Equal(t, "correlator", health.ServiceName, "Expected correlator service name")
-		assert.NotEmpty(t, health.Version, "Expected version to be set")
+		assert.Equal(t, "healthy", resp.Status, "Expected healthy status")
+		assert.Equal(t, "correlator", resp.ServiceName, "Expected correlator service name")
+		assert.NotEmpty(t, resp.Version, "Expected version to be set")
+		assert.Contains(t, resp.Checks, "postgres", "Expected postgres check")
 
 		verifyCorrelationID(t, rr)
 	})
@@ -391,7 +403,13 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 	})
 
 	// Create server with auth AND rate limiting enabled
-	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+	server := NewServer(serverConfig, Dependencies{
+		APIKeyStore:      keyStore,
+		RateLimiter:      rateLimiter,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	t.Run("Ping Endpoint Bypasses Rate Limiting", func(t *testing.T) {
 		// Send 100 rapid requests to /ping without API key
@@ -505,9 +523,8 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 }
 
 // TestReadyEndpoint tests the /ready endpoint for K8s readiness probes.
-// This endpoint performs dependency health checks with a 2-second timeout.
-// The server depends on apiKeyStore which in turn has a dependency on a database connection.
-// The logic is if the  last dependency in the stack is health, then the server is healthy.
+// This endpoint performs a health check on the ingestion store (PostgreSQL),
+// which is the common dependency between the HTTP and Kafka ingestion paths.
 func TestReadyEndpoint(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -555,7 +572,13 @@ func TestReadyEndpoint(t *testing.T) {
 	}
 
 	// Create server with key store that has database health checking
-	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+	server := NewServer(serverConfig, Dependencies{
+		APIKeyStore:      keyStore,
+		RateLimiter:      rateLimiter,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	t.Run("Ready Endpoint Bypasses Authentication", func(t *testing.T) {
 		// Send 10 requests without API key - all should succeed (no auth required)
@@ -738,7 +761,13 @@ func TestRateLimitingIntegration(t *testing.T) {
 		})
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+		server := NewServer(serverConfig, Dependencies{
+			APIKeyStore:      keyStore,
+			RateLimiter:      rateLimiter,
+			IngestionStore:   lineageStore,
+			CorrelationStore: lineageStore,
+			ResolutionStore:  lineageStore,
+		})
 
 		// Send requests alternating between client-1 and client-2
 		// With 5 RPS global limit and ~50ms bcrypt latency, we expect some rate limiting
@@ -783,7 +812,13 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+		server := NewServer(serverConfig, Dependencies{
+			APIKeyStore:      keyStore,
+			RateLimiter:      rateLimiter,
+			IngestionStore:   lineageStore,
+			CorrelationStore: lineageStore,
+			ResolutionStore:  lineageStore,
+		})
 
 		// Client 1: Send requests until rate limited
 		// With 2 RPS limit and ~50ms bcrypt latency, we need more than 2 requests
@@ -841,7 +876,13 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+		server := NewServer(serverConfig, Dependencies{
+			APIKeyStore:      keyStore,
+			RateLimiter:      rateLimiter,
+			IngestionStore:   lineageStore,
+			CorrelationStore: lineageStore,
+			ResolutionStore:  lineageStore,
+		})
 
 		// IMPORTANT: Middleware order is Auth → RateLimit
 		// Unauthenticated requests get rejected by Auth middleware (401)
@@ -877,7 +918,13 @@ func TestRateLimitingIntegration(t *testing.T) {
 		defer rateLimiter.Close()
 
 		// Create server with rate limiter
-		server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+		server := NewServer(serverConfig, Dependencies{
+			APIKeyStore:      keyStore,
+			RateLimiter:      rateLimiter,
+			IngestionStore:   lineageStore,
+			CorrelationStore: lineageStore,
+			ResolutionStore:  lineageStore,
+		})
 
 		// Exhaust the rate limit by sending requests rapidly
 		// With 2 RPS and burst=4, we should hit the limit quickly
@@ -1014,7 +1061,13 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 	}
 
 	// Create server with all middleware enabled (auth + rate limiting + CORS)
-	server := NewServer(serverConfig, keyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+	server := NewServer(serverConfig, Dependencies{
+		APIKeyStore:      keyStore,
+		RateLimiter:      rateLimiter,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	// Test Case 1: Successful Request Flows Through All Middleware
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {

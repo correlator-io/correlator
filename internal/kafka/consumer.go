@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
 	"github.com/correlator-io/correlator/internal/canonicalization"
+	"github.com/correlator-io/correlator/internal/health"
 	"github.com/correlator-io/correlator/internal/ingestion"
 )
 
@@ -89,6 +91,46 @@ func (c *Consumer) Close() error {
 	c.logger.Info("Kafka consumer closed")
 
 	return nil
+}
+
+// HealthCheck checks Kafka broker connectivity and returns consumer diagnostics.
+// It dials the first configured broker with the provided context timeout.
+// Reader stats (messages consumed, errors, rebalances) are included for
+// troubleshooting even when the broker is unreachable.
+func (c *Consumer) HealthCheck(ctx context.Context) *health.ComponentResult {
+	cfg := c.reader.Config()
+	stats := c.reader.Stats()
+
+	details := &health.KafkaDetails{
+		Brokers:       strings.Join(cfg.Brokers, ","),
+		Topic:         cfg.Topic,
+		ConsumerGroup: cfg.GroupID,
+		Messages:      stats.Messages,
+		Errors:        stats.Errors,
+		Rebalances:    stats.Rebalances,
+	}
+
+	start := time.Now()
+
+	conn, err := kafkago.DialContext(ctx, "tcp", cfg.Brokers[0])
+	latencyMs := time.Since(start).Milliseconds()
+
+	if err != nil {
+		return &health.ComponentResult{
+			Status:    "unhealthy",
+			LatencyMs: latencyMs,
+			Error:     "broker unreachable: " + err.Error(),
+			Details:   details,
+		}
+	}
+
+	_ = conn.Close()
+
+	return &health.ComponentResult{
+		Status:    "healthy",
+		LatencyMs: latencyMs,
+		Details:   details,
+	}
 }
 
 // run is the internal consumer loop. It blocks until the context is cancelled

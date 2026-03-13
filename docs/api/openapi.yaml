@@ -62,8 +62,9 @@ paths:
     get:
       summary: Readiness probe
       description: |
-        Kubernetes readiness probe. Checks storage backend health.
-        Returns 503 if storage is unavailable.
+        Kubernetes readiness probe. Checks the ingestion store (PostgreSQL) which is the
+        common dependency between the HTTP and Kafka ingestion paths. Returns 503 if
+        storage is unavailable.
         No authentication required.
       operationId: ready
       tags:
@@ -87,9 +88,22 @@ paths:
 
   /health:
     get:
-      summary: Health check
+      summary: Dependency health check
       description: |
-        Basic health check endpoint returning service status, version, and uptime.
+        Diagnostic endpoint for operators. Reports per-component health status for all
+        critical-path dependencies (PostgreSQL, Kafka). Unlike `/ready` (binary K8s probe),
+        this endpoint returns structured diagnostic information to help troubleshoot why
+        Correlator is not working after setup.
+
+        **Overall status derivation:**
+        - `healthy`: All dependency checks pass
+        - `degraded`: Some non-critical dependency is down (e.g., Kafka), but HTTP ingestion works
+        - `unhealthy`: Critical dependency down (PostgreSQL unreachable)
+
+        **HTTP status codes:**
+        - `200`: healthy or degraded
+        - `503`: unhealthy (critical dependency down)
+
         No authentication required.
       operationId: health
       tags:
@@ -97,16 +111,94 @@ paths:
       security: []
       responses:
         '200':
-          description: Health status
+          description: System healthy or degraded
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthStatus'
+                $ref: '#/components/schemas/SystemHealth'
+              examples:
+                healthy:
+                  summary: All dependencies healthy
+                  value:
+                    status: healthy
+                    serviceName: correlator
+                    version: v0.1.0-alpha
+                    uptime: 4h23m12s
+                    checks:
+                      postgres:
+                        status: healthy
+                        latency_ms: 2
+                      kafka:
+                        status: healthy
+                        latency_ms: 5
+                        details:
+                          brokers: "kafka:9092"
+                          topic: openlineage.events
+                          consumer_group: correlator
+                          messages_consumed: 142
+                          errors: 0
+                          rebalances: 1
+                degraded:
+                  summary: Kafka unreachable but HTTP ingestion works
+                  value:
+                    status: degraded
+                    serviceName: correlator
+                    version: v0.1.0-alpha
+                    uptime: 1h10m5s
+                    checks:
+                      postgres:
+                        status: healthy
+                        latency_ms: 1
+                      kafka:
+                        status: unhealthy
+                        latency_ms: 2003
+                        error: "broker unreachable: dial tcp kafka:9092: connect: connection refused"
+                        details:
+                          brokers: "kafka:9092"
+                          topic: openlineage.events
+                          consumer_group: correlator
+                          messages_consumed: 0
+                          errors: 3
+                          rebalances: 0
+                kafka_disabled:
+                  summary: Kafka not configured (HTTP-only mode)
+                  value:
+                    status: healthy
+                    serviceName: correlator
+                    version: v0.1.0-alpha
+                    uptime: 2h30m15s
+                    checks:
+                      postgres:
+                        status: healthy
+                        latency_ms: 1
+                      kafka:
+                        status: disabled
+        '503':
+          description: Critical dependency unavailable (PostgreSQL down)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealth'
               example:
-                status: healthy
+                status: unhealthy
                 serviceName: correlator
-                version: v1.0.0
-                uptime: 2h30m15s
+                version: v0.1.0-alpha
+                uptime: 5m30s
+                checks:
+                  postgres:
+                    status: unhealthy
+                    latency_ms: 2001
+                    error: "pq: connection refused"
+                  kafka:
+                    status: healthy
+                    latency_ms: 3
+                    details:
+                      brokers: "kafka:9092"
+                      topic: openlineage.events
+                      consumer_group: correlator
+                      messages_consumed: 0
+                      errors: 0
+                      rebalances: 0
 
   # Protected API Endpoints (/api/v1/*)
   /api/v1/lineage:
@@ -523,18 +615,23 @@ components:
         Compatible with standard OpenLineage clients configured with OPENLINEAGE_API_KEY.
 
   schemas:
-    # Health Check Schemas
-    HealthStatus:
+    # System Health Schemas
+    SystemHealth:
       type: object
       required:
         - status
         - serviceName
         - version
+        - checks
       properties:
         status:
           type: string
-          description: Service health status
-          example: healthy
+          enum: [healthy, degraded, unhealthy]
+          description: |
+            Overall system health:
+            - `healthy`: All dependency checks pass
+            - `degraded`: Non-critical dependency down (Kafka), HTTP ingestion still works
+            - `unhealthy`: Critical dependency down (PostgreSQL)
         serviceName:
           type: string
           description: Service name
@@ -542,11 +639,65 @@ components:
         version:
           type: string
           description: Service version
-          example: v1.0.0
+          example: v0.1.0-alpha
         uptime:
           type: string
           description: Service uptime duration
-          example: 2h30m15s
+          example: 4h23m12s
+        checks:
+          type: object
+          description: Per-component health check results
+          properties:
+            postgres:
+              $ref: '#/components/schemas/ComponentCheck'
+            kafka:
+              $ref: '#/components/schemas/ComponentCheck'
+
+    ComponentCheck:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy, disabled]
+          description: |
+            Component health status:
+            - `healthy`: Component is reachable and functional
+            - `unhealthy`: Component is unreachable or not functional
+            - `disabled`: Component is not configured (e.g., Kafka in HTTP-only mode)
+        latency_ms:
+          type: integer
+          format: int64
+          description: Health check latency in milliseconds
+        error:
+          type: string
+          description: Error message when unhealthy
+        details:
+          type: object
+          description: Component-specific diagnostic information (Kafka only)
+          properties:
+            brokers:
+              type: string
+              description: Comma-separated broker addresses
+            topic:
+              type: string
+              description: Kafka topic being consumed
+            consumer_group:
+              type: string
+              description: Consumer group ID
+            messages_consumed:
+              type: integer
+              format: int64
+              description: Total messages consumed since startup
+            errors:
+              type: integer
+              format: int64
+              description: Total consumer errors since startup
+            rebalances:
+              type: integer
+              format: int64
+              description: Total consumer group rebalances since startup
 
     # OpenLineage Event Schemas
     LineageEvent:

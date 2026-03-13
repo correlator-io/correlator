@@ -33,7 +33,7 @@ func runStart(args []string) {
 	}
 }
 
-//nolint:funlen,gocognit,cyclop // Sequential dependency setup — splitting would add indirection without clarity.
+//nolint:funlen,gocognit,cyclop,maintidx // Sequential setup — splitting adds indirection without clarity.
 func start(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	host := fs.String("host", "", "override CORRELATOR_SERVER_HOST")
@@ -196,8 +196,19 @@ func start(args []string) error {
 		logger.Info("Kafka consumer disabled (set CORRELATOR_KAFKA_ENABLED=true to enable)")
 	}
 
-	// lineageStore implements ingestion.Store, correlation.Store, and correlation.ResolutionStore
-	server := api.NewServer(serverConfig, apiKeyStore, rateLimiter, lineageStore, lineageStore, lineageStore)
+	var kafkaHealthChecker api.KafkaHealthChecker
+	if consumer != nil {
+		kafkaHealthChecker = consumer
+	}
+
+	server := api.NewServer(serverConfig, api.Dependencies{
+		APIKeyStore:      apiKeyStore,
+		RateLimiter:      rateLimiter,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+		KafkaHealth:      kafkaHealthChecker,
+	})
 
 	// --- Signal handling: orchestrate all subsystems ---
 

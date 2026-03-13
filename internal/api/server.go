@@ -31,35 +31,38 @@ type Server struct {
 	correlationStore correlation.Store           // Optional: enables correlation API endpoints (nil = disabled)
 	resolutionStore  correlation.ResolutionStore // Optional: enables resolution write endpoints (nil = disabled)
 	validator        *ingestion.Validator        // Shared validator (thread-safe, created once)
+	healthChecker    *HealthChecker              // Dependency health checker for /health endpoint
+}
+
+// Dependencies holds the runtime dependencies injected into the server.
+// Configuration (ports, timeouts) is passed separately via ServerConfig.
+//
+// Required fields panic on NewServer if nil:
+//   - IngestionStore
+//   - CorrelationStore
+//
+// Optional fields are nil-safe (feature is disabled when nil).
+type Dependencies struct {
+	APIKeyStore      storage.APIKeyStore         // nil = auth disabled
+	RateLimiter      middleware.RateLimiter      // nil = rate limiting disabled
+	IngestionStore   ingestion.Store             // REQUIRED — panics if nil
+	CorrelationStore correlation.Store           // REQUIRED — panics if nil
+	ResolutionStore  correlation.ResolutionStore // nil = resolution endpoints disabled
+	KafkaHealth      KafkaHealthChecker          // nil = Kafka disabled in /health
 }
 
 // NewServer creates a new HTTP server instance with structured logging and middleware stack.
 //
-// Dependencies are injected explicitly rather than being part of ServerConfig.
-// This follows the dependency injection pattern where configuration (what) is
-// separated from dependencies (how).
-//
-// Parameters:
+// Configuration (what) is separated from dependencies (how):
 //   - cfg: Pure server configuration (ports, timeouts, CORS settings)
-//   - apiKeyStore: API key storage implementation (nil disables authentication)
-//   - rateLimiter: Rate limiter implementation (nil disables rate limiting)
-//   - ingestionStore: open lineage events store (REQUIRED - panics if nil)
-//   - correlationStore: Correlation query implementation (nil disables correlation endpoints)
-//   - resolutionStore: Resolution write implementation (nil disables resolution endpoints)
-func NewServer(
-	cfg *ServerConfig,
-	apiKeyStore storage.APIKeyStore,
-	rateLimiter middleware.RateLimiter,
-	ingestionStore ingestion.Store,
-	correlationStore correlation.Store,
-	resolutionStore correlation.ResolutionStore,
-) *Server {
+//   - deps: Runtime dependencies (stores, middleware, health checkers)
+func NewServer(cfg *ServerConfig, deps Dependencies) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
 
-	if ingestionStore == nil || correlationStore == nil {
+	if deps.IngestionStore == nil || deps.CorrelationStore == nil {
 		logger.Error("LineageStore is required - cannot start server without core functionality")
 		panic("correlator: LineageStore cannot be nil - this indicates a configuration error")
 	}
@@ -74,25 +77,26 @@ func NewServer(
 	server := &Server{
 		logger:           logger,
 		config:           cfg,
-		apiKeyStore:      apiKeyStore,
-		rateLimiter:      rateLimiter,
-		ingestionStore:   ingestionStore,
-		correlationStore: correlationStore,
-		resolutionStore:  resolutionStore,
+		apiKeyStore:      deps.APIKeyStore,
+		rateLimiter:      deps.RateLimiter,
+		ingestionStore:   deps.IngestionStore,
+		correlationStore: deps.CorrelationStore,
+		resolutionStore:  deps.ResolutionStore,
 		validator:        validator,
+		healthChecker:    NewHealthChecker(deps.IngestionStore, deps.KafkaHealth),
 	}
 
 	// Set up all API routes
 	server.setupRoutes(mux)
 
 	// Log middleware configuration
-	if apiKeyStore != nil { // pragma: allowlist secret
+	if deps.APIKeyStore != nil { // pragma: allowlist secret
 		logger.Info("API key authentication middleware enabled")
 	} else {
 		logger.Warn("APIKeyStore not configured - API key authentication middleware disabled")
 	}
 
-	if rateLimiter != nil {
+	if deps.RateLimiter != nil {
 		logger.Info("Rate limiting middleware enabled")
 	} else {
 		logger.Warn("RateLimiter not configured - rate limiting middleware disabled")
@@ -112,8 +116,8 @@ func NewServer(
 	handler := middleware.Apply(mux,
 		middleware.WithCorrelationID(),
 		middleware.WithRecovery(logger),
-		middleware.WithAuth(apiKeyStore, logger),
-		middleware.WithRateLimit(rateLimiter, logger),
+		middleware.WithAuth(deps.APIKeyStore, logger),
+		middleware.WithRateLimit(deps.RateLimiter, logger),
 		middleware.WithRequestLogger(logger),
 		middleware.WithCORS(cfg.ToCORSConfig()),
 	)
