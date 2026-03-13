@@ -79,7 +79,12 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 
 	// Create server with dependencies (no rate limiter for lineage tests)
 	// lineageStore implements both ingestion.Store and correlation.Store
-	server := NewServer(cfg, keyStore, nil, lineageStore, lineageStore, lineageStore)
+	server := NewServer(cfg, Dependencies{
+		APIKeyStore:      keyStore,
+		IngestionStore:   lineageStore,
+		CorrelationStore: lineageStore,
+		ResolutionStore:  lineageStore,
+	})
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {

@@ -25,13 +25,6 @@ type (
 		ServiceName string `json:"serviceName"`
 		BuildInfo   string `json:"buildInfo,omitempty"`
 	}
-	// HealthStatus represents the health check response structure.
-	HealthStatus struct {
-		Status      string `json:"status"`
-		ServiceName string `json:"serviceName"`
-		Version     string `json:"version"`
-		Uptime      string `json:"uptime,omitempty"`
-	}
 
 	// Route represents an HTTP route configuration with a path and handler.
 	// Used for declarative route registration with middleware bypass support.
@@ -140,51 +133,26 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReady responds to Kubernetes readiness probes with storage backend health checks.
-// This endpoint verifies that all storage dependencies are healthy and ready to serve requests.
+//
+// Checks the ingestion store, which is the common dependency between
+// the HTTP and Kafka ingestion paths. If the ingestion store is unhealthy, neither
+// ingestion path can function.
 //
 // Response codes:
-//   - 200 OK: All storage backends are healthy and ready to accept traffic
+//   - 200 OK: Storage backend is healthy and ready to accept traffic
 //   - 503 Service Unavailable: Storage backend is unhealthy or unreachable
-//
-// K8s readiness probes use this endpoint to determine if the pod should receive traffic.
-// If this endpoint returns 503, K8s will stop routing requests to the pod until it recovers.
-//
-// The health check delegates to the APIKeyStore's HealthCheck method, which verifies
-// the underlying storage backend (database, cache, etc.) is operational.
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
-	// If API key store not configured, return ready (degraded mode - no auth required)
-	if s.apiKeyStore == nil { // pragma: allowlist secret
-		s.logger.Warn("API key store not configured - readiness check disabled",
-			slog.String("correlation_id", correlationID),
-		)
-
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-
-		_, err := w.Write([]byte("ready"))
-		if err != nil {
-			s.logger.Error("Failed to write ready response",
-				slog.String("correlation_id", correlationID),
-				slog.String("error", err.Error()),
-			)
-		}
-
-		return
-	}
-
-	// Create context with 2-second timeout for storage health check
 	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
 
-	if err := s.apiKeyStore.HealthCheck(ctx); err != nil {
-		s.logger.Error("Storage health check failed",
+	if err := s.ingestionStore.HealthCheck(ctx); err != nil {
+		s.logger.Error("Readiness check failed",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
 
-		// Return 503 Service Unavailable if storage backend is unhealthy
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusServiceUnavailable)
 
@@ -211,26 +179,29 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHealth returns detailed health status information.
+// handleHealth returns dependency-aware health status for operator diagnostics.
+// Unlike /ready (binary K8s probe), this endpoint reports per-component status
+// so operators can pinpoint which dependency is failing during initial setup
+// or incident investigation.
+//
+// Response codes:
+//   - 200 OK: All dependencies healthy, or degraded (some non-critical dependency down)
+//   - 503 Service Unavailable: Critical dependency down (PostgreSQL unreachable)
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
-	// Calculate uptime if server has started
-	var uptime string
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
+	defer cancel()
 
+	health := s.healthChecker.Check(ctx)
+
+	// Populate version and uptime on the server side (checker doesn't know these)
+	health.Version = "v1.0.0" // TODO: inject version at build time
 	if !s.startTime.IsZero() {
-		duration := time.Since(s.startTime)
-		uptime = duration.Round(time.Second).String()
+		health.Uptime = time.Since(s.startTime).Round(time.Second).String()
 	}
 
-	health := HealthStatus{
-		Status:      "healthy",
-		ServiceName: "correlator",
-		Version:     "v1.0.0", // TODO: inject version at build time at the end of week 2
-		Uptime:      uptime,
-	}
-
-	data, err := json.Marshal(health)
+	data, err := json.Marshal(health.toResponse())
 	if err != nil {
 		s.logger.Error("Failed to encode health response",
 			slog.String("correlation_id", correlationID),
@@ -242,13 +213,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	httpStatus := http.StatusOK
+	if health.Status == statusUnhealthy {
+		httpStatus = http.StatusServiceUnavailable
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(httpStatus)
 
 	if _, err := w.Write(data); err != nil {
-		correlationID := middleware.GetCorrelationID(r.Context())
-		s.logger.Error("Failed to write data consistency response",
+		s.logger.Error("Failed to write health response",
 			slog.String("correlation_id", correlationID),
 			slog.String("error", err.Error()),
 		)
