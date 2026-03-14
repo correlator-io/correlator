@@ -325,39 +325,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			"Lineage impact query should complete in <20ms")
 	})
 
-	// Test 4: Recent Incidents Summary - Time Window + LIMIT
-	t.Run("RecentIncidentsSummary_TimeWindow", func(t *testing.T) {
-		explainQuery := `
-			EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
-			SELECT
-				job_run_id, job_name, producer_name,
-				failed_test_count, affected_dataset_count,
-				last_test_failure_at
-			FROM recent_incidents_summary
-			ORDER BY last_test_failure_at DESC
-			LIMIT 10
-		`
-
-		plan := executeExplainAnalyze(ctx, t, testDB.Connection, explainQuery)
-
-		// Verify: Should scan recent_incidents_summary materialized view
-		assert.Contains(t, plan, "recent_incidents_summary",
-			"Query should scan recent_incidents_summary materialized view")
-
-		// Verify: LIMIT should be applied efficiently
-		assert.Contains(t, plan, "Limit",
-			"Query should use LIMIT optimization (not sorting entire view)")
-
-		t.Logf("✅ Recent incidents summary plan:\n%s", formatPlan(plan))
-
-		execTime := extractExecutionTime(t, plan)
-		t.Logf("✅ Execution time: %v (target: <5ms)", execTime)
-
-		assert.Less(t, execTime, 5*time.Millisecond,
-			"Recent incidents query should complete in <5ms")
-	})
-
-	// Test 5: Verify CONCURRENTLY Refresh Works
+	// Test 4: Verify CONCURRENTLY Refresh Works
 	t.Run("VerifyConcurrentlyRefresh", func(t *testing.T) {
 		// Query pg_matviews to verify views exist and can be refreshed
 		query := `
@@ -366,8 +334,7 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 			WHERE schemaname = 'public'
 			AND matviewname IN (
 				'incident_correlation_view',
-				'lineage_impact_analysis',
-				'recent_incidents_summary'
+				'lineage_impact_analysis'
 			)
 			ORDER BY matviewname
 		`
@@ -399,11 +366,10 @@ func TestQueryPlansUseIndexes(t *testing.T) {
 
 		require.NoError(t, rows.Err())
 
-		// Verify all 3 views exist
-		assert.Len(t, views, 3, "Should have 3 materialized views")
+		// Verify all 2 views exist
+		assert.Len(t, views, 2, "Should have 2 materialized views")
 		assert.Contains(t, views, "incident_correlation_view")
 		assert.Contains(t, views, "lineage_impact_analysis")
-		assert.Contains(t, views, "recent_incidents_summary")
 	})
 }
 
@@ -444,11 +410,6 @@ func TestMaterializedViewIndexes(t *testing.T) {
 			indexName: "idx_lineage_impact_analysis_pk",
 			isUnique:  true,
 			reason:    "Required for CONCURRENTLY refresh (composite key: run_id, dataset_urn)",
-		},
-		"recent_incidents_summary": {
-			indexName: "idx_recent_incidents_summary_pk",
-			isUnique:  true,
-			reason:    "Required for CONCURRENTLY refresh (unique on run_id)",
 		},
 	}
 

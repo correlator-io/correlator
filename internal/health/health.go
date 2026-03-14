@@ -25,5 +25,4 @@ type KafkaDetails struct {
 	ConsumerGroup string
 	Messages      int64
 	Errors        int64
-	Rebalances    int64
 }

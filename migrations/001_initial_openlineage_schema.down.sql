@@ -6,7 +6,6 @@
 BEGIN;
 
 -- Drop materialized views (they depend on tables)
-DROP MATERIALIZED VIEW IF EXISTS recent_incidents_summary CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS lineage_impact_analysis CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS incident_correlation_view CASCADE;
 
@@ -35,7 +34,7 @@ COMMIT;
 SELECT
     'Initial schema rollback completed' as status,
     9 as tables_dropped,
-    3 as materialized_views_dropped,
+    2 as materialized_views_dropped,
     3 as functions_dropped,
     'Database clean - ready for fresh installation' as note,
     NOW() as completed_at;
