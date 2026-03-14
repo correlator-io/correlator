@@ -33,7 +33,6 @@ const statusFailed = "failed"
 // It calls the PostgreSQL function refresh_correlation_views() which:
 //   - Refreshes incident_correlation_view (failed/error tests correlated to job runs)
 //   - Refreshes lineage_impact_analysis (recursive downstream impact analysis)
-//   - Refreshes recent_incidents_summary (7-day rolling window aggregation)
 //   - Uses CONCURRENTLY for zero-downtime updates (~650ms-2s, no locks)
 //
 // Performance characteristics:

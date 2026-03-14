@@ -639,68 +639,6 @@ CREATE INDEX IF NOT EXISTS idx_lineage_impact_analysis_depth
 COMMENT ON MATERIALIZED VIEW lineage_impact_analysis IS
     'Downstream impact analysis: finds all datasets affected by a source job run. Answers "if this job fails, what datasets are impacted?" Uses DISTINCT ON to keep shortest path. Max depth: 10 levels.';
 
--- View 3: Recent Incidents Summary
-CREATE MATERIALIZED VIEW recent_incidents_summary AS
-SELECT
-    -- Job run identification
-    icv.job_run_id,
-    icv.job_name,
-    icv.job_namespace,
-    icv.job_status,
-    icv.job_producer_name   AS producer_name,
-
-    -- Incident statistics (per job run)
-    COUNT(DISTINCT icv.test_result_id) AS failed_test_count,
-    COUNT(DISTINCT icv.dataset_urn) AS affected_dataset_count,
-
-    -- Test failure details
-    array_agg(DISTINCT icv.test_name ORDER BY icv.test_name) AS failed_test_names,
-    array_agg(DISTINCT icv.dataset_urn ORDER BY icv.dataset_urn) AS affected_dataset_urns,
-
-    -- Temporal information
-    MIN(icv.test_executed_at) AS first_test_failure_at,
-    MAX(icv.test_executed_at) AS last_test_failure_at,
-    MIN(icv.job_started_at) AS job_started_at,
-    MAX(icv.job_completed_at) AS job_completed_at,
-
-    -- Downstream impact (if available)
-    (
-        SELECT COUNT(DISTINCT lia.dataset_urn)
-        FROM lineage_impact_analysis lia
-        WHERE lia.run_id = icv.job_run_id
-            AND lia.depth > 0
-    ) AS downstream_affected_count
-
-FROM incident_correlation_view icv
-
-WHERE icv.test_executed_at > NOW() - INTERVAL '7 days'
-
-GROUP BY
-    icv.job_run_id,
-    icv.job_name,
-    icv.job_namespace,
-    icv.job_status,
-    icv.job_producer_name
-
-ORDER BY MAX(icv.test_executed_at) DESC;
-
--- UNIQUE index required for CONCURRENTLY refresh
-CREATE UNIQUE INDEX idx_recent_incidents_summary_pk
-    ON recent_incidents_summary (job_run_id);
-
--- Additional indexes
-CREATE INDEX IF NOT EXISTS idx_recent_incidents_summary_failed_test_count
-    ON recent_incidents_summary (failed_test_count DESC);
-
-CREATE INDEX IF NOT EXISTS idx_recent_incidents_summary_producer_name
-    ON recent_incidents_summary (producer_name);
-
-CREATE INDEX IF NOT EXISTS idx_recent_incidents_summary_last_failure
-    ON recent_incidents_summary (last_test_failure_at DESC);
-
-COMMENT ON MATERIALIZED VIEW recent_incidents_summary IS
-    'Last 7 days of incidents grouped by job run with correlation statistics. Refreshed periodically.';
-
 -- =====================================================
 -- REFRESH FUNCTION
 -- =====================================================
@@ -731,17 +669,6 @@ BEGIN
 
     RETURN QUERY SELECT
         'lineage_impact_analysis'::TEXT,
-        EXTRACT(MILLISECONDS FROM (end_time - start_time))::BIGINT,
-        row_count;
-
-    -- Refresh recent_incidents_summary
-    start_time := clock_timestamp();
-    REFRESH MATERIALIZED VIEW CONCURRENTLY recent_incidents_summary;
-    end_time := clock_timestamp();
-    GET DIAGNOSTICS row_count = ROW_COUNT;
-
-    RETURN QUERY SELECT
-        'recent_incidents_summary'::TEXT,
         EXTRACT(MILLISECONDS FROM (end_time - start_time))::BIGINT,
         row_count;
 END;
@@ -853,10 +780,6 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'lineage_impact_analysis') THEN
         RAISE EXCEPTION 'Materialized view lineage_impact_analysis not created';
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = current_schema() AND matviewname = 'recent_incidents_summary') THEN
-        RAISE EXCEPTION 'Materialized view recent_incidents_summary not created';
     END IF;
 
     -- Verify function
