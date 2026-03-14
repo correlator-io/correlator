@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -24,11 +25,13 @@ import (
 // Only RunEvents are processed. DatasetEvents and JobEvents (design-time
 // metadata without correlation value) are detected and skipped.
 type Consumer struct {
-	reader    *kafkago.Reader
-	store     ingestion.Store
-	validator *ingestion.Validator
-	logger    *slog.Logger
-	wg        sync.WaitGroup
+	reader           *kafkago.Reader
+	store            ingestion.Store
+	validator        *ingestion.Validator
+	logger           *slog.Logger
+	wg               sync.WaitGroup
+	messagesConsumed atomic.Int64
+	errorsCount      atomic.Int64
 }
 
 // NewConsumer creates a Kafka consumer that reads from the configured topic
@@ -95,19 +98,19 @@ func (c *Consumer) Close() error {
 
 // HealthCheck checks Kafka broker connectivity and returns consumer diagnostics.
 // It dials the first configured broker with the provided context timeout.
-// Reader stats (messages consumed, errors, rebalances) are included for
-// troubleshooting even when the broker is unreachable.
+// Message and error counts are maintained via local atomic counters — not
+// reader.Stats() — because kafka-go destructively resets counter fields on
+// each Stats() call (atomic.SwapInt64), making them unsuitable for cumulative
+// health metrics.
 func (c *Consumer) HealthCheck(ctx context.Context) *health.ComponentResult {
 	cfg := c.reader.Config()
-	stats := c.reader.Stats()
 
 	details := &health.KafkaDetails{
 		Brokers:       strings.Join(cfg.Brokers, ","),
 		Topic:         cfg.Topic,
 		ConsumerGroup: cfg.GroupID,
-		Messages:      stats.Messages,
-		Errors:        stats.Errors,
-		Rebalances:    stats.Rebalances,
+		Messages:      c.messagesConsumed.Load(),
+		Errors:        c.errorsCount.Load(),
 	}
 
 	start := time.Now()
@@ -172,6 +175,8 @@ func (c *Consumer) run(ctx context.Context) error {
 // deserializes RunEvents, validates, and stores. Non-RunEvents and
 // invalid messages are skipped.
 func (c *Consumer) processMessage(ctx context.Context, msg kafkago.Message) {
+	c.messagesConsumed.Add(1)
+
 	// Event type detection: only process RunEvents
 	if !isRunEvent(msg.Value) {
 		c.logger.Debug("Skipping non-RunEvent message",
@@ -215,6 +220,7 @@ func (c *Consumer) processMessage(ctx context.Context, msg kafkago.Message) {
 	// Store via shared ingestion pipeline
 	stored, duplicate, err := c.store.StoreEvent(ctx, event)
 	if err != nil {
+		c.errorsCount.Add(1)
 		c.logger.Error("Failed to store Kafka event",
 			slog.Int("partition", msg.Partition),
 			slog.Int64("offset", msg.Offset),

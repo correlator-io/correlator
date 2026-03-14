@@ -53,7 +53,6 @@ type kafkaDetailsResponse struct {
 	ConsumerGroup string `json:"consumer_group"`    //nolint:tagliatelle
 	Messages      int64  `json:"messages_consumed"` //nolint:tagliatelle
 	Errors        int64  `json:"errors"`
-	Rebalances    int64  `json:"rebalances"`
 }
 
 // SystemHealth is the internal (non-JSON) aggregated health result.
@@ -126,7 +125,6 @@ func mapComponentResult(r *health.ComponentResult) *componentCheckResponse {
 			ConsumerGroup: d.ConsumerGroup,
 			Messages:      d.Messages,
 			Errors:        d.Errors,
-			Rebalances:    d.Rebalances,
 		}
 	}
 

@@ -118,7 +118,6 @@ func TestHealthEndpoint(t *testing.T) {
 					ConsumerGroup: "correlator",
 					Messages:      0,
 					Errors:        3,
-					Rebalances:    0,
 				},
 			},
 		}
@@ -185,7 +184,6 @@ func TestHealthEndpoint(t *testing.T) {
 					ConsumerGroup: "correlator",
 					Messages:      142,
 					Errors:        0,
-					Rebalances:    1,
 				},
 			},
 		}

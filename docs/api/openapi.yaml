@@ -137,7 +137,6 @@ paths:
                           consumer_group: correlator
                           messages_consumed: 142
                           errors: 0
-                          rebalances: 1
                 degraded:
                   summary: Kafka unreachable but HTTP ingestion works
                   value:
@@ -159,7 +158,6 @@ paths:
                           consumer_group: correlator
                           messages_consumed: 0
                           errors: 3
-                          rebalances: 0
                 kafka_disabled:
                   summary: Kafka not configured (HTTP-only mode)
                   value:
@@ -198,7 +196,6 @@ paths:
                       consumer_group: correlator
                       messages_consumed: 0
                       errors: 0
-                      rebalances: 0
 
   # Protected API Endpoints (/api/v1/*)
   /api/v1/lineage:
@@ -694,10 +691,6 @@ components:
               type: integer
               format: int64
               description: Total consumer errors since startup
-            rebalances:
-              type: integer
-              format: int64
-              description: Total consumer group rebalances since startup
 
     # OpenLineage Event Schemas
     LineageEvent:
