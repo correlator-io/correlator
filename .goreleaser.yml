@@ -1,0 +1,117 @@
+version: 2
+
+project_name: correlator
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: correlator
+    main: ./cmd/correlator
+    binary: correlator
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+      - -X 'main.buildTime={{.Date}}'
+
+  - id: migrator
+    main: ./migrations
+    binary: migrator
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+      - -X 'main.buildTime={{.Date}}'
+
+archives:
+  - id: correlator-archive
+    ids:
+      - correlator
+    name_template: "correlator_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+
+  - id: migrator-archive
+    ids:
+      - migrator
+    name_template: "correlator-migrator_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+
+dockers_v2:
+  - id: correlator
+    ids:
+      - correlator
+    images:
+      - "ghcr.io/correlator-io/correlator"
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: deployments/docker/Dockerfile.release
+    labels:
+      "org.opencontainers.image.title": "Correlator"
+      "org.opencontainers.image.description": "Incident correlation engine for data pipelines"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.licenses": "Apache-2.0"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+  - id: migrator
+    ids:
+      - migrator
+    images:
+      - "ghcr.io/correlator-io/correlator-migrator"
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: deployments/docker/migrator.release.dockerfile
+    labels:
+      "org.opencontainers.image.title": "Correlator Migrator"
+      "org.opencontainers.image.description": "Database migration tool for Correlator"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.licenses": "Apache-2.0"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: correlator-io
+    name: correlator
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
