@@ -64,6 +64,12 @@ export function Sidebar() {
             <br />
             We correlate.
           </p>
+          <p
+            className="mt-2 px-2 text-[10px] text-muted-foreground/60"
+            title={`Commit: ${process.env.NEXT_PUBLIC_GIT_COMMIT ?? "unknown"}`}
+          >
+            v{process.env.NEXT_PUBLIC_VERSION ?? "0.0.1-dev"}
+          </p>
         </div>
       </div>
     </aside>

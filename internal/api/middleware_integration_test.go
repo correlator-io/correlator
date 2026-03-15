@@ -95,7 +95,7 @@ func setupMiddlewareTestServer(ctx context.Context, t *testing.T, withRateLimite
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{Version: "0.0.0-test"})
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {
@@ -174,7 +174,7 @@ func TestAuthenticationIntegration(t *testing.T) {
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{})
 
 	t.Run("Successful Authentication with Bearer Header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health/correlation", nil)
@@ -409,7 +409,7 @@ func TestPublicEndpointRateLimitBypass(t *testing.T) {
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{})
 
 	t.Run("Ping Endpoint Bypasses Rate Limiting", func(t *testing.T) {
 		// Send 100 rapid requests to /ping without API key
@@ -578,7 +578,7 @@ func TestReadyEndpoint(t *testing.T) {
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{})
 
 	t.Run("Ready Endpoint Bypasses Authentication", func(t *testing.T) {
 		// Send 10 requests without API key - all should succeed (no auth required)
@@ -767,7 +767,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 			IngestionStore:   lineageStore,
 			CorrelationStore: lineageStore,
 			ResolutionStore:  lineageStore,
-		})
+		}, BuildInfo{})
 
 		// Send requests alternating between client-1 and client-2
 		// With 5 RPS global limit and ~50ms bcrypt latency, we expect some rate limiting
@@ -818,7 +818,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 			IngestionStore:   lineageStore,
 			CorrelationStore: lineageStore,
 			ResolutionStore:  lineageStore,
-		})
+		}, BuildInfo{})
 
 		// Client 1: Send requests until rate limited
 		// With 2 RPS limit and ~50ms bcrypt latency, we need more than 2 requests
@@ -882,7 +882,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 			IngestionStore:   lineageStore,
 			CorrelationStore: lineageStore,
 			ResolutionStore:  lineageStore,
-		})
+		}, BuildInfo{})
 
 		// IMPORTANT: Middleware order is Auth → RateLimit
 		// Unauthenticated requests get rejected by Auth middleware (401)
@@ -924,7 +924,7 @@ func TestRateLimitingIntegration(t *testing.T) {
 			IngestionStore:   lineageStore,
 			CorrelationStore: lineageStore,
 			ResolutionStore:  lineageStore,
-		})
+		}, BuildInfo{})
 
 		// Exhaust the rate limit by sending requests rapidly
 		// With 2 RPS and burst=4, we should hit the limit quickly
@@ -1067,7 +1067,7 @@ func TestFullMiddlewareStackIntegration(t *testing.T) {
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{})
 
 	// Test Case 1: Successful Request Flows Through All Middleware
 	t.Run("Successful Request Flows Through All Middleware", func(t *testing.T) {

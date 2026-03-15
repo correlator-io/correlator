@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      pre_release:
+        description: "Pre-release label (e.g., alpha, beta, rc.1). Leave empty for stable release."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  GO_VERSION: "1.25"
+  NODE_VERSION: "22"
+  REGISTRY: ghcr.io
+
+jobs:
+  determine-version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      new_tag: ${{ steps.version.outputs.new_tag }}
+      bump_type: ${{ steps.version.outputs.bump_type }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest-tag
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $latest_tag"
+
+          tag_date=$(git log -1 --format=%aI "$latest_tag" 2>/dev/null || echo "2020-01-01T00:00:00+00:00")
+          echo "tag_date=$tag_date" >> "$GITHUB_OUTPUT"
+          echo "Tag date: $tag_date"
+
+      - name: Determine version bump from merged PRs
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRE_RELEASE: ${{ inputs.pre_release }}
+        run: |
+          latest_tag="${{ steps.latest-tag.outputs.latest_tag }}"
+          tag_date="${{ steps.latest-tag.outputs.tag_date }}"
+
+          echo "Scanning merged PRs since $latest_tag ($tag_date)..."
+
+          # Find merged PRs to main since the last tag
+          prs=$(gh pr list \
+            --state merged \
+            --base main \
+            --search "merged:>=${tag_date}" \
+            --json number,headRefName,mergedAt \
+            --limit 100)
+
+          echo "Merged PRs found:"
+          echo "$prs" | jq -r '.[] | "  #\(.number) \(.headRefName) (merged \(.mergedAt))"'
+
+          # Determine highest significance bump
+          has_major=false
+          has_minor=false
+          has_patch=false
+
+          for branch in $(echo "$prs" | jq -r '.[].headRefName'); do
+            case "$branch" in
+              major/*) has_major=true; echo "  → major bump from: $branch" ;;
+              minor/*) has_minor=true; echo "  → minor bump from: $branch" ;;
+              patch/*|fix/*) has_patch=true; echo "  → patch bump from: $branch" ;;
+            esac
+          done
+
+          if ! $has_major && ! $has_minor && ! $has_patch; then
+            echo "::error::No versioned PRs (major/*, minor/*, patch/*) found since $latest_tag"
+            echo "Merge a PR from a versioned branch before running the release workflow."
+            exit 1
+          fi
+
+          # Strip pre-release suffix and 'v' prefix to get base version
+          base_version="${latest_tag#v}"
+          base_version="${base_version%%-*}"
+          IFS='.' read -r major minor patch <<< "$base_version"
+
+          if $has_major; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+            bump_type="major"
+          elif $has_minor; then
+            minor=$((minor + 1))
+            patch=0
+            bump_type="minor"
+          else
+            patch=$((patch + 1))
+            bump_type="patch"
+          fi
+
+          new_version="$major.$minor.$patch"
+          if [ -n "$PRE_RELEASE" ]; then
+            new_version="$new_version-$PRE_RELEASE"
+          fi
+          new_tag="v$new_version"
+
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "bump_type=$bump_type" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "============================================"
+          echo "  Release: $new_tag ($bump_type bump)"
+          echo "============================================"
+
+  release:
+    name: Build & Release
+    needs: determine-version
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        run: |
+          new_tag="${{ needs.determine-version.outputs.new_tag }}"
+          echo "Creating tag: $new_tag"
+          git tag "$new_tag"
+          git push origin "$new_tag"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          file: web/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.REGISTRY }}/correlator-io/correlator-ui:${{ needs.determine-version.outputs.new_version }}
+            ${{ env.REGISTRY }}/correlator-io/correlator-ui:latest
+          build-args: |
+            VERSION=${{ needs.determine-version.outputs.new_version }}
+            GIT_COMMIT=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.title=Correlator UI
+            org.opencontainers.image.description=Web interface for Correlator incident correlation engine
+            org.opencontainers.image.version=${{ needs.determine-version.outputs.new_version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0

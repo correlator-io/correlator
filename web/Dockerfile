@@ -5,7 +5,7 @@ FROM node:22-alpine AS builder
 
 # Build arguments for configuration
 ARG NEXT_PUBLIC_CORRELATOR_URL=http://localhost:8080
-ARG VERSION=0.1.0-dev
+ARG VERSION=0.0.1-dev
 ARG GIT_COMMIT=unknown
 
 # Set build-time environment variables

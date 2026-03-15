@@ -25,7 +25,7 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
     upstream,
     downstream,
     correlationStatus,
-    resolutionStatus: initialResolutionStatus,
+    resolutionStatus,
     resolvedBy,
     resolutionReason,
     resolvedAt,
@@ -34,9 +34,6 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
   } = incident;
   const isOrphan = correlationStatus === "orphan";
   const hasLineage = upstream.length > 0 || downstream.length > 0;
-
-  const [resolutionStatus, setResolutionStatus] =
-    useState<ResolutionStatus>(initialResolutionStatus);
 
   // Lineage graph expanded state - collapsed by default on mobile
   const [isLineageExpanded, setIsLineageExpanded] = useState(() => {
@@ -52,7 +49,6 @@ export function IncidentDetail({ incident }: IncidentDetailProps) {
     newStatus: ResolutionStatus,
     options?: { reason?: string; muteDays?: number }
   ) => {
-    setResolutionStatus(newStatus);
     mutation.mutate({
       id,
       status: newStatus as "acknowledged" | "resolved" | "muted",

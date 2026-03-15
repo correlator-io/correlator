@@ -75,6 +75,12 @@ export function MobileNav() {
           <p className="text-xs text-muted-foreground">
             We don&apos;t monitor. We correlate.
           </p>
+          <p
+            className="mt-1 text-[10px] text-muted-foreground/60"
+            title={`Commit: ${process.env.NEXT_PUBLIC_GIT_COMMIT ?? "unknown"}`}
+          >
+            v{process.env.NEXT_PUBLIC_VERSION ?? "0.0.1-dev"}
+          </p>
         </div>
       </SheetContent>
     </Sheet>

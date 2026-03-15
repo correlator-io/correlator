@@ -1,0 +1,29 @@
+# Correlator API Server — Release Dockerfile
+# Used by GoReleaser: copies pre-built binary, no compilation.
+
+FROM alpine:3.19
+
+RUN apk --no-cache add ca-certificates wget
+
+RUN addgroup -g 1001 -S correlator && \
+    adduser -u 1001 -S correlator -G correlator
+
+WORKDIR /app
+
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/correlator .
+
+RUN chown -R correlator:correlator /app
+
+USER correlator
+
+ENV DATABASE_URL=""
+ENV LOG_LEVEL="info"
+ENV CORRELATOR_CONFIG_PATH=""
+
+EXPOSE 8080 9090
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+CMD ["./correlator", "start"]
