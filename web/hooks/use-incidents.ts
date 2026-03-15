@@ -57,6 +57,7 @@ export function useUpdateIncidentStatus() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: incidentKeys.lists() });
       queryClient.invalidateQueries({ queryKey: incidentKeys.counts() });
+      queryClient.invalidateQueries({ queryKey: incidentKeys.details() });
     },
   });
 }
