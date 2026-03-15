@@ -137,9 +137,13 @@ jobs:
       - name: Create and push tag
         run: |
           new_tag="${{ needs.determine-version.outputs.new_tag }}"
-          echo "Creating tag: $new_tag"
-          git tag "$new_tag"
-          git push origin "$new_tag"
+          if git rev-parse "$new_tag" >/dev/null 2>&1; then
+            echo "Tag $new_tag already exists, skipping creation"
+          else
+            echo "Creating tag: $new_tag"
+            git tag "$new_tag"
+            git push origin "$new_tag"
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
