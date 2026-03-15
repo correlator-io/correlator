@@ -18,7 +18,7 @@ jobs:
             exit 0
           fi
 
-          if ! [[ ${{ github.head_ref }} =~ ^(feature|minor|bugfix|hotfix|patch|major|chore|docs|test|refactor|ci|build)/[a-z0-9-]+$ ]]; then
+          if ! [[ ${{ github.head_ref }} =~ ^(feature|minor|fix|patch|major|chore|docs|test|refactor|ci|build)/[a-z0-9-]+$ ]]; then
             echo "::error::Branch name does not follow the convention: [type]/[description]"
             echo "Allowed types: feature, minor, bugfix, hotfix, patch, major, chore, docs, test, refactor, ci, build"
             echo "Example: feature/add-new-validation"
@@ -87,7 +87,7 @@ jobs:
 
           pr_title="${{ github.event.pull_request.title }}"
           echo "PR Title: $pr_title"
-          if ! [[ "$pr_title" =~ ^(minor|major|patch|chore)(\(.+\))?:\ .+ ]]; then
+          if ! [[ "$pr_title" =~ ^(minor|major|patch|fix|chore)(\(.+\))?:\ .+ ]]; then
             echo "::error::PR title does not follow conventional commits format: '$pr_title'"
             echo "Expected format: type(scope): message"
             echo "Types: feat, fix, patch, minor, major, docs, style, refactor, perf, test, chore, ci, build"
