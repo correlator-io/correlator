@@ -3,8 +3,9 @@
 **Incident correlation engine for data teams**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://golang.org)
-[![Status](https://img.shields.io/badge/Status-Pre--Alpha-orange.svg)]()
+[![Go Version](https://img.shields.io/badge/Go-1.25+-blue.svg)](https://golang.org)
+[![Status](https://img.shields.io/badge/Status-Alpha-yellow.svg)]()
+[![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/rGysCFnt)
 
 ---
 
@@ -21,33 +22,46 @@ Connects test failures to the job runs that caused them:
 
 ## Quick Start
 
+Prerequisites: [Docker](https://docs.docker.com/get-docker/) installed and running.
+
 ```bash
-# Start the server (Docker)
-docker-compose -f deployments/docker/docker-compose.yml up -d
+# Download the quickstart compose file
+curl -O https://raw.githubusercontent.com/correlator-io/correlator/main/deployments/quickstart/docker-compose.yml
 
-# Or build from source
-make build
-./build/correlator
-
-# Ingest OpenLineage events (single event - standard OL API)
-curl -X POST http://localhost:8080/api/v1/lineage \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d @event.json
-
-# Ingest batch events
-curl -X POST http://localhost:8080/api/v1/lineage/batch \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d @events.json
+# Start Correlator
+docker compose up -d
 ```
 
-Standard OpenLineage integrations (dbt, Airflow, GE) work out of the box:
+Once all services are healthy:
+
+- **Web UI**: [http://localhost:3000](http://localhost:3000)
+- **API**: [http://localhost:8080](http://localhost:8080)
+
+Point your OpenLineage-enabled tools at Correlator:
 
 ```bash
 export OPENLINEAGE_URL=http://localhost:8080
-export OPENLINEAGE_API_KEY=your-api-key
 ```
+
+Standard integrations ([dbt-ol](https://openlineage.io/docs/integrations/dbt),
+[Airflow](https://openlineage.io/docs/integrations/airflow),
+[Great Expectations](https://openlineage.io/docs/integrations/great-expectations))
+work out of the box.
+
+To stop: `docker compose down` (add `-v` to delete data).
+
+> **Using Kafka?** If your OpenLineage events are on a Kafka topic (common with Airflow),
+> add these environment variables to the `correlator` service in the compose file:
+> ```yaml
+> CORRELATOR_KAFKA_ENABLED: "true"
+> CORRELATOR_KAFKA_BROKERS: your-broker:9092
+> CORRELATOR_KAFKA_TOPIC: openlineage.events
+> ```
+
+> **Want to see Correlator with real data?** Check out the
+> [correlator-demo](https://github.com/correlator-io/correlator-demo) — a complete
+> environment with Airflow, dbt, Great Expectations, and sample pipelines that generate
+> incidents you can investigate.
 
 ---
 
@@ -84,49 +98,41 @@ Automated correlation that connects test failures to their source, reducing time
 
 ### Dataset Pattern Aliasing
 
-Different tools can emit different dataset URNs for the same underlying table. For example, when tools use different
-schema prefixes or naming conventions, Correlator sees them as separate datasets and cannot correlate test failures
-across tools.
+Different tools can emit different dataset URNs for the same underlying table (e.g., GE omits the schema prefix
+that dbt includes). Correlator detects these mismatches automatically and **suggests patterns in the UI** — you
+don't need to figure them out yourself.
 
-**Solution:** Configure dataset patterns in `.correlator.yaml` to map orphan URNs to their canonical form:
+**Workflow:**
+
+1. Deploy Correlator and run your data tools (dbt, GE, Airflow)
+2. Open the Correlation Health page — orphan datasets and suggested patterns appear automatically
+3. Copy the suggested pattern into `.correlator.yaml`
+4. Restart Correlator — historical data is immediately resolved
 
 ```yaml
 # .correlator.yaml
 dataset_patterns:
+  # Suggested by Correlator UI:
   # GE emits:  postgresql://prod-db/marts.customers
   # dbt emits: postgresql://prod-db/analytics.marts.customers
   - pattern: "postgresql://prod-db/marts.{table}"
     canonical: "postgresql://prod-db/analytics.marts.{table}"
 ```
 
-**Pattern syntax:**
-
-- `{variable}` — captures any characters except `/`
-- `{variable*}` — captures any characters including `/` (for paths)
-- Literal characters match exactly
-- First matching pattern wins (order matters)
-
-**Workflow:**
-
-1. Deploy Correlator and run your data tools (dbt, GE, Airflow)
-2. Check the Correlation Health page for orphan datasets
-3. Apply suggested patterns or write custom ones in `.correlator.yaml`
-4. Restart Correlator — historical data is immediately resolved
-
 See `.correlator.yaml.example` for a full configuration template.
 
 ### Environment Variables
 
-| Variable                      | Description                                | Default               |
-|-------------------------------|--------------------------------------------|-----------------------|
-| `CORRELATOR_CONFIG_PATH`      | Path to YAML config file                   | `.correlator.yaml`    |
-| `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication              | `false`               |
-| `CORRELATOR_SERVER_PORT`      | HTTP server port                           | `8080`                |
-| `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error)       | `info`                |
-| `CORRELATOR_KAFKA_ENABLED`    | Enable Kafka consumer for OL events        | `false`               |
-| `CORRELATOR_KAFKA_BROKERS`    | Comma-separated Kafka broker addresses     | (required if enabled) |
-| `CORRELATOR_KAFKA_TOPIC`      | Kafka topic to consume from                | `openlineage.events`  |
-| `CORRELATOR_KAFKA_GROUP`      | Kafka consumer group ID                    | `correlator`          |
+| Variable                      | Description                            | Default               |
+|-------------------------------|----------------------------------------|-----------------------|
+| `CORRELATOR_CONFIG_PATH`      | Path to YAML config file               | `.correlator.yaml`    |
+| `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication          | `false`               |
+| `CORRELATOR_SERVER_PORT`      | HTTP server port                       | `8080`                |
+| `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error)   | `info`                |
+| `CORRELATOR_KAFKA_ENABLED`    | Enable Kafka consumer for OL events    | `false`               |
+| `CORRELATOR_KAFKA_BROKERS`    | Comma-separated Kafka broker addresses | (required if enabled) |
+| `CORRELATOR_KAFKA_TOPIC`      | Kafka topic to consume from            | `openlineage.events`  |
+| `CORRELATOR_KAFKA_GROUP`      | Kafka consumer group ID                | `correlator`          |
 
 See `.env.example` for all available configuration options.
 
@@ -152,6 +158,7 @@ The current version is in early development stage, so expect possible API change
 
 ## Documentation
 
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md) - Release history
 - **Development**: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Local setup, testing, architecture
 - **Contributing**: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) - Contribution guidelines
 
@@ -159,14 +166,15 @@ The current version is in early development stage, so expect possible API change
 
 ## Requirements
 
-- Go 1.23+
-- PostgreSQL 15+
-- Docker (for local development)
+- Docker (for running Correlator)
+- Go 1.25+ (for development only)
+- PostgreSQL 15+ (included in Docker setup)
 
 ---
 
 ## Links
 
+- **Discord**: https://discord.gg/rGysCFnt — feedback, questions, and discussion
 - **OpenLineage**: https://openlineage.io/
 - **Issues**: https://github.com/correlator-io/correlator/issues
 - **Discussions**: https://github.com/correlator-io/correlator/discussions

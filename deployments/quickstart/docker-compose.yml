@@ -1,0 +1,62 @@
+# Correlator Quick Start
+#
+# Usage:
+#   docker compose up
+#
+# Services:
+#   - Correlator API:  http://localhost:8080
+#   - Correlator UI:   http://localhost:3000
+#   - PostgreSQL:      localhost:5432
+#
+# Stop:
+#   docker compose down            (preserve data)
+#   docker compose down -v         (delete data)
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: correlator
+      POSTGRES_USER: correlator
+      POSTGRES_PASSWORD: correlator # pragma: allowlist secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - correlator_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U correlator"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrator:
+    image: ghcr.io/correlator-io/correlator-migrator:latest
+    command: ["./migrator", "up"]
+    environment:
+      DATABASE_URL: postgres://correlator:correlator@postgres:5432/correlator?sslmode=disable # pragma: allowlist secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  correlator:
+    image: ghcr.io/correlator-io/correlator:latest
+    environment:
+      DATABASE_URL: postgres://correlator:correlator@postgres:5432/correlator?sslmode=disable # pragma: allowlist secret
+      CORRELATOR_SERVER_LOG_LEVEL: info
+      CORRELATOR_AUTH_ENABLED: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+
+  ui:
+    image: ghcr.io/correlator-io/correlator-ui:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      correlator:
+        condition: service_healthy
+
+volumes:
+  correlator_data:
