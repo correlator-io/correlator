@@ -74,7 +74,7 @@ jobs:
             case "$branch" in
               major/*) has_major=true; echo "  → major bump from: $branch" ;;
               minor/*) has_minor=true; echo "  → minor bump from: $branch" ;;
-              patch/*|bugfix/*|hotfix/*) has_patch=true; echo "  → patch bump from: $branch" ;;
+              patch/*|fix/*) has_patch=true; echo "  → patch bump from: $branch" ;;
             esac
           done
 
