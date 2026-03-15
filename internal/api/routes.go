@@ -120,7 +120,7 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	correlationID := middleware.GetCorrelationID(r.Context())
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("X-Correlator-Version", "v1.0.0") // TODO: inject version at build time at the end of week 2
+	w.Header().Set("X-Correlator-Version", s.buildInfo.Version)
 	w.WriteHeader(http.StatusOK)
 
 	_, err := w.Write([]byte("pong"))
@@ -195,8 +195,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	health := s.healthChecker.Check(ctx)
 
-	// Populate version and uptime on the server side (checker doesn't know these)
-	health.Version = "v1.0.0" // TODO: inject version at build time
+	health.Version = s.buildInfo.Version
 	if !s.startTime.IsZero() {
 		health.Uptime = time.Since(s.startTime).Round(time.Second).String()
 	}

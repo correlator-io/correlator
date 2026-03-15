@@ -208,6 +208,10 @@ func start(args []string) error {
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
 		KafkaHealth:      kafkaHealthChecker,
+	}, api.BuildInfo{
+		Version:   version,
+		GitCommit: gitCommit,
+		BuildTime: buildTime,
 	})
 
 	// --- Signal handling: orchestrate all subsystems ---

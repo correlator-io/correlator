@@ -84,7 +84,7 @@ func setupTestServer(ctx context.Context, t *testing.T) *testServer {
 		IngestionStore:   lineageStore,
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
-	})
+	}, BuildInfo{})
 
 	// Register cleanup (closure captures dependencies)
 	t.Cleanup(func() {

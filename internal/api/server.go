@@ -24,6 +24,7 @@ type Server struct {
 	httpServer       *http.Server
 	logger           *slog.Logger
 	config           *ServerConfig
+	buildInfo        BuildInfo
 	startTime        time.Time
 	apiKeyStore      storage.APIKeyStore
 	rateLimiter      middleware.RateLimiter
@@ -32,6 +33,14 @@ type Server struct {
 	resolutionStore  correlation.ResolutionStore // Optional: enables resolution write endpoints (nil = disabled)
 	validator        *ingestion.Validator        // Shared validator (thread-safe, created once)
 	healthChecker    *HealthChecker              // Dependency health checker for /health endpoint
+}
+
+// BuildInfo holds build-time metadata injected via -ldflags.
+// Passed to NewServer so version information is available to API responses.
+type BuildInfo struct {
+	Version   string // Semantic version (e.g., "0.1.0-alpha")
+	GitCommit string // Full git commit SHA
+	BuildTime string // RFC 3339 build timestamp
 }
 
 // Dependencies holds the runtime dependencies injected into the server.
@@ -56,7 +65,8 @@ type Dependencies struct {
 // Configuration (what) is separated from dependencies (how):
 //   - cfg: Pure server configuration (ports, timeouts, CORS settings)
 //   - deps: Runtime dependencies (stores, middleware, health checkers)
-func NewServer(cfg *ServerConfig, deps Dependencies) *Server {
+//   - build: Build-time metadata (version, commit, build time)
+func NewServer(cfg *ServerConfig, deps Dependencies, build BuildInfo) *Server {
 	// Create structured logger with configured log level
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
@@ -77,6 +87,7 @@ func NewServer(cfg *ServerConfig, deps Dependencies) *Server {
 	server := &Server{
 		logger:           logger,
 		config:           cfg,
+		buildInfo:        build,
 		apiKeyStore:      deps.APIKeyStore,
 		rateLimiter:      deps.RateLimiter,
 		ingestionStore:   deps.IngestionStore,

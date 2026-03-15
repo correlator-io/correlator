@@ -57,7 +57,7 @@ func setupHealthTestServer(
 		CorrelationStore: lineageStore,
 		ResolutionStore:  lineageStore,
 		KafkaHealth:      kafkaChecker,
-	})
+	}, BuildInfo{Version: "0.0.0-test"})
 
 	t.Cleanup(func() {
 		_ = lineageStore.Close()
