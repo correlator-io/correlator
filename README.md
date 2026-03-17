@@ -129,6 +129,7 @@ See `.correlator.yaml.example` for a full configuration template.
 | `CORRELATOR_AUTH_ENABLED`     | Enable API key authentication          | `false`               |
 | `CORRELATOR_SERVER_PORT`      | HTTP server port                       | `8080`                |
 | `CORRELATOR_SERVER_LOG_LEVEL` | Log level (debug, info, warn, error)   | `info`                |
+| `CORRELATOR_UNAUTH_RPS`       | Rate limit for unauthenticated clients (requests/sec). Increase if OpenLineage integrations log `429 Too Many Requests`. | `1000` |
 | `CORRELATOR_KAFKA_ENABLED`    | Enable Kafka consumer for OL events    | `false`               |
 | `CORRELATOR_KAFKA_BROKERS`    | Comma-separated Kafka broker addresses | (required if enabled) |
 | `CORRELATOR_KAFKA_TOPIC`      | Kafka topic to consume from            | `openlineage.events`  |
